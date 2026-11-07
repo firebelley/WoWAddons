@@ -16,8 +16,6 @@ local API, Spells = ns.API, ns.Spells
 
 local band = bit.band
 local PHYSICAL, SHADOW = 1, 32 -- school masks
-local FALLBACK_NAME = "Life Drain"
-local FALLBACK_ICON = "Interface\\Icons\\Spell_Shadow_LifeDrain02"
 
 local Drain = { heals = 0, secret = 0 }
 ns.Drain = Drain
@@ -58,6 +56,9 @@ end
 
 -- Returns nil if it's a drain proc, or why not.
 local function WhyNot(school)
+	-- Characters without a drain passive (e.g. a non-undead mage) have nothing
+	-- to detect, so their unexplained heals are never guessed at.
+	if not Spells.drainPassive then return "you have no passive that drains or heals by chance" end
 	if not UnitAffectingCombat("player") then return "out of combat" end
 	if IsChanneling() then return "you're channeling" end
 	if GetTime() < Spells.healUntil then return "something you cast or used may still be healing you" end
@@ -86,5 +87,5 @@ ns.OnUnit("UNIT_COMBAT", "player", function(_, action, _, _, school)
 	if why then return end
 
 	local p = Spells.drainPassive
-	ns.Proc(p and p.name or FALLBACK_NAME, p and p.icon or FALLBACK_ICON, "drain")
+	ns.Proc(p.name, p.icon, "drain")
 end)
