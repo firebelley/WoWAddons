@@ -173,7 +173,10 @@ Spells.lastHelpfulCastAt = 0
 
 local function RememberCast(spellID)
 	local now = GetTime()
-	if not API.IsHarmfulSpell(spellID) then Spells.lastHelpfulCastAt = now end
+	if not API.IsHarmfulSpell(spellID) then
+		Spells.lastHelpfulCastAt = now
+		Spells.lastHelpfulCastName = API.SpellInfo(spellID) or tostring(spellID)
+	end
 	if Spells.Heals(spellID) then
 		local untilTime = now + math.max(HEAL_MOMENT, LongestDuration(spellID))
 		Spells.healUntil = math.max(Spells.healUntil, untilTime)

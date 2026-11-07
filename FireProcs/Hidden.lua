@@ -71,9 +71,10 @@ function Hidden.Update()
 			-- Buffs from others name their caster; procs are yours or have no
 			-- caster at all, which only a solo player can rely on.
 			if not (mine[id] or solo) then
-				ns.Trace("hidden buff appeared: not yours (group member?), skipped")
+				ns.Trace("hidden buff appeared: the game doesn't say it's yours and you're in a group, skipped")
 			elseif explained then
-				ns.Trace("hidden buff appeared right after you cast a non-attack spell or used an item: assumed to be from that")
+				ns.Trace(("hidden buff appeared right after you cast %s (not an attack spell): assumed to be from that")
+					:format(tostring(Spells.lastHelpfulCastName)))
 			elseif ns.db.hiddenProcs ~= false then
 				Hidden.announced = Hidden.announced + 1
 				ns.Trace("hidden buff appeared with nothing you did to explain it: announced as a proc")
@@ -82,6 +83,19 @@ function Hidden.Update()
 			end
 		end
 	end
+end
+
+-- For /fprocs debug.
+function Hidden.Describe()
+	local all, mine = InstanceIDs("HELPFUL"), InstanceIDs("HELPFUL|PLAYER")
+	local function Count(set)
+		if not set then return "unavailable" end
+		local n = 0
+		for _ in pairs(set) do n = n + 1 end
+		return tostring(n)
+	end
+	return ("buff IDs: %s total, %s cast by you; buffs hidden right now: %s; in a group: %s"):format(
+		Count(all), Count(mine), tostring(API.AurasRestricted()), tostring(IsInGroup and IsInGroup() or false))
 end
 
 ns.OnUnit("UNIT_AURA", "player", function() Hidden.Update() end)

@@ -32,6 +32,12 @@ local function DebugStatus()
 		d.heals, d.secret, p and (p.name .. " (id " .. p.id .. ")") or "none found"))
 	ns.Trace(("hidden buffs that appeared in combat: %d, announced as procs: %d"):format(
 		ns.Hidden.seen, ns.Hidden.announced))
+	ns.Trace(ns.Hidden.Describe())
+	local fb = ns.Spells.active["Frostbolt"] or ns.Spells.active["Fireball"] or ns.Spells.active["Arcane Missiles"]
+	if fb then
+		ns.Trace(("attack-spell check: %s counts as an attack spell: %s"):format(
+			tostring(ns.API.SpellInfo(fb)), tostring(ns.API.IsHarmfulSpell(fb))))
+	end
 	ns.Trace(("spellbook: %d castable spells known"):format(ns.Spells.count))
 	ns.Trace("your buffs right now:")
 	ns.Auras.DescribeCurrent()
