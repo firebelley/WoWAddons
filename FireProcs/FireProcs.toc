@@ -16,4 +16,5 @@ Auras.lua
 Changes.lua
 Casts.lua
 Drain.lua
+Options.lua
 Core.lua

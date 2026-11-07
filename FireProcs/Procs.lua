@@ -23,10 +23,16 @@ local function TooFrequent(name, now)
 end
 
 -- kind: "aura" (a buff you gained), "ready" (an ability lit up) or "event"
--- (a one-off spell that went off by itself). Returns true if it's a live proc.
-function ns.Proc(name, icon, kind)
+-- (a one-off spell that went off by itself).
+-- setting: the db switch for this kind of detection ("detectBuffs"...), so the
+-- options panel can turn whole kinds off. Returns true if it's a live proc.
+function ns.Proc(name, icon, kind, setting)
 	local db = ns.db
 	if not db or not name or name == "" then return false end
+	if setting and db[setting] == false then
+		ns.Trace(("%s: not announced (%s is off in the options)"):format(name, setting))
+		return false
+	end
 	if db.muted[name] then
 		ns.Trace(name .. ": muted, not announced")
 		return false
@@ -44,7 +50,7 @@ function ns.Proc(name, icon, kind)
 	ns.lastProc = name
 	if not db.seen[name] then
 		db.seen[name] = true
-		ns.Print(("new proc: |cffffd100%s|r. Type /fprocs mute right after it shows to stop announcing it."):format(name))
+		ns.Print(("new proc: |cffffd100%s|r. Turn it off in /fprocs procs, or type /fprocs mute right after it shows."):format(name))
 	end
 
 	if now - (lastShown[name] or -100) >= THROTTLE then

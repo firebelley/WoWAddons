@@ -51,9 +51,9 @@ local function Check()
 			if prev == 0 and not quiet then pending[s.name] = true end
 			if pending[s.name] and state == 2 and not OnCooldown(s.id) then
 				pending[s.name] = nil
-				if ns.Proc(s.name, s.icon, "ready") then
+				if ns.Proc(s.name, s.icon, "ready", "detectAbilities") then
 					announced[s.name] = true
-					Glow.Set(s.name, true)
+					Glow.Set(s.name, ns.db.glowButtons ~= false)
 				end
 			end
 		else
@@ -110,10 +110,10 @@ end)
 ns.On("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", function(spellID)
 	local name, icon = API.SpellInfo(spellID)
 	ns.Trace(("Blizzard proc glow on %s (id %s)"):format(tostring(name), tostring(spellID)))
-	ns.Proc(name, icon, "ready")
+	ns.Proc(name, icon, "ready", "detectAbilities")
 end)
 ns.On("SPELL_ACTIVATION_OVERLAY_SHOW", function(spellID)
 	local name, icon = API.SpellInfo(spellID)
 	ns.Trace(("Blizzard proc art for %s (id %s)"):format(tostring(name), tostring(spellID)))
-	ns.Proc(name, icon, "aura")
+	ns.Proc(name, icon, "aura", "detectBuffs")
 end)

@@ -92,7 +92,7 @@ function Auras.Update()
 			if not present[key] then
 				if not a.gift and Spells.WasRecentlyCast(a.name, a.spellId) then
 					ns.Trace("buff " .. Describe(a) .. " skipped: you just cast or used it")
-				elseif ns.Proc(a.name, a.icon, "aura") then
+				elseif ns.Proc(a.name, a.icon, "aura", a.gift and "detectGifts" or "detectBuffs") then
 					ns.Trace("buff " .. Describe(a) .. " announced")
 					if a.duration <= STAY_MAX then procs[key] = true end
 				end

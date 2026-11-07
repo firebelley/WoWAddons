@@ -42,14 +42,14 @@ local function Announce(changed)
 	if #changed >= MANY then
 		local p = FindPassive(nil)
 		ns.Trace(("%d spells became free/instant at once: announced as %s"):format(#changed, p and p.name or "free spells"))
-		ns.Proc(p and p.name or "Free spells", p and p.icon, "aura")
+		ns.Proc(p and p.name or "Free spells", p and p.icon, "aura", "detectChanges")
 		return
 	end
 	for _, c in ipairs(changed) do
 		local p = FindPassive(c.spell.name)
 		local name = p and p.name or (c.spell.name .. (c.what == "free" and " is free" or " is instant"))
 		ns.Trace(("%s became %s: announced as %s"):format(c.spell.name, c.what, name))
-		ns.Proc(name, p and p.icon or c.spell.icon, "aura")
+		ns.Proc(name, p and p.icon or c.spell.icon, "aura", "detectChanges")
 	end
 end
 

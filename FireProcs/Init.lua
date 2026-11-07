@@ -4,7 +4,19 @@ ns.ADDON = ADDON
 
 local DEFAULTS = {
 	sound = true,
+	showIcons = true,  -- icons (with timers) for active proc buffs under the announcements
+	scale = 1,         -- size of the announcements
+	hold = 1.5,        -- seconds an announcement stays before fading
+	-- What to announce (see Options.lua).
+	detectBuffs = true,     -- proc buffs: Clearcasting, Flurry...
+	detectAbilities = true, -- abilities that light up: Overpower, Execute...
+	glowButtons = true,     -- ...and make their action buttons glow
+	detectChanges = true,   -- spells that become free/instant: Missile Barrage...
+	detectDrain = true,     -- life-drain heals: Touch of the Grave
+	detectGifts = true,     -- long buffs from other players: Arcane Intellect...
+	detectTriggered = true, -- spells that go off by themselves
 }
+ns.DEFAULTS = DEFAULTS
 
 function ns.Print(msg)
 	print("|cffff8030FireProcs|r: " .. msg)

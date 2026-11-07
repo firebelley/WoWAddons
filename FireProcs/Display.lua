@@ -6,7 +6,7 @@ local API = ns.API
 local Display = {}
 ns.Display = Display
 
-local POP, HOLD, FADE = 0.15, 1.5, 0.6 -- seconds
+local POP, FADE = 0.15, 0.6 -- seconds; how long it holds is a setting (db.hold)
 local MAX_LINES = 3
 local LINE_HEIGHT = 44
 local ICON_SIZE = 36
@@ -29,6 +29,7 @@ holder:SetPoint("CENTER", UIParent, "CENTER", 0, DEFAULT_Y)
 local function LineOnUpdate(self, elapsed)
 	self.t = self.t + elapsed
 	local t, c = self.t, self.content
+	local HOLD = ns.db.hold or 1.5
 	if t < POP then
 		local p = t / POP
 		c:SetScale(1.6 - 0.6 * p)
@@ -152,6 +153,7 @@ end
 
 -- list: { name, icon, count, duration, expires } for each proc buff you have.
 function Display.SetAuras(list)
+	if ns.db.showIcons == false then list = {} end
 	local n = #list
 	row:SetWidth(math.max(n * AURA_SIZE + math.max(n - 1, 0) * AURA_GAP, 1))
 	for i, a in ipairs(list) do
@@ -234,4 +236,22 @@ function Display.Test()
 	C_Timer.After(8, function() ns.Auras.Update() end)
 end
 
-ns.On("PLAYER_LOGIN", Display.ApplyPosition)
+-- Size from the options. When changed live, the announcements stay centred on
+-- the same spot (positions are stored in the frame's own scaled units).
+function Display.ApplyScale(keepCenter)
+	local x, y = holder:GetCenter()
+	local oldScale = holder:GetEffectiveScale()
+	holder:SetScale(ns.db.scale or 1)
+	if keepCenter and x then
+		local s = holder:GetEffectiveScale() / UIParent:GetEffectiveScale()
+		local o = oldScale / UIParent:GetEffectiveScale()
+		holder:ClearAllPoints()
+		holder:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x * o / s, y * o / s)
+		ns.db.position = { "CENTER", "BOTTOMLEFT", x * o / s, y * o / s }
+	end
+end
+
+ns.On("PLAYER_LOGIN", function()
+	Display.ApplyScale(false)
+	Display.ApplyPosition()
+end)

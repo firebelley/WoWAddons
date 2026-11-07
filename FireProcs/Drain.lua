@@ -87,5 +87,5 @@ ns.OnUnit("UNIT_COMBAT", "player", function(_, action, _, _, school)
 	if why then return end
 
 	local p = Spells.drainPassive
-	ns.Proc(p.name, p.icon, "drain")
+	ns.Proc(p.name, p.icon, "drain", "detectDrain")
 end)

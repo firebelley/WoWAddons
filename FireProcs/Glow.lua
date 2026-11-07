@@ -131,6 +131,11 @@ function Glow.Refresh()
 	end
 end
 
+function Glow.ClearAll()
+	wipe(glowing)
+	Glow.Refresh()
+end
+
 function Glow.Set(name, on)
 	if (glowing[name] or false) == (on or false) then return end
 	glowing[name] = on or nil

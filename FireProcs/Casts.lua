@@ -35,7 +35,7 @@ function Casts.Triggered(spellID)
 	if Spells.WasRecentlyCast(name, spellID) then return Trace(name, spellID, "skipped, you just cast or used it") end
 
 	Spells.RememberIcon(name, icon)
-	if ns.Proc(name, icon or Spells.Icon(spellID, name), "event") then
+	if ns.Proc(name, icon or Spells.Icon(spellID, name), "event", "detectTriggered") then
 		Trace(name, spellID, "announced")
 	end
 end

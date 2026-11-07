@@ -11,6 +11,8 @@ end
 
 local function Help()
 	ns.Print("commands:")
+	print("  /fprocs - open the options")
+	print("  /fprocs procs - open the list of procs (turn each on/off)")
 	print("  /fprocs test - show a sample announcement")
 	print("  /fprocs move - unlock/lock the announcement position")
 	print("  /fprocs reset - put the announcements back in the default spot")
@@ -41,7 +43,11 @@ SlashCmdList.FIREPROCS = function(input)
 	cmd = (cmd or ""):lower()
 	local db = ns.db
 
-	if cmd == "test" then
+	if cmd == "" or cmd == "config" or cmd == "options" then
+		ns.Options.Open()
+	elseif cmd == "procs" then
+		ns.Options.Open("procs")
+	elseif cmd == "test" then
 		ns.Display.Test()
 	elseif cmd == "move" then
 		local moving = ns.Display.ToggleMove()
