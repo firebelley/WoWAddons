@@ -178,7 +178,7 @@ local function BuildMain()
 		"Add the proc glow to action buttons of abilities that light up, until they're used.",
 		function(on) if not on then ns.Glow.ClearAll() end end)
 	Checkbox("detectDrain", "Life-drain heals",
-		"Touch of the Grave and similar passives that heal you by chance. Only while you're not in a group (healers' heals look the same).")
+		"Touch of the Grave and similar passives that heal you by chance. In a group, heals right after a healer casts a healing spell are skipped (theirs look the same).")
 	Checkbox("detectTriggered", "Spells that go off by themselves",
 		"Spells of yours that fire without you casting them.")
 	Checkbox("detectGifts", "Long buffs from other players",

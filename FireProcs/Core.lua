@@ -83,6 +83,7 @@ SlashCmdList.FIREPROCS = function(input)
 		-- a proc has made a spell free or instant.
 		ns.Print(("status: in combat %s, buffs hidden %s"):format(
 			tostring(UnitAffectingCombat("player") and true or false), tostring(ns.API.AurasRestricted())))
+		print("  group: " .. ns.Drain.DescribeGroup())
 		local names = arg ~= "" and { arg } or { "Arcane Missiles", "Shadow Bolt", "Frostbolt", "Fireball", "Healing Touch", "Lightning Bolt" }
 		local any = false
 		for _, name in ipairs(names) do

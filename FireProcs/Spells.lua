@@ -197,6 +197,7 @@ local function LongestDuration(spellID)
 	end
 	return longest
 end
+Spells.LongestDuration = LongestDuration
 
 -- When you last cast a non-attack spell or used an item: buffs appearing right
 -- then are probably that spell's own (Ice Barrier, Arcane Power, a potion).
