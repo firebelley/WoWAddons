@@ -107,6 +107,34 @@ function Hidden.Update()
 	end
 end
 
+-- For /fprocs status: try every way of listing your buffs and report what the
+-- game answers.
+function Hidden.Probe()
+	local UA, S = C_UnitAuras or {}, C_Secrets or {}
+	local function Try(label, fn, ...)
+		if type(fn) ~= "function" then return label .. ": missing" end
+		local ok, a = pcall(fn, ...)
+		if not ok then return label .. ": error (" .. tostring(a):sub(1, 90) .. ")" end
+		if IsSecret(a) then return label .. ": hidden" end
+		if type(a) == "table" then
+			local n = 0
+			for _ in pairs(a) do n = n + 1 end
+			return ("%s: %d entries"):format(label, n)
+		end
+		return label .. ": " .. tostring(a)
+	end
+	local hiddenCount = API.ForEachAura("player", "HELPFUL", function() end)
+	return {
+		("in combat: %s; hidden flag: %s; buffs that can't be read: %d"):format(
+			tostring(UnitAffectingCombat("player") and true or false), tostring(API.AurasRestricted()), hiddenCount),
+		Try("GetUnitAuraInstanceIDs", UA.GetUnitAuraInstanceIDs, "player", "HELPFUL"),
+		Try("GetUnitAuras", UA.GetUnitAuras, "player", "HELPFUL"),
+		Try("GetAuraSlots", UA.GetAuraSlots, "player", "HELPFUL"),
+		Try("ShouldAurasBeSecret", S.ShouldAurasBeSecret),
+		"last buff list used: " .. Hidden.source,
+	}
+end
+
 -- For /fprocs debug.
 function Hidden.Describe()
 	local all = CurrentBuffs("HELPFUL")

@@ -22,6 +22,7 @@ local function Help()
 	print("  /fprocs hidden - turn on/off guessing at procs the game hides in combat (now "
 		.. (ns.db.hiddenProcs ~= false and "on" or "off") .. ")")
 	print("  /fprocs debug - explain in chat why things are or aren't announced")
+	print("  /fprocs status - what the game lets FireProcs see right now")
 end
 
 local function DebugStatus()
@@ -81,6 +82,13 @@ SlashCmdList.FIREPROCS = function(input)
 		db.muted[name] = nil
 		ns.ResetProcHistory(name)
 		ns.Print(("%s will be announced again."):format(name))
+	elseif cmd == "status" then
+		ns.Print("status:")
+		for _, line in ipairs(ns.Hidden.Probe()) do print("  " .. line) end
+		local fb = ns.Spells.active["Frostbolt"] or ns.Spells.active["Fireball"] or ns.Spells.active["Arcane Missiles"]
+		if fb then
+			print(("  attack-spell check: %s = %s"):format(tostring(ns.API.SpellInfo(fb)), tostring(ns.API.IsHarmfulSpell(fb))))
+		end
 	elseif cmd == "hidden" then
 		db.hiddenProcs = db.hiddenProcs == false
 		ns.Print(db.hiddenProcs and "announcing procs the game hides in combat (best guess)."
