@@ -106,6 +106,20 @@ function API.ForEachSpellbookSpell(fn)
 	end
 end
 
+-- Second opinion on passives: the spellbook's own flag isn't always set for
+-- talents and racials listed there. nil = can't tell.
+function API.IsPassiveSpell(spellID)
+	if C_Spell and C_Spell.IsSpellPassive then
+		local ok, passive = pcall(C_Spell.IsSpellPassive, spellID)
+		if ok and passive ~= nil then return passive end
+	end
+	if IsPassiveSpell then
+		local ok, passive = pcall(IsPassiveSpell, spellID)
+		if ok and passive ~= nil then return passive and true or false end
+	end
+	return nil
+end
+
 function API.TemplateExists(name)
 	if C_XMLUtil and C_XMLUtil.GetTemplateInfo then
 		local ok, info = pcall(C_XMLUtil.GetTemplateInfo, name)

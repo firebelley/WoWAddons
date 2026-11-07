@@ -37,7 +37,9 @@ end
 function Spells.Rebuild()
 	local active, count = {}, 0
 	API.ForEachSpellbookSpell(function(name, spellID, isPassive)
-		if name and spellID and not isPassive then
+		-- Passive talents/racials (Touch of the Grave, Missile Barrage...) share a
+		-- name with their proc, so they must never count as castable.
+		if name and spellID and not isPassive and not API.IsPassiveSpell(spellID) then
 			if not active[name] then count = count + 1 end
 			active[name] = spellID -- ranks are listed low to high; keep the highest
 		end
@@ -71,11 +73,12 @@ end
 -- True for your own spells and their direct side effects, which are named
 -- after them: "Charge Stun", "Feral Charge Effect", "Judgement of Wisdom",
 -- "Counterspell - Silenced", "Explosive Trap Effect"...
-function Spells.IsOwnSpellName(name)
-	if not name then return false end
-	if Spells.active[name] then return true end
+-- Returns the name of the spell of yours that `name` belongs to, or nil.
+function Spells.OwnSpellFor(name)
+	if not name then return nil end
+	if Spells.active[name] then return name end
 	local cached = prefixCache[name]
-	if cached ~= nil then return cached end
+	if cached ~= nil then return cached or nil end
 
 	cached = false
 	for own in pairs(Spells.active) do
@@ -83,13 +86,22 @@ function Spells.IsOwnSpellName(name)
 		if #name > n + 1 and name:sub(1, n) == own then
 			local nextChar = name:sub(n + 1, n + 1)
 			if nextChar == " " or nextChar == ":" or nextChar == "-" or nextChar == "(" then
-				cached = true
+				cached = own
 				break
 			end
 		end
 	end
 	prefixCache[name] = cached
-	return cached
+	return cached or nil
+end
+
+function Spells.IsOwnSpellName(name)
+	return Spells.OwnSpellFor(name) ~= nil
+end
+
+-- "Fireball (id 133)" for debug output.
+function Spells.Describe(own)
+	return ("%s (id %s)"):format(own, tostring(Spells.active[own]))
 end
 
 ---------------------------------------------------------------------------

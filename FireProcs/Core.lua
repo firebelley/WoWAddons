@@ -19,6 +19,17 @@ local function Help()
 	print("  /fprocs mute <name> - stop announcing a proc by name")
 	print("  /fprocs unmute <name> - announce it again")
 	print("  /fprocs muted - list muted procs")
+	print("  /fprocs debug - explain in chat why things are or aren't announced")
+end
+
+local function DebugStatus()
+	local log = ns.CombatLog
+	ns.Trace(("combat log: %s; %d entries seen, %d from you"):format(
+		log.registered and "listening" or ("NOT available (" .. tostring(log.problem) .. ")"),
+		log.events, log.mine))
+	ns.Trace(("spellbook: %d castable spells known"):format(ns.Spells.count))
+	ns.Trace("your buffs right now:")
+	ns.Auras.DescribeCurrent()
 end
 
 SLASH_FIREPROCS1 = "/fprocs"
@@ -59,6 +70,15 @@ SlashCmdList.FIREPROCS = function(input)
 		db.muted[name] = nil
 		ns.ResetProcHistory(name)
 		ns.Print(("%s will be announced again."):format(name))
+	elseif cmd == "debug" then
+		ns.tracing = not ns.tracing
+		if ns.tracing then
+			ns.CombatLog.ResetTrace()
+			ns.Print("debug on. Each buff and combat log effect from you is explained once. /fprocs debug again to stop.")
+			DebugStatus()
+		else
+			ns.Print("debug off.")
+		end
 	elseif cmd == "muted" then
 		local names = {}
 		for name, how in pairs(db.muted) do

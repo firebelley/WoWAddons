@@ -26,7 +26,11 @@ end
 -- (a one-off effect from the combat log). Returns true if it's a live proc.
 function ns.Proc(name, icon, kind)
 	local db = ns.db
-	if not db or not name or name == "" or db.muted[name] then return false end
+	if not db or not name or name == "" then return false end
+	if db.muted[name] then
+		ns.Trace(name .. ": muted, not announced")
+		return false
+	end
 	local now = GetTime()
 
 	-- Effects that fire on (almost) every hit, like some weapon enchants, would

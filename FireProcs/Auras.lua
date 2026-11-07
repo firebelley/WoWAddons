@@ -11,35 +11,51 @@ local Auras = {}
 ns.Auras = Auras
 
 local present = {} -- candidate buffs at the last scan, by key
+local seen = {}    -- every buff at the last scan, by key (for debug output)
 local procs = {}   -- keys of buffs announced as procs (shown in the icon row)
 local lastSignature
 local live = false -- false while taking the silent first look after loading
 
--- Permanent buffs (duration 0) are passives and stances, never procs.
-local function IsCandidate(a)
-	return a.source == "player" and a.duration > 0 and not Spells.IsOwnSpellName(a.name)
+-- Returns "proc", "gift" (a long buff from someone else) or nil plus the reason.
+local function Classify(a)
+	if a.source == "player" then
+		-- Permanent buffs are passives and stances, never procs.
+		if a.duration <= 0 then return nil, "permanent (passive, stance or aura)" end
+		local own = Spells.OwnSpellFor(a.name)
+		if own then return nil, "belongs to your spell " .. Spells.Describe(own) end
+		return "proc"
+	end
+	-- Short buffs from others are left out - healers' HoTs would never stop.
+	if a.duration > STAY_MAX then return "gift" end
+	return nil, ("from %s, %ss long (only buffs over %ss from others count)"):format(
+		tostring(a.source), tostring(a.duration), STAY_MAX)
 end
 
--- Long buffs someone else gave you: Arcane Intellect, Fortitude, Blessings,
--- world buffs... Short ones are left out - healers' HoTs would never stop.
-local function IsGift(a)
-	return a.source ~= "player" and a.duration > STAY_MAX
+local function Describe(a)
+	return ("%s (id %s, from %s, %ss)"):format(a.name, tostring(a.spellId), tostring(a.source), tostring(a.duration))
 end
 
 function Auras.Update()
-	local now, sig = {}, {}
+	local now, seenNow, sig = {}, {}, {}
 	API.ForEachAura("player", "HELPFUL", function(a)
 		Spells.RememberIcon(a.name, a.icon)
-		if IsCandidate(a) then
-			now[a.spellId or a.name] = a
-		elseif IsGift(a) then
-			a.gift = true
-			now[a.spellId or a.name] = a
-		elseif a.source == "player" then
-			sig[#sig + 1] = a.name -- your own spells: stealth, shouts, seals...
+		local key = a.spellId or a.name
+		seenNow[key] = true
+		local kind, why = Classify(a)
+		if kind then
+			a.gift = kind == "gift"
+			now[key] = a
+		else
+			if a.source == "player" then
+				sig[#sig + 1] = a.name -- your own spells: stealth, shouts, seals...
+			end
+			if live and not seen[key] then
+				ns.Trace("buff " .. Describe(a) .. " skipped: " .. why)
+			end
 		end
 	end)
 	API.ForEachAura("player", "HARMFUL", function(a) sig[#sig + 1] = a.name end)
+	seen = seenNow
 
 	-- Gaining or losing one of these (stealth, Forbearance, a stun...) changes what
 	-- you can cast, which mustn't be mistaken for an ability lighting up.
@@ -50,9 +66,12 @@ function Auras.Update()
 
 	if live and Spells.count > 0 then
 		for key, a in pairs(now) do
-			if not present[key] and (a.gift or not Spells.WasRecentlyCast(a.name, a.spellId)) then
-				if ns.Proc(a.name, a.icon, "aura") and a.duration <= STAY_MAX then
-					procs[key] = true
+			if not present[key] then
+				if not a.gift and Spells.WasRecentlyCast(a.name, a.spellId) then
+					ns.Trace("buff " .. Describe(a) .. " skipped: you just cast or used it")
+				elseif ns.Proc(a.name, a.icon, "aura") then
+					ns.Trace("buff " .. Describe(a) .. " announced")
+					if a.duration <= STAY_MAX then procs[key] = true end
 				end
 			end
 		end
@@ -70,6 +89,17 @@ function Auras.Update()
 	end
 	table.sort(list, function(x, y) return x.name < y.name end)
 	ns.Display.SetAuras(list)
+end
+
+-- For /fprocs debug: what FireProcs makes of every buff you have right now.
+function Auras.DescribeCurrent()
+	local any = false
+	API.ForEachAura("player", "HELPFUL", function(a)
+		any = true
+		local kind, why = Classify(a)
+		ns.Trace("  " .. Describe(a) .. ": " .. (kind and ("counts (" .. kind .. ")") or ("skipped, " .. why)))
+	end)
+	if not any then ns.Trace("  (no buffs)") end
 end
 
 ns.OnUnit("UNIT_AURA", "player", function() Auras.Update() end)

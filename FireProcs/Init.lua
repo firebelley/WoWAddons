@@ -10,6 +10,12 @@ function ns.Print(msg)
 	print("|cffff8030FireProcs|r: " .. msg)
 end
 
+-- /fprocs debug: explains every decision in chat.
+ns.tracing = false
+function ns.Trace(msg)
+	if ns.tracing then print("|cff80a0ffFireProcs debug|r: " .. msg) end
+end
+
 ---------------------------------------------------------------------------
 -- Errors: WoW hides Lua errors unless scriptErrors is on, so FireProcs prints
 -- its own (each distinct message once per session).
