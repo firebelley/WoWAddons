@@ -40,7 +40,7 @@ local function LineOnUpdate(self, elapsed)
 		c:SetAlpha(1 - (t - POP - HOLD) / FADE)
 	else
 		self:Hide()
-		self.name = nil
+		self.key = nil
 	end
 end
 
@@ -53,7 +53,7 @@ for i = 1, MAX_LINES do
 
 	local c = CreateFrame("Frame", nil, slot)
 	c:SetPoint("CENTER")
-	c:SetHeight(LINE_HEIGHT)
+	c:SetSize(WIDTH, LINE_HEIGHT)
 	c.icon = c:CreateTexture(nil, "ARTWORK")
 	c.icon:SetSize(ICON_SIZE, ICON_SIZE)
 	c.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
@@ -69,42 +69,65 @@ for i = 1, MAX_LINES do
 	lines[i] = slot
 end
 
+-- Icon + text centred as a pair, without measuring the text (a hidden name
+-- can be shown but not measured): shifting the text right by half the icon's
+-- width centres the whole pair.
+local GAP = 8
 local function LayoutLine(c, hasIcon)
 	c.icon:ClearAllPoints()
 	c.text:ClearAllPoints()
-	local textWidth = c.text:GetStringWidth() or 0
-	if hasIcon then
-		c.icon:SetPoint("LEFT", c, "LEFT", 0, 0)
-		c.text:SetPoint("LEFT", c.icon, "RIGHT", 8, 0)
-		c:SetWidth(math.max(ICON_SIZE + 8 + textWidth, 1))
-	else
-		c.text:SetPoint("LEFT", c, "LEFT", 0, 0)
-		c:SetWidth(math.max(textWidth, 1))
-	end
+	c.text:SetPoint("CENTER", c, "CENTER", hasIcon and (ICON_SIZE + GAP) / 2 or 0, 0)
+	if hasIcon then c.icon:SetPoint("RIGHT", c.text, "LEFT", -GAP, 0) end
 end
 
 local lastSound = 0
 
-function Display.Alert(name, icon)
-	-- Reuse the line already showing this proc, then a free one, then the oldest.
-	local line
+-- key: what identifies this announcement (defaults to the name), so the same
+-- proc re-uses its line instead of stacking.
+local function PickLine(key)
 	for _, l in ipairs(lines) do
-		if l:IsShown() and l.name == name then line = l break end
+		if l:IsShown() and l.key == key then return l end
 	end
-	if not line then
-		for _, l in ipairs(lines) do
-			if not l:IsShown() then line = l break end
-		end
+	for _, l in ipairs(lines) do
+		if not l:IsShown() then return l end
 	end
-	if not line then
-		line = lines[1]
-		for _, l in ipairs(lines) do
-			if l.t > line.t then line = l end
-		end
+	local oldest = lines[1]
+	for _, l in ipairs(lines) do
+		if l.t > oldest.t then oldest = l end
 	end
+	return oldest
+end
 
+local function Play(line)
+	line.t = 0
+	line.content:SetAlpha(0)
+	line:Show()
+	local now = GetTime()
+	if ns.db.sound and now - lastSound > 0.3 then
+		lastSound = now
+		API.PlayAlertSound()
+	end
+end
+
+-- For buffs the game hides from addons: the name and icon are passed straight
+-- to the screen, never read.
+local FALLBACK_TEXT = "Proc!"
+local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+function Display.AlertHidden(name, icon, key)
+	local line = PickLine(key)
+	line.key = key
 	local c = line.content
-	line.name = name
+	if name == nil or not pcall(c.text.SetText, c.text, name) then c.text:SetText(FALLBACK_TEXT) end
+	if icon == nil or not pcall(c.icon.SetTexture, c.icon, icon) then c.icon:SetTexture(FALLBACK_ICON) end
+	c.icon:Show()
+	LayoutLine(c, true)
+	Play(line)
+end
+
+function Display.Alert(name, icon)
+	local line = PickLine(name)
+	line.key = name
+	local c = line.content
 	c.text:SetText(name)
 	if icon then
 		c.icon:SetTexture(icon)
@@ -113,15 +136,7 @@ function Display.Alert(name, icon)
 		c.icon:Hide()
 	end
 	LayoutLine(c, icon ~= nil)
-	line.t = 0
-	c:SetAlpha(0)
-	line:Show()
-
-	local now = GetTime()
-	if ns.db.sound and now - lastSound > 0.3 then
-		lastSound = now
-		API.PlayAlertSound()
-	end
+	Play(line)
 end
 
 ---------------------------------------------------------------------------

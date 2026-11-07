@@ -19,6 +19,8 @@ local function Help()
 	print("  /fprocs mute <name> - stop announcing a proc by name")
 	print("  /fprocs unmute <name> - announce it again")
 	print("  /fprocs muted - list muted procs")
+	print("  /fprocs hidden - turn on/off guessing at procs the game hides in combat (now "
+		.. (ns.db.hiddenProcs ~= false and "on" or "off") .. ")")
 	print("  /fprocs debug - explain in chat why things are or aren't announced")
 end
 
@@ -28,6 +30,8 @@ local function DebugStatus()
 	local d, p = ns.Drain, ns.Spells.drainPassive
 	ns.Trace(("heals on you seen: %d (%d with hidden values); drain passive: %s"):format(
 		d.heals, d.secret, p and (p.name .. " (id " .. p.id .. ")") or "none found"))
+	ns.Trace(("hidden buffs that appeared in combat: %d, announced as procs: %d"):format(
+		ns.Hidden.seen, ns.Hidden.announced))
 	ns.Trace(("spellbook: %d castable spells known"):format(ns.Spells.count))
 	ns.Trace("your buffs right now:")
 	ns.Auras.DescribeCurrent()
@@ -71,6 +75,10 @@ SlashCmdList.FIREPROCS = function(input)
 		db.muted[name] = nil
 		ns.ResetProcHistory(name)
 		ns.Print(("%s will be announced again."):format(name))
+	elseif cmd == "hidden" then
+		db.hiddenProcs = db.hiddenProcs == false
+		ns.Print(db.hiddenProcs and "announcing procs the game hides in combat (best guess)."
+			or "no longer guessing at hidden procs.")
 	elseif cmd == "debug" then
 		ns.tracing = not ns.tracing
 		if ns.tracing then

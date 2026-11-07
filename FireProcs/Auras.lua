@@ -51,7 +51,6 @@ function Auras.Update()
 	wasRestricted = restricted
 
 	local now, seenNow, sig = {}, {}, {}
-	local hiddenBefore = Auras.hidden
 	Auras.hidden = API.ForEachAura("player", "HELPFUL", function(a)
 		Spells.RememberIcon(a.name, a.icon)
 		local key = a.spellId or a.name
@@ -71,9 +70,6 @@ function Auras.Update()
 	end)
 	API.ForEachAura("player", "HARMFUL", function(a) sig[#sig + 1] = a.name end)
 	seen = seenNow
-	if restricted and Auras.hidden > hiddenBefore then
-		ns.Trace("a buff appeared that the game hides from addons in combat")
-	end
 
 	if restricted then
 		local t = GetTime()

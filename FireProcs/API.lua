@@ -42,6 +42,21 @@ function API.AuraIsSecret(spellID)
 	return ok and secret and true or false
 end
 
+-- True for attack spells (Frostbolt, Arcane Blast...), false for buffs, heals,
+-- items and anything unknown.
+function API.IsHarmfulSpell(spellID)
+	if C_Spell and C_Spell.IsSpellHarmful then
+		local ok, harmful = pcall(C_Spell.IsSpellHarmful, spellID)
+		if ok and not API.IsSecret(harmful) then return harmful and true or false end
+	end
+	if IsHarmfulSpell then
+		local name = API.SpellInfo(spellID)
+		local ok, harmful = pcall(IsHarmfulSpell, name or spellID)
+		if ok then return harmful and true or false end
+	end
+	return false
+end
+
 -- start, duration (0, 0 when not on cooldown or when hidden in combat)
 function API.SpellCooldown(spell)
 	local start, duration = 0, 0
