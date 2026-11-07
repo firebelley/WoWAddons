@@ -13,7 +13,7 @@ Display.lua
 Glow.lua
 Reactive.lua
 Auras.lua
-Hidden.lua
+Changes.lua
 Casts.lua
 Drain.lua
 Core.lua

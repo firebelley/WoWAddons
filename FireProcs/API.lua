@@ -42,6 +42,44 @@ function API.AuraIsSecret(spellID)
 	return ok and secret and true or false
 end
 
+-- Total power cost of a spell right now (procs like Clearcasting make it 0),
+-- or nil if unknown/hidden.
+function API.SpellCost(spellID)
+	local costs
+	if C_Spell and C_Spell.GetSpellPowerCost then
+		local ok, result = pcall(C_Spell.GetSpellPowerCost, spellID)
+		if ok then costs = result end
+	elseif GetSpellPowerCost then
+		local ok, result = pcall(GetSpellPowerCost, spellID)
+		if ok then costs = result end
+	end
+	if type(costs) ~= "table" or API.IsSecret(costs) then return nil end
+	local total = 0
+	for _, c in ipairs(costs) do
+		local v = c.cost
+		if API.IsSecret(v) then return nil end
+		total = total + (v or 0)
+	end
+	return total
+end
+
+-- Cast time in ms right now (procs like Shadow Trance make it 0), or nil.
+function API.CastTime(spellID)
+	if C_Spell and C_Spell.GetSpellInfo then
+		local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
+		if ok and type(info) == "table" then
+			local t = info.castTime
+			if API.IsSecret(t) then return nil end
+			return t
+		end
+	end
+	if GetSpellInfo then
+		local ok, _, _, _, t = pcall(GetSpellInfo, spellID)
+		if ok and not API.IsSecret(t) then return t end
+	end
+	return nil
+end
+
 -- True for attack spells (Frostbolt, Arcane Blast...), false for buffs, heals,
 -- items and anything unknown.
 function API.IsHarmfulSpell(spellID)

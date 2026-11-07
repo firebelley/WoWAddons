@@ -7,6 +7,7 @@ local _, ns = ...
 local API = ns.API
 
 local Spells = {
+	passives = {},
 	active = {},   -- [name] = spellID for every castable (non-passive) spell
 	reactive = {}, -- { name, id, icon } list, minus shapeshift forms
 	count = 0,
@@ -43,7 +44,7 @@ local function IsDrainPassive(spellID)
 end
 
 function Spells.Rebuild()
-	local active, count, drain = {}, 0, nil
+	local active, count, drain, passives = {}, 0, nil, {}
 	API.ForEachSpellbookSpell(function(name, spellID, isPassive)
 		if not (name and spellID) then return end
 		-- Passive talents/racials (Touch of the Grave, Missile Barrage...) share a
@@ -51,12 +52,15 @@ function Spells.Rebuild()
 		if not isPassive and not API.IsPassiveSpell(spellID) then
 			if not active[name] then count = count + 1 end
 			active[name] = spellID -- ranks are listed low to high; keep the highest
-		elseif not drain and IsDrainPassive(spellID) then
+		else
 			local _, icon = API.SpellInfo(spellID)
-			drain = { name = name, id = spellID, icon = icon }
+			local entry = { name = name, id = spellID, icon = icon, desc = API.SpellDescription(spellID):lower() }
+			passives[#passives + 1] = entry
+			if not drain and IsDrainPassive(spellID) then drain = entry end
 		end
 	end)
 	Spells.drainPassive = drain
+	Spells.passives = passives -- talents/racials, with lower-case tooltip text
 
 	-- Forms, stances and auras switch on/off with you, so they're never "procs".
 	local forms, reactive = FormNames(), {}

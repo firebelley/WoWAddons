@@ -109,21 +109,6 @@ local function Play(line)
 	end
 end
 
--- For buffs the game hides from addons: the name and icon are passed straight
--- to the screen, never read.
-local FALLBACK_TEXT = "Proc!"
-local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
-function Display.AlertHidden(name, icon, key)
-	local line = PickLine(key)
-	line.key = key
-	local c = line.content
-	if name == nil or not pcall(c.text.SetText, c.text, name) then c.text:SetText(FALLBACK_TEXT) end
-	if icon == nil or not pcall(c.icon.SetTexture, c.icon, icon) then c.icon:SetTexture(FALLBACK_ICON) end
-	c.icon:Show()
-	LayoutLine(c, true)
-	Play(line)
-end
-
 function Display.Alert(name, icon)
 	local line = PickLine(name)
 	line.key = name

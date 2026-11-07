@@ -19,8 +19,6 @@ local function Help()
 	print("  /fprocs mute <name> - stop announcing a proc by name")
 	print("  /fprocs unmute <name> - announce it again")
 	print("  /fprocs muted - list muted procs")
-	print("  /fprocs hidden - turn on/off guessing at procs the game hides in combat (now "
-		.. (ns.db.hiddenProcs ~= false and "on" or "off") .. ")")
 	print("  /fprocs debug - explain in chat why things are or aren't announced")
 	print("  /fprocs status - what the game lets FireProcs see right now")
 end
@@ -31,15 +29,7 @@ local function DebugStatus()
 	local d, p = ns.Drain, ns.Spells.drainPassive
 	ns.Trace(("heals on you seen: %d (%d with hidden values); drain passive: %s"):format(
 		d.heals, d.secret, p and (p.name .. " (id " .. p.id .. ")") or "none found"))
-	ns.Trace(("hidden buffs that appeared in combat: %d, announced as procs: %d"):format(
-		ns.Hidden.seen, ns.Hidden.announced))
-	ns.Trace(ns.Hidden.Describe())
-	local fb = ns.Spells.active["Frostbolt"] or ns.Spells.active["Fireball"] or ns.Spells.active["Arcane Missiles"]
-	if fb then
-		ns.Trace(("attack-spell check: %s counts as an attack spell: %s"):format(
-			tostring(ns.API.SpellInfo(fb)), tostring(ns.API.IsHarmfulSpell(fb))))
-	end
-	ns.Trace(("spellbook: %d castable spells known"):format(ns.Spells.count))
+	ns.Trace(("spellbook: %d castable spells known, %d passives"):format(ns.Spells.count, #ns.Spells.passives))
 	ns.Trace("your buffs right now:")
 	ns.Auras.DescribeCurrent()
 end
@@ -83,16 +73,20 @@ SlashCmdList.FIREPROCS = function(input)
 		ns.ResetProcHistory(name)
 		ns.Print(("%s will be announced again."):format(name))
 	elseif cmd == "status" then
-		ns.Print("status:")
-		for _, line in ipairs(ns.Hidden.Probe()) do print("  " .. line) end
-		local fb = ns.Spells.active["Frostbolt"] or ns.Spells.active["Fireball"] or ns.Spells.active["Arcane Missiles"]
-		if fb then
-			print(("  attack-spell check: %s = %s"):format(tostring(ns.API.SpellInfo(fb)), tostring(ns.API.IsHarmfulSpell(fb))))
+		-- /fprocs status [spell]: what the game reports right now, e.g. whether
+		-- a proc has made a spell free or instant.
+		ns.Print(("status: in combat %s, buffs hidden %s"):format(
+			tostring(UnitAffectingCombat("player") and true or false), tostring(ns.API.AurasRestricted())))
+		local names = arg ~= "" and { arg } or { "Arcane Missiles", "Shadow Bolt", "Frostbolt", "Fireball", "Healing Touch", "Lightning Bolt" }
+		local any = false
+		for _, name in ipairs(names) do
+			local id = ns.Spells.active[FindName(ns.Spells.active, name) or name]
+			if id then
+				any = true
+				print("  " .. ns.Changes.Describe(id))
+			end
 		end
-	elseif cmd == "hidden" then
-		db.hiddenProcs = db.hiddenProcs == false
-		ns.Print(db.hiddenProcs and "announcing procs the game hides in combat (best guess)."
-			or "no longer guessing at hidden procs.")
+		if not any then print("  (none of those spells are in your spellbook - try /fprocs status <spell name>)") end
 	elseif cmd == "debug" then
 		ns.tracing = not ns.tracing
 		if ns.tracing then
