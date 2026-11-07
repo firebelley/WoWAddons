@@ -43,6 +43,32 @@ local function IsDrainPassive(spellID)
 	return (text:find("drain") and text:find("health")) or (text:find("chance") and text:find("heal"))
 end
 
+-- Your learned talents, with their tooltip text: talents like Missile Barrage
+-- aren't in the spellbook, so their text is read from a hidden tooltip.
+local scanner
+local function AddTalents(list)
+	if not (GetNumTalentTabs and GetNumTalents and GetTalentInfo) then return end
+	scanner = scanner or CreateFrame("GameTooltip", "FireProcsScanTooltip", nil, "GameTooltipTemplate")
+	for tab = 1, GetNumTalentTabs() or 0 do
+		for i = 1, GetNumTalents(tab) or 0 do
+			local name, icon, _, _, rank = GetTalentInfo(tab, i)
+			if name and type(rank) == "number" and rank > 0 then
+				local lines = {}
+				scanner:SetOwner(UIParent, "ANCHOR_NONE")
+				if pcall(scanner.SetTalent, scanner, tab, i) then
+					for l = 2, scanner:NumLines() do -- line 1 is the name
+						local fs = _G["FireProcsScanTooltipTextLeft" .. l]
+						local text = fs and fs:GetText()
+						if type(text) == "string" and not API.IsSecret(text) then lines[#lines + 1] = text end
+					end
+				end
+				scanner:Hide()
+				list[#list + 1] = { name = name, icon = icon, desc = table.concat(lines, " "):lower(), talent = true }
+			end
+		end
+	end
+end
+
 function Spells.Rebuild()
 	local active, count, drain, passives = {}, 0, nil, {}
 	API.ForEachSpellbookSpell(function(name, spellID, isPassive)
@@ -59,8 +85,9 @@ function Spells.Rebuild()
 			if not drain and IsDrainPassive(spellID) then drain = entry end
 		end
 	end)
+	pcall(AddTalents, passives)
 	Spells.drainPassive = drain
-	Spells.passives = passives -- talents/racials, with lower-case tooltip text
+	Spells.passives = passives -- passive spells and learned talents, with lower-case tooltip text
 
 	-- Forms, stances and auras switch on/off with you, so they're never "procs".
 	local forms, reactive = FormNames(), {}
@@ -225,3 +252,5 @@ ns.On("PLAYER_LOGIN", Spells.Rebuild)
 ns.On("SPELLS_CHANGED", RequestRebuild)
 ns.On("LEARNED_SPELL_IN_TAB", RequestRebuild)
 ns.On("UPDATE_SHAPESHIFT_FORMS", RequestRebuild)
+ns.On("CHARACTER_POINTS_CHANGED", RequestRebuild)
+ns.On("PLAYER_TALENT_UPDATE", RequestRebuild)

@@ -25,6 +25,8 @@ local last = {} -- [spellID] = { cost, cast } at the previous check
 -- The talent behind a change, by its tooltip.
 local function FindPassive(spellName)
 	for _, p in ipairs(Spells.passives or {}) do
+		-- Spell tooltips can still be loading at login; fetch again if empty.
+		if p.desc == "" and p.id then p.desc = API.SpellDescription(p.id):lower() end
 		local d = p.desc
 		if d:find("chance", 1, true) then
 			if spellName then
@@ -95,6 +97,9 @@ ns.On("SPELLS_CHANGED", function() wipe(last) end)
 -- For /fprocs status: what the game reports for a spell right now.
 function Changes.Describe(spellID)
 	local cost, cast = API.SpellCost(spellID), API.CastTime(spellID)
-	return ("%s: cost %s, cast time %s"):format(tostring(API.SpellInfo(spellID)),
-		cost == nil and "hidden/unknown" or tostring(cost), cast == nil and "hidden/unknown" or tostring(cast))
+	local name = API.SpellInfo(spellID)
+	local p = name and FindPassive(name)
+	return ("%s: cost %s, cast time %s; its proc talent: %s"):format(tostring(name),
+		cost == nil and "hidden/unknown" or tostring(cost), cast == nil and "hidden/unknown" or tostring(cast),
+		p and p.name or ("none found among " .. #(Spells.passives or {}) .. " passives/talents"))
 end
