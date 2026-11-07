@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: FireThreat
+## Notes: A list of the enemies you're fighting, sorted so the ones that aren't attacking you are on top.
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariables: FireThreatDB
+
+FireThreat.lua
+Options.lua
