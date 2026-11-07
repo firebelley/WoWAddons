@@ -1,8 +1,11 @@
--- The options panel: Options > AddOns > FireProcs (or /fprocs config).
+-- The options panel: Options > AddOns > FireProcs (or /fprocs).
 --
--- Main page: Blizzard's standard settings controls (look and behave like the
--- game's own options). "Procs" sub-page: every proc seen so far, each with a
--- checkbox to keep or stop announcing it.
+-- Both pages are "canvas" pages: plain frames FireProcs draws itself with
+-- Blizzard's widget templates. The game's settings search (which also runs in
+-- the Keybindings page) walks every list-style page's controls, and running
+-- into controls an addon created taints Blizzard's keybinding code - that
+-- caused "FireProcs has been blocked from an action only available to the
+-- Blizzard UI". Canvas pages aren't searched, so they can't cause that.
 local _, ns = ...
 
 local Options = {}
@@ -10,77 +13,150 @@ ns.Options = Options
 
 local category, procsCategory
 
-local function VarType(value)
-	local vt = Settings.VarType
-	if type(value) == "number" then return vt and vt.Number or "number" end
-	return vt and vt.Boolean or "boolean"
-end
-
-local function OnChange(setting, fn)
-	if not fn then return end
-	if setting.SetValueChangedCallback then
-		setting:SetValueChangedCallback(function(_, value) ns.SafeCall(fn, value) end)
-	elseif Settings.SetOnValueChangedCallback then
-		Settings.SetOnValueChangedCallback(setting:GetVariable(), function(_, _, value) ns.SafeCall(fn, value) end)
-	end
+local function Tooltip(widget, title, text)
+	widget:HookScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(title, 1, 1, 1)
+		if text then GameTooltip:AddLine(text, nil, nil, nil, true) end
+		GameTooltip:Show()
+	end)
+	widget:HookScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 ---------------------------------------------------------------------------
 -- Main page
 ---------------------------------------------------------------------------
 local function BuildMain()
-	local db = ns.db
-	category = Settings.RegisterVerticalLayoutCategory("FireProcs")
-	local layout = SettingsPanel and SettingsPanel.GetLayout and SettingsPanel:GetLayout(category)
+	local panel = CreateFrame("Frame")
+	panel:Hide()
+	local refreshers = {} -- re-read db into the widgets each time the page opens
+	local y = -16         -- next free spot, top to bottom
+
+	local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", 16, y)
+	title:SetText("FireProcs")
+	y = y - 30
 
 	local function Header(text)
-		if layout and CreateSettingsListSectionHeaderInitializer then
-			layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(text))
-		end
+		y = y - 8
+		local h = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+		h:SetPoint("TOPLEFT", 16, y)
+		h:SetText(text)
+		local line = panel:CreateTexture(nil, "ARTWORK")
+		line:SetColorTexture(1, 1, 1, 0.15)
+		line:SetHeight(1)
+		line:SetPoint("LEFT", h, "RIGHT", 8, 0)
+		line:SetPoint("RIGHT", panel, "RIGHT", -16, 0)
+		y = y - 24
 	end
 
-	local function Button(label, buttonText, tooltip, onClick)
-		if layout and CreateSettingsButtonInitializer then
-			layout:AddInitializer(CreateSettingsButtonInitializer(label, buttonText, function()
-				ns.SafeCall(onClick)
-			end, tooltip, true))
+	-- Buttons go side by side on one row.
+	local lastButton
+	local function Button(text, tooltip, onClick)
+		local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+		b:SetSize(130, 22)
+		b:SetText(text)
+		if lastButton then
+			b:SetPoint("LEFT", lastButton, "RIGHT", 8, 0)
+		else
+			b:SetPoint("TOPLEFT", 20, y)
 		end
+		b:SetScript("OnClick", function() ns.SafeCall(onClick) end)
+		Tooltip(b, text, tooltip)
+		lastButton = b
 	end
-
-	local function Register(key, label)
-		return Settings.RegisterAddOnSetting(category, "FireProcs_" .. key, key, db,
-			VarType(ns.DEFAULTS[key]), label, ns.DEFAULTS[key])
+	local function EndButtons()
+		lastButton = nil
+		y = y - 34
 	end
 
 	local function Checkbox(key, label, tooltip, onChange)
-		local setting = Register(key, label)
-		Settings.CreateCheckbox(category, setting, tooltip)
-		OnChange(setting, onChange)
+		local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+		cb:SetSize(26, 26)
+		cb:SetPoint("TOPLEFT", 16, y)
+		local text = cb:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		text:SetPoint("LEFT", cb, "RIGHT", 4, 1)
+		text:SetText(label)
+		cb:SetHitRectInsets(0, -(text:GetStringWidth() + 8), 0, 0) -- clicking the label works too
+		cb:SetScript("OnClick", function(self)
+			local on = self:GetChecked() and true or false
+			ns.db[key] = on
+			if onChange then ns.SafeCall(onChange, on) end
+		end)
+		Tooltip(cb, label, tooltip)
+		refreshers[#refreshers + 1] = function() cb:SetChecked(ns.db[key] ~= false) end
+		y = y - 28
 	end
 
+	-- Sliders in the classic options look; two fit side by side.
+	local sliderX = 0
 	local function Slider(key, label, tooltip, min, max, step, format, onChange)
-		local setting = Register(key, label)
-		local options = Settings.CreateSliderOptions(min, max, step)
-		if MinimalSliderWithSteppersMixin and options.SetLabelFormatter then
-			options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		local ok, s = pcall(CreateFrame, "Slider", nil, panel, "BackdropTemplate")
+		if not ok then s = CreateFrame("Slider", nil, panel) end
+		s:SetOrientation("HORIZONTAL")
+		s:SetSize(200, 17)
+		s:SetPoint("TOPLEFT", 24 + sliderX, y - 18)
+		if s.SetBackdrop then
+			s:SetBackdrop({
+				bgFile = "Interface\\Buttons\\UI-SliderBar-Background",
+				edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
+				tile = true, tileSize = 8, edgeSize = 8,
+				insets = { left = 3, right = 3, top = 6, bottom = 6 },
+			})
 		end
-		Settings.CreateSlider(category, setting, options, tooltip)
-		OnChange(setting, onChange)
+		s:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
+		s:SetMinMaxValues(min, max)
+		s:SetValueStep(step)
+		if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
+		s:EnableMouseWheel(true)
+
+		local name = s:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		name:SetPoint("BOTTOMLEFT", s, "TOPLEFT", 0, 2)
+		name:SetText(label)
+		local value = s:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		value:SetPoint("BOTTOMRIGHT", s, "TOPRIGHT", 0, 2)
+
+		local loading = false
+		s:SetScript("OnValueChanged", function(self, v)
+			v = math.floor((v - min) / step + 0.5) * step + min -- snap to the step
+			value:SetText(format(v))
+			if loading or ns.db[key] == v then return end
+			ns.db[key] = v
+			if onChange then ns.SafeCall(onChange, v) end
+		end)
+		s:SetScript("OnMouseWheel", function(self, delta)
+			self:SetValue(math.max(min, math.min(max, self:GetValue() + delta * step)))
+		end)
+		Tooltip(s, label, tooltip)
+		refreshers[#refreshers + 1] = function()
+			loading = true
+			s:SetValue(ns.db[key] or ns.DEFAULTS[key])
+			value:SetText(format(ns.db[key] or ns.DEFAULTS[key]))
+			loading = false
+		end
+
+		if sliderX == 0 then
+			sliderX = 250
+		else
+			sliderX = 0
+			y = y - 48
+		end
 	end
 
 	local function RefreshAuras() ns.Auras.Update() end
 
 	Header("Announcements")
-	Button("Preview", "Test", "Show a sample announcement.", function() ns.Display.Test() end)
-	Button("Position", "Unlock / Lock", "Unlock to drag the announcements to a new spot (close this window first), then press again to lock.",
+	Button("Test", "Show a sample announcement.", function() ns.Display.Test() end)
+	Button("Unlock / Lock", "Unlock to drag the announcements to a new spot (close this window first), then press again to lock.",
 		function()
 			local moving = ns.Display.ToggleMove()
 			if moving then ns.Display.Test() end
 			ns.Print(moving and "drag the blue box, then press Unlock / Lock again (or type /fprocs move)." or "position saved.")
 		end)
-	Button("", "Reset position", "Put the announcements back above your character.", function()
+	Button("Reset position", "Put the announcements back above your character.", function()
 		ns.Display.ResetPosition()
 	end)
+	EndButtons()
 	Slider("scale", "Size", "How big the announcements are.", 0.5, 2, 0.05,
 		function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end,
 		function() ns.Display.ApplyScale(true) end)
@@ -108,6 +184,11 @@ local function BuildMain()
 	Checkbox("detectGifts", "Long buffs from other players",
 		"Arcane Intellect, Fortitude, Blessings, world buffs and other long buffs someone gives you.", RefreshAuras)
 
+	panel:SetScript("OnShow", function()
+		for _, fn in ipairs(refreshers) do ns.SafeCall(fn) end
+	end)
+
+	category = Settings.RegisterCanvasLayoutCategory(panel, "FireProcs")
 	Settings.RegisterAddOnCategory(category)
 end
 
@@ -213,7 +294,16 @@ function Options.Open(page)
 end
 
 ns.On("PLAYER_LOGIN", function()
-	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterAddOnSetting) then return end
+	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
 	BuildMain()
 	if Settings.RegisterCanvasLayoutSubcategory then BuildProcs() end
 end)
+
+-- If the game ever blocks FireProcs again, say which function so it can be fixed.
+local function ReportBlocked(addon, func)
+	if addon == "FireProcs" then
+		ns.Print(("the game blocked FireProcs from calling %s - please report this."):format(tostring(func)))
+	end
+end
+ns.On("ADDON_ACTION_BLOCKED", ReportBlocked)
+ns.On("ADDON_ACTION_FORBIDDEN", ReportBlocked)
