@@ -13,6 +13,7 @@ ns.Reactive = Reactive
 local QUIET_TIME = 0.5   -- seconds after a "you changed something" event to ignore
 local CHECK_DELAY = 0.05 -- let all of a frame's events land before checking
 local TICK = 0.25        -- backup check rate while in combat
+local MASS_UNLOCK = 3    -- this many abilities usable at once = a silence/stun ended
 
 -- Per spell: 0 = conditions not met, 1 = met but not enough rage/mana/energy, 2 = usable
 local states = {}
@@ -41,9 +42,24 @@ local function Check()
 	checkQueued = false
 	local fight = InFight()
 	local quiet = GetTime() < quietUntil
+
+	-- First read every spell, counting how many just became possible.
+	local new, risen = {}, 0
 	for _, s in ipairs(Spells.reactive) do
 		local usable, noPower = API.IsUsable(s.id)
 		local state = usable and 2 or (noPower and 1 or 0)
+		new[s.name] = state
+		if state > 0 and states[s.name] == 0 then risen = risen + 1 end
+	end
+	-- A proc unlocks one ability (two at most). Many at once means something
+	-- that had blocked them all just ended - a silence, stun, fear or polymorph.
+	if risen >= MASS_UNLOCK then
+		ns.Trace(("%d abilities became usable at once (a silence or stun ended?) - not procs"):format(risen))
+		quiet = true
+	end
+
+	for _, s in ipairs(Spells.reactive) do
+		local state = new[s.name]
 		local prev = states[s.name]
 		states[s.name] = state
 
@@ -82,6 +98,8 @@ for _, event in ipairs({
 	"PLAYER_TARGET_CHANGED", "UPDATE_SHAPESHIFT_FORM", "PLAYER_EQUIPMENT_CHANGED",
 	"SPELLS_CHANGED", "PLAYER_ENTERING_WORLD", "PLAYER_DEAD",
 	"PLAYER_ALIVE", "PLAYER_UNGHOST", "ZONE_CHANGED_INDOORS", "PLAYER_COMBO_POINTS",
+	-- Silences, stuns, fears... starting or ending.
+	"LOSS_OF_CONTROL_ADDED", "LOSS_OF_CONTROL_UPDATE", "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED",
 }) do
 	ns.On(event, QuietAndCheck)
 end
