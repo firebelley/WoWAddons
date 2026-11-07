@@ -106,6 +106,20 @@ function API.ForEachSpellbookSpell(fn)
 	end
 end
 
+-- The spell's tooltip text ("" if unknown or not loaded yet).
+function API.SpellDescription(spellID)
+	if not spellID then return "" end
+	if C_Spell and C_Spell.GetSpellDescription then
+		local ok, text = pcall(C_Spell.GetSpellDescription, spellID)
+		if ok and type(text) == "string" then return text end
+	end
+	if GetSpellDescription then
+		local ok, text = pcall(GetSpellDescription, spellID)
+		if ok and type(text) == "string" then return text end
+	end
+	return ""
+end
+
 -- Second opinion on passives: the spellbook's own flag isn't always set for
 -- talents and racials listed there. nil = can't tell.
 function API.IsPassiveSpell(spellID)

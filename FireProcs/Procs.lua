@@ -23,7 +23,7 @@ local function TooFrequent(name, now)
 end
 
 -- kind: "aura" (a buff you gained), "ready" (an ability lit up) or "event"
--- (a one-off effect from the combat log). Returns true if it's a live proc.
+-- (a one-off spell that went off by itself). Returns true if it's a live proc.
 function ns.Proc(name, icon, kind)
 	local db = ns.db
 	if not db or not name or name == "" then return false end

@@ -34,16 +34,29 @@ local function FormNames()
 	return names
 end
 
+-- A passive whose tooltip says it drains/heals by chance, e.g. Touch of the
+-- Grave: "...chance to drain Health from the target". Drain.lua names its
+-- announcements after it.
+local function IsDrainPassive(spellID)
+	local text = API.SpellDescription(spellID):lower()
+	return (text:find("drain") and text:find("health")) or (text:find("chance") and text:find("heal"))
+end
+
 function Spells.Rebuild()
-	local active, count = {}, 0
+	local active, count, drain = {}, 0, nil
 	API.ForEachSpellbookSpell(function(name, spellID, isPassive)
+		if not (name and spellID) then return end
 		-- Passive talents/racials (Touch of the Grave, Missile Barrage...) share a
 		-- name with their proc, so they must never count as castable.
-		if name and spellID and not isPassive and not API.IsPassiveSpell(spellID) then
+		if not isPassive and not API.IsPassiveSpell(spellID) then
 			if not active[name] then count = count + 1 end
 			active[name] = spellID -- ranks are listed low to high; keep the highest
+		elseif not drain and IsDrainPassive(spellID) then
+			local _, icon = API.SpellInfo(spellID)
+			drain = { name = name, id = spellID, icon = icon }
 		end
 	end)
+	Spells.drainPassive = drain
 
 	-- Forms, stances and auras switch on/off with you, so they're never "procs".
 	local forms, reactive = FormNames(), {}
@@ -105,7 +118,7 @@ function Spells.Describe(own)
 end
 
 ---------------------------------------------------------------------------
--- Icons: the combat log only gives names, so remember icons wherever we see them.
+-- Icons: remember them wherever we see them, for effects that only give a name.
 ---------------------------------------------------------------------------
 function Spells.RememberIcon(name, icon)
 	if name and icon then icons[name] = icon end
@@ -127,8 +140,39 @@ end
 -- Recent casts. UNIT_SPELLCAST_SENT only fires for casts *you* start (spells,
 -- potions, trinkets...), never for spells a talent triggers on its own.
 ---------------------------------------------------------------------------
+-- Does this spell/item heal you? (Death Coil, Healthstone, potions...)
+local healsCache = {}
+function Spells.Heals(spellID)
+	if not spellID then return false end
+	local cached = healsCache[spellID]
+	if cached == nil then
+		local text = API.SpellDescription(spellID):lower()
+		cached = (text:find("heal") or text:find("health")) and true or false
+		if text ~= "" then healsCache[spellID] = cached end
+	end
+	return cached
+end
+
+-- Until when something you cast/used may still be healing you. Instant heals
+-- (Death Coil, Healthstone) count for a moment; ones that last (Siphon Life:
+-- "...every 3 sec. Lasts 30 sec.") for the longest time their tooltip mentions.
+local HEAL_MOMENT = 2.5
+Spells.healUntil = 0
+
+local function LongestDuration(spellID)
+	local longest = 0
+	for n in API.SpellDescription(spellID):gmatch("(%d+%.?%d*) sec") do
+		longest = math.max(longest, tonumber(n) or 0)
+	end
+	return longest
+end
+
 local function RememberCast(spellID)
 	local now = GetTime()
+	if Spells.Heals(spellID) then
+		local untilTime = now + math.max(HEAL_MOMENT, LongestDuration(spellID))
+		Spells.healUntil = math.max(Spells.healUntil, untilTime)
+	end
 	recentById[spellID] = now
 	local name = API.SpellInfo(spellID)
 	if name then recentByName[name] = now end
@@ -147,10 +191,14 @@ ns.OnUnit("UNIT_SPELLCAST_SENT", "player", function(_, _, castGUID, spellID)
 end)
 
 -- A cast with a cast time lands well after it was sent; refresh it on success.
+-- A "cast" that was never sent is one the game made for you: a proc.
 ns.OnUnit("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, castGUID, spellID)
-	if castGUID and sentCasts[castGUID] and type(spellID) == "number" then
+	if type(spellID) ~= "number" then return end
+	if castGUID and sentCasts[castGUID] then
 		sentCasts[castGUID] = nil
 		RememberCast(spellID)
+	elseif ns.Casts then
+		ns.Casts.Triggered(spellID)
 	end
 end)
 

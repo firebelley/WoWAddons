@@ -1,4 +1,4 @@
-## Interface: 16001
+﻿## Interface: 16001
 ## Title: FireProcs
 ## Notes: Announces procs on screen: buffs that trigger by chance (Clearcasting), abilities that light up (Overpower), and passive effects (on-hit heals, stuns).
 ## Author: Firebelley
@@ -13,5 +13,6 @@ Display.lua
 Glow.lua
 Reactive.lua
 Auras.lua
-CombatLog.lua
+Casts.lua
+Drain.lua
 Core.lua

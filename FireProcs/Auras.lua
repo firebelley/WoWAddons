@@ -18,7 +18,10 @@ local live = false -- false while taking the silent first look after loading
 
 -- Returns "proc", "gift" (a long buff from someone else) or nil plus the reason.
 local function Classify(a)
-	if a.source == "player" then
+	-- Some procs carry no caster at all; a short buff with nobody behind it is
+	-- treated as yours (buffs from group members name them: "party1"...).
+	local mine = a.source == "player" or (a.source == nil and a.duration > 0 and a.duration <= STAY_MAX)
+	if mine then
 		-- Permanent buffs are passives and stances, never procs.
 		if a.duration <= 0 then return nil, "permanent (passive, stance or aura)" end
 		local own = Spells.OwnSpellFor(a.name)

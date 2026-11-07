@@ -23,10 +23,11 @@ local function Help()
 end
 
 local function DebugStatus()
-	local log = ns.CombatLog
-	ns.Trace(("combat log: %s; %d entries seen, %d from you"):format(
-		log.registered and "listening" or ("NOT available (" .. tostring(log.problem) .. ")"),
-		log.events, log.mine))
+	local c = ns.Casts
+	ns.Trace(("spells triggered without you casting them so far: %d"):format(c.seen))
+	local d, p = ns.Drain, ns.Spells.drainPassive
+	ns.Trace(("heals on you seen: %d (%d with hidden values); drain passive: %s"):format(
+		d.heals, d.secret, p and (p.name .. " (id " .. p.id .. ")") or "none found"))
 	ns.Trace(("spellbook: %d castable spells known"):format(ns.Spells.count))
 	ns.Trace("your buffs right now:")
 	ns.Auras.DescribeCurrent()
@@ -73,8 +74,9 @@ SlashCmdList.FIREPROCS = function(input)
 	elseif cmd == "debug" then
 		ns.tracing = not ns.tracing
 		if ns.tracing then
-			ns.CombatLog.ResetTrace()
-			ns.Print("debug on. Each buff and combat log effect from you is explained once. /fprocs debug again to stop.")
+			ns.Casts.ResetTrace()
+			ns.Drain.ResetTrace()
+			ns.Print("debug on. Each new buff and triggered spell is explained once. /fprocs debug again to stop.")
 			DebugStatus()
 		else
 			ns.Print("debug off.")
