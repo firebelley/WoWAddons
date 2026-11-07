@@ -18,17 +18,42 @@ function API.SpellInfo(spell)
 	return nil
 end
 
--- start, duration
+---------------------------------------------------------------------------
+-- Secret values: in combat this client hides most combat data from addons.
+-- Hidden values can't be compared or used in maths, so check first.
+---------------------------------------------------------------------------
+function API.IsSecret(v)
+	return issecretvalue ~= nil and issecretvalue(v) and true or false
+end
+
+-- True while your buffs are (mostly) hidden from addons, i.e. in combat.
+function API.AurasRestricted()
+	local S = C_Secrets
+	if not (S and S.ShouldAurasBeSecret) then return false end
+	local ok, secret = pcall(S.ShouldAurasBeSecret)
+	return ok and secret and true or false
+end
+
+-- True if this spell's buff is hidden from addons right now.
+function API.AuraIsSecret(spellID)
+	local S = C_Secrets
+	if not (spellID and S and S.ShouldSpellAuraBeSecret) then return false end
+	local ok, secret = pcall(S.ShouldSpellAuraBeSecret, spellID)
+	return ok and secret and true or false
+end
+
+-- start, duration (0, 0 when not on cooldown or when hidden in combat)
 function API.SpellCooldown(spell)
+	local start, duration = 0, 0
 	if C_Spell and C_Spell.GetSpellCooldown then
 		local ok, info = pcall(C_Spell.GetSpellCooldown, spell)
-		if ok and type(info) == "table" then return info.startTime or 0, info.duration or 0 end
+		if ok and type(info) == "table" then start, duration = info.startTime, info.duration end
+	elseif GetSpellCooldown then
+		local ok, s, d = pcall(GetSpellCooldown, spell)
+		if ok then start, duration = s, d end
 	end
-	if GetSpellCooldown then
-		local ok, start, duration = pcall(GetSpellCooldown, spell)
-		if ok then return start or 0, duration or 0 end
-	end
-	return 0, 0
+	if API.IsSecret(start) or API.IsSecret(duration) then return 0, 0 end
+	return start or 0, duration or 0
 end
 
 -- usable, notEnoughPower
@@ -44,18 +69,46 @@ function API.IsUsable(spell)
 	return false, false
 end
 
--- Calls fn(aura) for each aura on the unit, where aura is
--- { name, icon, count, duration, expires, source, spellId }.
+-- Calls fn(aura) for each aura on the unit that addons may read, where aura is
+-- { name, icon, count, duration, expires, source, spellId }. Hidden (secret)
+-- auras are skipped; returns how many were skipped.
+local MAX_HIDDEN_RUN = 40 -- stop after this many hidden slots in a row
+
+local function Readable(a)
+	local S = API.IsSecret
+	return not (S(a.name) or S(a.spellId) or S(a.duration) or S(a.expirationTime) or S(a.sourceUnit))
+end
+
 function API.ForEachAura(unit, filter, fn)
+	local hidden = 0
 	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		local S = C_Secrets
+		local hiddenRun = 0
 		for i = 1, 255 do
-			local a = C_UnitAuras.GetAuraDataByIndex(unit, i, filter)
-			if not a then return end
-			fn({
-				name = a.name, icon = a.icon, count = a.applications or 0,
-				duration = a.duration or 0, expires = a.expirationTime or 0,
-				source = a.sourceUnit, spellId = a.spellId,
-			})
+			local secret = false
+			if S and S.ShouldUnitAuraIndexBeSecret then
+				local ok, result = pcall(S.ShouldUnitAuraIndexBeSecret, unit, i, filter)
+				secret = ok and result
+			end
+			local ok, a
+			if not secret then
+				ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, filter)
+				if ok and not a then return hidden end -- past the last aura
+			end
+			if secret or not ok or not Readable(a) then
+				hidden = hidden + 1
+				hiddenRun = hiddenRun + 1
+				if hiddenRun >= MAX_HIDDEN_RUN then return hidden end
+			else
+				hiddenRun = 0
+				local count = a.applications
+				fn({
+					name = a.name, icon = a.icon,
+					count = (not API.IsSecret(count) and count) or 0,
+					duration = a.duration or 0, expires = a.expirationTime or 0,
+					source = a.sourceUnit, spellId = a.spellId,
+				})
+			end
 		end
 	elseif UnitAura then
 		for i = 1, 40 do
@@ -68,6 +121,7 @@ function API.ForEachAura(unit, filter, fn)
 			})
 		end
 	end
+	return hidden
 end
 
 -- Calls fn(name, spellID, isPassive) for every spell in your spellbook.

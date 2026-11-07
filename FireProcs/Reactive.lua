@@ -105,11 +105,15 @@ ns.On("PLAYER_REGEN_ENABLED", function()
 end)
 
 -- Where the client flags procs itself, take its word for it.
+-- These are never hidden from addons, even in combat, so they're the most
+-- reliable signal there is - when the client uses them for a proc.
 ns.On("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", function(spellID)
 	local name, icon = API.SpellInfo(spellID)
+	ns.Trace(("Blizzard proc glow on %s (id %s)"):format(tostring(name), tostring(spellID)))
 	ns.Proc(name, icon, "ready")
 end)
 ns.On("SPELL_ACTIVATION_OVERLAY_SHOW", function(spellID)
 	local name, icon = API.SpellInfo(spellID)
+	ns.Trace(("Blizzard proc art for %s (id %s)"):format(tostring(name), tostring(spellID)))
 	ns.Proc(name, icon, "aura")
 end)

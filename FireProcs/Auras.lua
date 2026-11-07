@@ -15,6 +15,12 @@ local seen = {}    -- every buff at the last scan, by key (for debug output)
 local procs = {}   -- keys of buffs announced as procs (shown in the icon row)
 local lastSignature
 local live = false -- false while taking the silent first look after loading
+local wasRestricted = false
+
+-- In combat, this client hides most buffs from addons (only some spells' buffs
+-- stay readable). Readable ones are handled as usual; hidden ones are assumed
+-- unchanged until combat ends, when everything is quietly re-checked.
+Auras.hidden = 0
 
 -- Returns "proc", "gift" (a long buff from someone else) or nil plus the reason.
 local function Classify(a)
@@ -39,8 +45,14 @@ local function Describe(a)
 end
 
 function Auras.Update()
+	local restricted = API.AurasRestricted()
+	-- Just left combat: buffs that were hidden reappear, but they aren't new.
+	local resync = wasRestricted and not restricted
+	wasRestricted = restricted
+
 	local now, seenNow, sig = {}, {}, {}
-	API.ForEachAura("player", "HELPFUL", function(a)
+	local hiddenBefore = Auras.hidden
+	Auras.hidden = API.ForEachAura("player", "HELPFUL", function(a)
 		Spells.RememberIcon(a.name, a.icon)
 		local key = a.spellId or a.name
 		seenNow[key] = true
@@ -59,6 +71,18 @@ function Auras.Update()
 	end)
 	API.ForEachAura("player", "HARMFUL", function(a) sig[#sig + 1] = a.name end)
 	seen = seenNow
+	if restricted and Auras.hidden > hiddenBefore then
+		ns.Trace("a buff appeared that the game hides from addons in combat")
+	end
+
+	if restricted then
+		local t = GetTime()
+		for key, a in pairs(present) do
+			if not now[key] and API.AuraIsSecret(a.spellId) and (a.expires == 0 or a.expires > t) then
+				now[key] = a
+			end
+		end
+	end
 
 	-- Gaining or losing one of these (stealth, Forbearance, a stun...) changes what
 	-- you can cast, which mustn't be mistaken for an ability lighting up.
@@ -67,7 +91,7 @@ function Auras.Update()
 	if lastSignature and signature ~= lastSignature then ns.Reactive.Quiet() end
 	lastSignature = signature
 
-	if live and Spells.count > 0 then
+	if live and not resync and Spells.count > 0 then
 		for key, a in pairs(now) do
 			if not present[key] then
 				if not a.gift and Spells.WasRecentlyCast(a.name, a.spellId) then
@@ -97,12 +121,13 @@ end
 -- For /fprocs debug: what FireProcs makes of every buff you have right now.
 function Auras.DescribeCurrent()
 	local any = false
-	API.ForEachAura("player", "HELPFUL", function(a)
+	local hidden = API.ForEachAura("player", "HELPFUL", function(a)
 		any = true
 		local kind, why = Classify(a)
 		ns.Trace("  " .. Describe(a) .. ": " .. (kind and ("counts (" .. kind .. ")") or ("skipped, " .. why)))
 	end)
-	if not any then ns.Trace("  (no buffs)") end
+	if not any then ns.Trace("  (no readable buffs)") end
+	if hidden > 0 then ns.Trace(("  + %d buff(s) hidden from addons right now"):format(hidden)) end
 end
 
 ns.OnUnit("UNIT_AURA", "player", function() Auras.Update() end)
