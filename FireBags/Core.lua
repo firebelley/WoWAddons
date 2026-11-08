@@ -106,6 +106,18 @@ ns.On("PLAYER_LOGIN", function()
 end)
 
 ---------------------------------------------------------------------------
+-- Trading: open the bags with the trade window, like vendors and the bank do.
+-- Passing TradeFrame as the opener means closing the trade only closes the
+-- bags if the trade opened them (not if they were already open).
+---------------------------------------------------------------------------
+ns.On("TRADE_SHOW", function()
+	OpenAllBags(TradeFrame)
+end)
+ns.On("TRADE_CLOSED", function()
+	CloseAllBags(TradeFrame)
+end)
+
+---------------------------------------------------------------------------
 -- Slash commands
 ---------------------------------------------------------------------------
 local function Help()
