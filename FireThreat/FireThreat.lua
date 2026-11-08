@@ -1,5 +1,11 @@
--- FireThreat: the enemies you're fighting, sorted so the ones that aren't
--- attacking you are on top.
+-- FireThreat: the enemies you're fighting, coloured by what you should do
+-- about them. Red always means "act":
+--  * Tanking: green = attacking you, yellow = someone's about to pull it,
+--    red = attacking someone else (go get it).
+--  * Otherwise (damage, healing): green = someone else has it, yellow = you're
+--    about to pull it (ease off), red = attacking you.
+-- The role is worked out from your stance/form/Righteous Fury (or the group
+-- role, if one is set), or can be chosen in the options.
 --
 -- What this client allows (tested in-game):
 --  * Enemies are found through nameplates (nameplate1..40).
@@ -19,11 +25,12 @@ local WARN_THROTTLE = 3
 
 local DEFAULTS = {
 	scale = 1, maxRows = 10,
-	flash = true,          -- red pulse on rows of enemies not on you
-	markNameplates = true, -- red arrow over those enemies' nameplates
-	warnLost = true,       -- on-screen warning when an enemy leaves you for someone else
+	role = "auto",         -- "auto" | "tank" | "dps" (damage or healing)
+	flash = true,          -- red pulse on red rows
+	markNameplates = true, -- red arrow over red enemies' nameplates
+	warnLost = true,       -- tanking: warning when an enemy leaves you for someone else
+	warnAggro = true,      -- otherwise: warning when you pull an enemy off someone
 	warnSound = true,      -- ...with a sound
-	onlyTanking = true,    -- show the list only once you've tanked something this fight
 	showOthers = true,     -- list enemies fighting people outside your group
 }
 ns.DEFAULTS = DEFAULTS
@@ -36,8 +43,8 @@ local unlocked = false
 local hovered -- row under the mouse
 local addedAt = {} -- [nameplate token] = when its nameplate appeared (keeps order steady)
 local wasMine = {} -- [nameplate token] = true while that enemy is on you
+local onOther = {} -- [nameplate token] = true while that enemy is on someone in your group
 local warnedAt = {}
-local tankedThisFight = false
 local lastActive = -100
 
 function ns.Print(msg)
@@ -91,8 +98,60 @@ local function ShortName(unit)
 	return name
 end
 
+---------------------------------------------------------------------------
+-- Role
+---------------------------------------------------------------------------
+local RIGHTEOUS_FURY = 25780
+local WARRIOR_DEFENSIVE, DRUID_BEAR, DRUID_DIRE_BEAR = 18, 5, 8 -- shapeshift form IDs
+
+-- Auras can be hidden in combat, so a "no" only counts out of combat.
+local hasFury = false
+local function HasRighteousFury()
+	local fn = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+	if not fn then return false end
+	local ok, aura = pcall(fn, RIGHTEOUS_FURY)
+	if ok and aura and not IsSecret(aura) then
+		hasFury = true
+	elseif ok and not UnitAffectingCombat("player") then
+		hasFury = false
+	end
+	return hasFury
+end
+
+local function FormID()
+	local id = GetShapeshiftFormID and GetShapeshiftFormID()
+	if id ~= nil and not IsSecret(id) then return id end
+end
+
+-- Whether you're tanking (true) or not, and how that was decided.
+function ns.IsTank()
+	if db.role == "tank" then return true, "chosen" end
+	if db.role == "dps" then return false, "chosen" end
+	local assigned = UnitGroupRolesAssigned and UnitGroupRolesAssigned("player")
+	if assigned and not IsSecret(assigned) then
+		if assigned == "TANK" then return true, "group role" end
+		if assigned == "DAMAGER" or assigned == "HEALER" then return false, "group role" end
+	end
+	local _, class = UnitClass("player")
+	if class == "WARRIOR" then
+		local id = FormID()
+		if id then return id == WARRIOR_DEFENSIVE, "stance" end
+		return GetShapeshiftForm() == 2, "stance"
+	elseif class == "DRUID" then
+		local id = FormID()
+		if id then return id == DRUID_BEAR or id == DRUID_DIRE_BEAR, "form" end
+		return GetShapeshiftForm() == 1, "form"
+	elseif class == "PALADIN" then
+		return HasRighteousFury(), "Righteous Fury"
+	end
+	return false, "class"
+end
+
 -- Sort ranks: smaller = higher in the list.
+-- Tanking: loose (on someone else), shaky (about to be pulled), mine, other.
 local RANK_LOOSE, RANK_SHAKY, RANK_MINE, RANK_OTHER = 1, 2, 3, 4
+-- Not tanking: on you, you're about to pull it, safe (someone else has it), other.
+local RANK_ONME, RANK_CLOSE, RANK_SAFE = 1, 2, 3
 
 -- Which loose enemy to grab first, by who it's attacking. The class is the
 -- only hint of who's healing on this client, but it's usually right.
@@ -107,39 +166,49 @@ local function VictimPriority(unit)
 	return 3
 end
 
--- Everything shown for one enemy.
-local function Assess(unit, group)
-	local e = { unit = unit, status = Status("player", unit) }
-	if e.status and e.status >= 2 then
-		e.rank = e.status == 3 and RANK_MINE or RANK_SHAKY
-		if e.status == 2 then
-			for _, who in ipairs(group) do
-				if UnitExists(who) and not IsMe(who) and Status(who, unit) == 1 then
-					e.puller = who
-					break
-				end
+-- Everything shown for one enemy. e.look is its colour: "good", "warn",
+-- "bad" (act on it) or "other".
+local function Assess(unit, group, tank)
+	local s = Status("player", unit)
+	local e = { unit = unit, status = s, mine = s ~= nil and s >= 2 }
+	if s == 2 and tank then
+		for _, who in ipairs(group) do
+			if UnitExists(who) and not IsMe(who) and Status(who, unit) == 1 then
+				e.puller = who
+				break
 			end
 		end
-	else
+	elseif not e.mine then
 		for _, who in ipairs(group) do
 			if UnitExists(who) and not IsMe(who) then
-				local s = Status(who, unit)
-				if s and s >= 2 then
+				local hs = Status(who, unit)
+				if hs and hs >= 2 then
 					e.holder = who
 					break
 				end
 			end
 		end
-		-- Attacking someone in your group: that's the one to grab.
-		e.rank = (e.holder or e.status) and RANK_LOOSE or RANK_OTHER
-		e.priority = VictimPriority(e.holder)
+	end
+	local inFight = e.holder or s
+	if tank then
+		if s == 3 then e.rank, e.look = RANK_MINE, "good"
+		elseif s == 2 then e.rank, e.look = RANK_SHAKY, "warn"
+		elseif inFight then
+			-- Attacking someone in your group: that's the one to grab.
+			e.rank, e.look = RANK_LOOSE, "bad"
+			e.priority = VictimPriority(e.holder)
+		else e.rank, e.look = RANK_OTHER, "other" end
+	else
+		if e.mine then e.rank, e.look = RANK_ONME, "bad"
+		elseif s == 1 then e.rank, e.look = RANK_CLOSE, "warn" -- more threat than whoever it's on
+		elseif inFight then e.rank, e.look = RANK_SAFE, "good"
+		else e.rank, e.look = RANK_OTHER, "other" end
 	end
 	return e
 end
 
--- Every enemy in combat with a nameplate, most urgent first. Also returns
--- them all (the list may hide some, the nameplate arrows don't).
-local function Enemies()
+-- Every enemy in combat with a nameplate, most urgent first.
+local function Enemies(tank)
 	local group, list = Group(), {}
 	local now = GetTime()
 	for i = 1, MAX_PLATES do
@@ -147,26 +216,27 @@ local function Enemies()
 		if UnitExists(unit) and Yes(UnitCanAttack("player", unit)) and not Yes(UnitIsDead(unit))
 			and Yes(UnitAffectingCombat(unit)) then
 			addedAt[unit] = addedAt[unit] or now
-			local e = Assess(unit, group)
+			local e = Assess(unit, group, tank)
 			if e.rank ~= RANK_OTHER or db.showOthers then list[#list + 1] = e end
 		end
 	end
 	table.sort(list, function(a, b)
 		if a.rank ~= b.rank then return a.rank < b.rank end
-		if a.rank == RANK_LOOSE and a.priority ~= b.priority then return a.priority < b.priority end
+		if a.priority and b.priority and a.priority ~= b.priority then return a.priority < b.priority end
 		return (addedAt[a.unit] or 0) < (addedAt[b.unit] or 0)
 	end)
 	return list
 end
 
--- An enemy that was on you just went to someone in your group.
-local function WarnLost(e)
+-- A raid-warning style message about an enemy (throttled per enemy).
+-- format gets the enemy's name, then the holder's.
+local function Warn(e, format)
 	local now = GetTime()
 	if now - (warnedAt[e.unit] or -100) < WARN_THROTTLE then return end
 	warnedAt[e.unit] = now
 	local name = UnitName(e.unit)
 	if not name or IsSecret(name) then name = "An enemy" end
-	local msg = ("%s is on %s!"):format(name, ShortName(e.holder))
+	local msg = format:format(name, e.holder and ShortName(e.holder) or "someone")
 	local shown = RaidWarningFrame and RaidNotice_AddMessage and ChatTypeInfo and ChatTypeInfo.RAID_WARNING
 		and pcall(RaidNotice_AddMessage, RaidWarningFrame, msg, ChatTypeInfo.RAID_WARNING)
 	if not shown then UIErrorsFrame:AddMessage(msg, 1, 0.3, 0.3) end
@@ -180,10 +250,10 @@ end
 ---------------------------------------------------------------------------
 local BAR_TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
 local COLOR = {
-	[RANK_MINE] = { 0.15, 0.75, 0.2 },
-	[RANK_SHAKY] = { 1, 0.75, 0 },
-	[RANK_LOOSE] = { 0.9, 0.15, 0.1 },
-	[RANK_OTHER] = { 0.4, 0.4, 0.4 },
+	good = { 0.15, 0.75, 0.2 },
+	warn = { 1, 0.75, 0 },
+	bad = { 0.9, 0.15, 0.1 },
+	other = { 0.4, 0.4, 0.4 },
 }
 
 local function SetFlash(b, on)
@@ -309,33 +379,39 @@ local function ShowRow(b, e)
 	local isTarget = Yes(UnitIsUnit(unit, "target"))
 	for _, edge in ipairs(b.edges) do edge:SetShown(isTarget) end
 
-	local c = COLOR[e.rank]
+	local c = COLOR[e.look]
 	b.bar:SetStatusBarColor(c[1], c[2], c[3])
-	local value = 100
-	if e.rank == RANK_LOOSE or e.rank == RANK_OTHER then
-		-- Your threat as a share of what pulling it takes: hidden from addons,
-		-- but the game can still draw it.
-		value = 0
-		if e.status then
-			local ok, _, _, pct = pcall(UnitDetailedThreatSituation, "player", unit)
-			if ok and pct ~= nil then value = pct end
+	-- Your threat as a share of what pulling it takes (full when it's on you):
+	-- hidden from addons, but the game can still draw it.
+	local value = e.mine and 100 or 0
+	if e.status then
+		local ok, _, _, pct = pcall(UnitDetailedThreatSituation, "player", unit)
+		if ok and pct ~= nil then value = pct end
+	end
+	if not pcall(b.bar.SetValue, b.bar, value) then b.bar:SetValue(e.mine and 100 or 0) end
+
+	local holder = e.holder and ShortName(e.holder)
+	local text = ""
+	if e.rank == RANK_OTHER then
+		text = "|cffaaaaaanot your fight|r"
+	elseif e.tank then
+		if e.rank == RANK_SHAKY then
+			text = ("|cffffcc00%s pulling|r"):format(e.puller and ShortName(e.puller) or "someone")
+		elseif e.rank == RANK_LOOSE then
+			text = holder and ("|cffff5555> " .. holder .. "|r") or "|cffff5555not on you|r"
+		end
+	else
+		if e.rank == RANK_ONME then
+			text = "|cffff5555on you!|r"
+		elseif e.rank == RANK_CLOSE then
+			text = holder and ("|cffffcc00pulling from " .. holder .. "|r") or "|cffffcc00pulling soon|r"
+		elseif holder then
+			text = "|cff88dd88> " .. holder .. "|r"
 		end
 	end
-	if not pcall(b.bar.SetValue, b.bar, value) then b.bar:SetValue(0) end
+	b.info:SetText(text)
 
-	if e.rank == RANK_SHAKY then
-		b.info:SetText(("|cffffcc00%s pulling|r"):format(e.puller and ShortName(e.puller) or "someone"))
-	elseif e.holder then
-		b.info:SetText("|cffff5555> " .. ShortName(e.holder) .. "|r")
-	elseif e.rank == RANK_LOOSE then
-		b.info:SetText("|cffff5555not on you|r")
-	elseif e.rank == RANK_OTHER then
-		b.info:SetText("|cffaaaaaanot your fight|r")
-	else
-		b.info:SetText("")
-	end
-
-	SetFlash(b, e.rank == RANK_LOOSE and db.flash)
+	SetFlash(b, e.look == "bad" and db.flash)
 	b:Show()
 end
 
@@ -388,7 +464,7 @@ local function UpdatePlateMarks(list, visible)
 	if db.markNameplates and visible then
 		local hoveredUnit = hovered and hovered:IsShown() and hovered.unit
 		for _, e in ipairs(list) do
-			if e.rank == RANK_LOOSE and e.unit ~= hoveredUnit then
+			if e.look == "bad" and e.unit ~= hoveredUnit then
 				local plate = PlateFor(e.unit)
 				if plate then
 					n = n + 1
@@ -404,23 +480,28 @@ end
 -- Update
 ---------------------------------------------------------------------------
 
--- Remembers which enemies are on you, and warns when one goes to someone else.
-local function TrackLost(list)
+-- Remembers who each enemy is on, and warns when one changes in a way that
+-- matters: tanking, when one leaves you; otherwise, when you pull one.
+local function TrackChanges(list, tank)
 	local seen = {}
 	for _, e in ipairs(list) do
-		seen[e.unit] = true
-		if e.rank == RANK_MINE or e.rank == RANK_SHAKY then
-			wasMine[e.unit] = true
-			if UnitAffectingCombat("player") then tankedThisFight = true end
-		elseif wasMine[e.unit] and e.holder then
+		local unit = e.unit
+		seen[unit] = true
+		if e.mine then
+			if onOther[unit] and not tank and db.warnAggro then Warn(e, "%s is attacking you!") end
+			wasMine[unit], onOther[unit] = true, nil
+		elseif e.holder then
 			-- (Without a holder yet - fleeing, mid-swap - keep waiting.)
-			wasMine[e.unit] = nil
-			if db.warnLost then WarnLost(e) end
+			if wasMine[unit] and tank and db.warnLost then Warn(e, "%s is on %s!") end
+			wasMine[unit], onOther[unit] = nil, true
 		end
 	end
 	-- Dead or out of combat: forget it without a warning.
 	for unit in pairs(wasMine) do
 		if not seen[unit] then wasMine[unit] = nil end
+	end
+	for unit in pairs(onOther) do
+		if not seen[unit] then onOther[unit] = nil end
 	end
 end
 
@@ -436,18 +517,19 @@ end
 
 local function Update()
 	if not frame then return end
-	local list = Enemies()
-	TrackLost(list)
+	local tank = ns.IsTank()
+	local list = Enemies(tank)
+	TrackChanges(list, tank)
 
-	-- As DPS (never tanking anything) the list stays out of the way.
-	local allowed = unlocked or not db.onlyTanking or tankedThisFight
+	-- Not tanking and on your own, everything is on you anyway: nothing to show.
+	local allowed = unlocked or tank or IsInGroup() or UnitExists("pet")
 	local shown = allowed and math.min(#list, db.maxRows) or 0
-	local mine, loose = 0, 0
+	local counts = { good = 0, warn = 0, bad = 0, other = 0 }
 	for _, e in ipairs(list) do
-		if e.rank == RANK_LOOSE then loose = loose + 1
-		elseif e.rank ~= RANK_OTHER then mine = mine + 1 end
+		counts[e.look] = counts[e.look] + 1
 	end
 	for i = 1, shown do
+		list[i].tank = tank
 		ShowRow(rows[i] or NewRow(i), list[i])
 	end
 	for i = shown + 1, #rows do
@@ -464,13 +546,20 @@ local function Update()
 		titleBar.text:SetText("FireThreat - drag to move")
 		SetTitleShown(true)
 	elseif shown > 0 then
-		local parts = { "Threat " }
-		if mine > 0 then parts[#parts + 1] = ("|cff44dd44%d on you|r"):format(mine) end
-		if loose > 0 then parts[#parts + 1] = ("|cffff4444%d loose|r"):format(loose) end
+		local parts = { tank and "Tanking " or "Threat " }
+		if tank then
+			local mine = counts.good + counts.warn
+			if mine > 0 then parts[#parts + 1] = ("|cff44dd44%d on you|r"):format(mine) end
+			if counts.bad > 0 then parts[#parts + 1] = ("|cffff4444%d loose|r"):format(counts.bad) end
+		else
+			if counts.bad > 0 then parts[#parts + 1] = ("|cffff4444%d on you|r"):format(counts.bad) end
+			if counts.warn > 0 then parts[#parts + 1] = ("|cffffcc00%d close|r"):format(counts.warn) end
+			if counts.bad + counts.warn == 0 then parts[#parts + 1] = "|cff44dd44safe|r" end
+		end
 		titleBar.text:SetText(table.concat(parts, "  "))
 		SetTitleShown(true)
 	elseif now - lastActive < HOLD_AFTER then
-		titleBar.text:SetText("Threat  |cff44dd44all clear|r")
+		titleBar.text:SetText((tank and "Tanking" or "Threat") .. "  |cff44dd44all clear|r")
 	else
 		SetTitleShown(false)
 	end
@@ -592,8 +681,10 @@ local function Debug()
 		if IsSecret(v) then return "hidden" end
 		return v and "yes" or "no"
 	end
-	ns.Print(("debug: in combat %s, enemy nameplates setting %s"):format(
-		yn(UnitAffectingCombat("player")), tostring(GetCVar("nameplateShowEnemies"))))
+	local tank, why = ns.IsTank()
+	ns.Print(("debug: in combat %s, enemy nameplates setting %s, role %s (%s), form %s"):format(
+		yn(UnitAffectingCombat("player")), tostring(GetCVar("nameplateShowEnemies")),
+		tank and "tank" or "not tank", why, tostring(FormID())))
 	local any = false
 	for i = 1, MAX_PLATES do
 		local unit = "nameplate" .. i
@@ -613,12 +704,12 @@ events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("PLAYER_TARGET_CHANGED")
 events:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
-events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:SetScript("OnEvent", function(_, event, arg1)
 	if event == "ADDON_LOADED" and arg1 == ADDON then
 		FireThreatDB = FireThreatDB or {}
 		db = FireThreatDB
 		db.hoverKeys = nil -- from the clickable version
+		db.onlyTanking = nil -- replaced by roles
 		for k, v in pairs(DEFAULTS) do
 			if db[k] == nil then db[k] = v end
 		end
@@ -630,9 +721,8 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		-- The token gets reused for another enemy later.
 		addedAt[arg1] = nil
 		wasMine[arg1] = nil
+		onOther[arg1] = nil
 		warnedAt[arg1] = nil
-	elseif event == "PLAYER_REGEN_DISABLED" then
-		tankedThisFight = false -- a new fight: wait to see whether you tank it
 	elseif event == "PLAYER_TARGET_CHANGED" then
 		Update()
 	end

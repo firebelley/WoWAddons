@@ -35,10 +35,12 @@ local function Build()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Lists the enemies you're fighting (from their nameplates - keep enemy nameplates on). "
-		.. "Red (on top): attacking someone else. Yellow: attacking you, but someone has more threat. "
-		.. "Green: attacking you. Hover an enemy to point a yellow arrow at it - this client doesn't let "
-		.. "addons target enemies from a list.")
-	y = y - 52
+		.. "Red always means act, and is listed first.\n"
+		.. "Tanking - green: attacking you. Yellow: someone's about to pull it. Red: attacking someone else.\n"
+		.. "Damage or healing - green: someone else has it. Yellow: you're about to pull it, ease off. Red: attacking you.\n"
+		.. "The bar is your threat towards pulling it. Hover an enemy to point a yellow arrow at it - this client "
+		.. "doesn't let addons target enemies from a list.")
+	y = y - 74
 
 	local lastButton
 	local function Button(text, tooltip, onClick)
@@ -123,17 +125,55 @@ local function Build()
 	Slider("maxRows", "Rows", "The most enemies listed at once.", 3, 20, 1,
 		function(v) return tostring(v) end)
 
-	Checkbox("onlyTanking", "Only show after you've tanked something",
-		"Each fight, the list appears once an enemy is attacking you, so it stays out of the way when you're playing damage or healing.")
+	-- Role: three radio buttons in a row.
+	local roleLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	roleLabel:SetPoint("TOPLEFT", 20, y - 4)
+	roleLabel:SetText("Role")
+	local radios, x = {}, 60
+	local function Radio(value, label, tooltip)
+		local ok, rb = pcall(CreateFrame, "CheckButton", nil, panel, "UIRadioButtonTemplate")
+		if not ok then rb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate") end
+		rb:SetSize(18, 18)
+		rb:SetPoint("TOPLEFT", x, y - 2)
+		local text = rb:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		text:SetPoint("LEFT", rb, "RIGHT", 4, 0)
+		text:SetText(label)
+		rb.text = text
+		rb:SetHitRectInsets(0, -(text:GetStringWidth() + 8), 0, 0)
+		rb:SetScript("OnClick", function()
+			db.role = value
+			for _, fn in ipairs(refreshers) do fn() end
+			ApplyNow()
+		end)
+		Tooltip(rb, label, tooltip)
+		radios[value] = rb
+		x = x + text:GetStringWidth() + 40
+		return rb
+	end
+	local auto = Radio("auto", "Automatic",
+		"Tank when you're in Defensive Stance, Bear Form or have Righteous Fury (or your group role is tank), otherwise damage/healing.")
+	auto.text:SetWidth(180)
+	auto.text:SetJustifyH("LEFT")
+	x = x + 180 - auto.text:GetStringWidth()
+	Radio("tank", "Tank")
+	Radio("dps", "Damage / healing")
+	refreshers[#refreshers + 1] = function()
+		for value, rb in pairs(radios) do rb:SetChecked(db.role == value) end
+		auto.text:SetText("Automatic |cff999999(now: " .. (ns.IsTank() and "tank" or "damage/healing") .. ")|r")
+	end
+	y = y - 30
+
 	Checkbox("showOthers", "List enemies fighting people outside your group",
 		"Shown in grey at the bottom, marked \"not your fight\".")
-	Checkbox("flash", "Pulse enemies that aren't on you",
-		"A red pulse on rows of enemies attacking someone else. Enemies attacking healers are listed first, then those on cloth wearers.")
-	Checkbox("markNameplates", "Red arrow over enemies that aren't on you",
+	Checkbox("flash", "Pulse red enemies",
+		"A red pulse on their rows. Tanking, enemies attacking healers are listed first, then those on cloth wearers.")
+	Checkbox("markNameplates", "Red arrow over red enemies",
 		"Marks their nameplates in the world, so you can spot them without looking at the list.")
-	Checkbox("warnLost", "Warn when an enemy leaves you",
+	Checkbox("warnLost", "Tanking: warn when an enemy leaves you",
 		"A raid-warning style message, e.g. \"Defias Thug is on Healername!\", when an enemy that was attacking you goes for someone in your group.")
-	Checkbox("warnSound", "Play a sound with the warning", "The raid warning sound.")
+	Checkbox("warnAggro", "Damage / healing: warn when you pull an enemy",
+		"A raid-warning style message, e.g. \"Defias Thug is attacking you!\", when an enemy that was on someone in your group turns to you.")
+	Checkbox("warnSound", "Play a sound with the warnings", "The raid warning sound.")
 
 	panel:SetScript("OnShow", function()
 		for _, fn in ipairs(refreshers) do fn() end
