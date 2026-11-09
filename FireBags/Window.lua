@@ -269,8 +269,10 @@ function Window:LayoutSections(sections, acquire)
 	local m = self.metrics
 	local cols = ns.db[self.opts.columnsKey]
 
-	for b in pairs(self.shownButtons) do b:Hide() end
-	wipe(self.shownButtons)
+	-- Buttons that stay put aren't hidden and re-shown (that's slow for a
+	-- whole bag's worth); only the ones no longer used are hidden at the end.
+	local previous = self.shownButtons
+	self.shownButtons = {}
 	for _, label in ipairs(self.labels) do label:Hide() end
 
 	local gridWidth = cols * SLOT + (cols - 1) * SPACING
@@ -314,7 +316,7 @@ function Window:LayoutSections(sections, acquire)
 						m.left + col * (SLOT + SPACING),
 						y - row * (SLOT + SPACING))
 					b.fbBackground:SetVertexColor(tint[1], tint[2], tint[3])
-					b:Show()
+					if not b:IsShown() then b:Show() end
 					b:fbUpdate()
 					self.shownButtons[b] = true
 					index = index + 1
@@ -327,6 +329,10 @@ function Window:LayoutSections(sections, acquire)
 		end
 	end
 
+	for b in pairs(previous) do
+		if not self.shownButtons[b] then b:Hide() end
+	end
+
 	if not anySlots and self.messageText:IsShown() then
 		self.messageText:SetWidth(width - m.left - m.right)
 		y = y - self.messageText:GetStringHeight() - 4
@@ -336,10 +342,29 @@ function Window:LayoutSections(sections, acquire)
 	self:SetSize(width, height)
 end
 
--- Cheap refresh of visible buttons (locks, cooldowns) without relayout.
+-- Refresh of visible buttons (locks, cooldowns) without relayout.
 function Window:UpdateButtons()
 	if not self:IsShown() then return end
 	for b in pairs(self.shownButtons) do b:fbUpdate() end
+end
+
+-- The same, once on the next frame however many times it's asked for in this
+-- one - for events that come in bursts (cooldowns, item info loading).
+function Window:RequestButtonUpdate()
+	if not self:IsShown() or self.buttonsPending then return end
+	self.buttonsPending = true
+	C_Timer.After(0, function()
+		self.buttonsPending = false
+		ns.SafeCall(self.UpdateButtons, self)
+	end)
+end
+
+-- Just one slot's button, e.g. when that item is picked up or put down.
+-- Sorting locks and unlocks every slot it touches, so this has to be cheap.
+function Window:UpdateSlot(bag, slot)
+	if not (bag and slot and self:IsShown() and self.fbLive) then return end
+	local b = self.fbLive[bag .. ":" .. slot]
+	if b and self.shownButtons[b] then b:fbUpdate() end
 end
 
 -- Coalesce bursts of events into one layout pass.

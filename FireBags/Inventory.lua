@@ -212,14 +212,15 @@ window:HookScript("OnHide", function() search:SetText("") end)
 -- Events
 ---------------------------------------------------------------------------
 local function Relayout() window:RequestRefresh() end
-local function UpdateButtons() window:UpdateButtons() end
+local function UpdateButtons() window:RequestButtonUpdate() end
 
 ns.On("BAG_UPDATE", function(bag)
 	if not bag or ns.IsInventoryBag(bag) then Relayout() end
 end)
 ns.On("BAG_UPDATE_DELAYED", Relayout)
 ns.On("BAG_CONTAINER_UPDATE", Relayout)
-ns.On("ITEM_LOCK_CHANGED", UpdateButtons)
+-- Comes with the slot (nothing for equipped items), so only that button.
+ns.On("ITEM_LOCK_CHANGED", function(bag, slot) window:UpdateSlot(bag, slot) end)
 ns.On("BAG_UPDATE_COOLDOWN", UpdateButtons)
 ns.On("GET_ITEM_INFO_RECEIVED", UpdateButtons)
 ns.On("PLAYER_MONEY", function()
