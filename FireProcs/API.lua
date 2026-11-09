@@ -194,6 +194,18 @@ function API.AuraInstanceIDs(unit, filter)
 	return set
 end
 
+-- Whether one buff (by its ID) is still on the unit: true, false, or nil if
+-- the game won't say. In combat its details are hidden, but asking for a buff
+-- that's gone gives a plain "nothing", which is enough.
+function API.AuraInstanceExists(unit, id)
+	local fn = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
+	if not (fn and id) then return nil end
+	local ok, aura = pcall(fn, unit, id)
+	if not ok then return nil end
+	if API.IsSecret(aura) then return true end
+	return aura ~= nil
+end
+
 -- Calls fn(name, spellID, isPassive) for every spell in your spellbook.
 function API.ForEachSpellbookSpell(fn)
 	local SB = C_SpellBook

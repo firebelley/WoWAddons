@@ -50,6 +50,12 @@ SlashCmdList.FIREPROCS = function(input)
 		ns.Options.Open("procs")
 	elseif cmd == "buffs" then
 		ns.Options.Open("buffs")
+	elseif cmd == "testcancel" then
+		-- Testing aid (not saved): remind even about buffs you cancel yourself.
+		ns.SelfBuffs.remindCancelled = not ns.SelfBuffs.remindCancelled
+		ns.Print(ns.SelfBuffs.remindCancelled
+			and "testing: buffs you right-click off will be reminded too, until /fprocs testcancel again or /reload."
+			or "back to normal: buffs you cancel yourself aren't reminded.")
 	elseif cmd == "test" then
 		ns.Display.Test()
 	elseif cmd == "move" then
@@ -88,6 +94,7 @@ SlashCmdList.FIREPROCS = function(input)
 			tostring(UnitAffectingCombat("player") and true or false), tostring(ns.API.AurasRestricted())))
 		print("  group: " .. ns.Drain.DescribeGroup())
 		print("  buff reminders: " .. ns.SelfBuffs.Describe())
+		ns.SelfBuffs.DescribeCurrent()
 		local names = arg ~= "" and { arg } or { "Arcane Missiles", "Shadow Bolt", "Frostbolt", "Fireball", "Healing Touch", "Lightning Bolt" }
 		local any = false
 		for _, name in ipairs(names) do
