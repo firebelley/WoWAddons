@@ -178,6 +178,69 @@ function Display.SetAuras(list)
 		b:Show()
 	end
 	for i = n + 1, #auraButtons do auraButtons[i]:Hide() end
+	if Display.PlaceMissingRow then Display.PlaceMissingRow(n) end
+end
+
+---------------------------------------------------------------------------
+-- Missing buffs (buff reminders): greyed-out, red-edged, pulsing icons under
+-- the proc icons, until you recast them.
+---------------------------------------------------------------------------
+local missingRow = CreateFrame("Frame", nil, holder)
+missingRow:SetSize(1, AURA_SIZE)
+missingRow:SetPoint("TOP", row, "BOTTOM", 0, -AURA_GAP)
+
+local missingButtons = {}
+
+local function CreateMissingButton()
+	local b = CreateFrame("Frame", nil, missingRow)
+	b:SetSize(AURA_SIZE, AURA_SIZE)
+	local edge = b:CreateTexture(nil, "BACKGROUND")
+	edge:SetPoint("TOPLEFT", -2, 2)
+	edge:SetPoint("BOTTOMRIGHT", 2, -2)
+	edge:SetColorTexture(0.9, 0.1, 0.1, 1)
+	b.icon = b:CreateTexture(nil, "ARTWORK")
+	b.icon:SetAllPoints()
+	b.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+	b.icon:SetDesaturated(true)
+	b.icon:SetVertexColor(1, 0.6, 0.6)
+	local ag = b:CreateAnimationGroup()
+	ag:SetLooping("BOUNCE")
+	local a = ag:CreateAnimation("Alpha")
+	a:SetFromAlpha(1)
+	a:SetToAlpha(0.45)
+	a:SetDuration(0.8)
+	b:SetScript("OnShow", function() ag:Play() end)
+	b:SetScript("OnHide", function() ag:Stop() end)
+	return b
+end
+
+-- Right under the announcements, or under the proc icons when there are some.
+local function PlaceMissingRow(procCount)
+	missingRow:ClearAllPoints()
+	if procCount > 0 then
+		missingRow:SetPoint("TOP", row, "BOTTOM", 0, -AURA_GAP)
+	else
+		missingRow:SetPoint("TOP", holder, "BOTTOM", 0, -6)
+	end
+end
+Display.PlaceMissingRow = PlaceMissingRow
+
+-- list: { name, icon } for each buff to recast.
+function Display.SetMissing(list)
+	local n = #list
+	missingRow:SetWidth(math.max(n * AURA_SIZE + math.max(n - 1, 0) * AURA_GAP, 1))
+	for i, m in ipairs(list) do
+		local b = missingButtons[i]
+		if not b then
+			b = CreateMissingButton()
+			missingButtons[i] = b
+		end
+		b:ClearAllPoints()
+		b:SetPoint("LEFT", missingRow, "LEFT", (i - 1) * (AURA_SIZE + AURA_GAP), 0)
+		b.icon:SetTexture(m.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+		b:Show()
+	end
+	for i = n + 1, #missingButtons do missingButtons[i]:Hide() end
 end
 
 ---------------------------------------------------------------------------
@@ -230,10 +293,17 @@ function Display.Test()
 	C_Timer.After(0.5, function()
 		Display.Alert("Overpower", "Interface\\Icons\\Ability_MeleeDamage")
 	end)
+	C_Timer.After(1, function()
+		Display.Alert("Demon Armor is gone", "Interface\\Icons\\Spell_Shadow_RagingScream")
+	end)
 	Display.SetAuras({
 		{ name = "Clearcasting", icon = "Interface\\Icons\\Spell_Shadow_ManaBurn", count = 0, duration = 8, expires = GetTime() + 8 },
 	})
-	C_Timer.After(8, function() ns.Auras.Update() end)
+	Display.SetMissing({ { name = "Demon Armor", icon = "Interface\\Icons\\Spell_Shadow_RagingScream" } })
+	C_Timer.After(8, function()
+		ns.Auras.Update()
+		ns.SelfBuffs.Update()
+	end)
 end
 
 -- Size from the options. When changed live, the announcements stay centred on

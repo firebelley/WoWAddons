@@ -15,6 +15,10 @@ local DEFAULTS = {
 	detectDrain = true,     -- life-drain heals: Touch of the Grave
 	detectGifts = true,     -- long buffs from other players: Arcane Intellect...
 	detectTriggered = true, -- spells that go off by themselves
+	-- Buff reminders (see SelfBuffs.lua).
+	remindBuffs = true,     -- notice when your own long buffs are gone
+	remindAnnounce = true,  -- ...announce it once
+	remindIcon = true,      -- ...and keep an icon up until you recast it
 }
 ns.DEFAULTS = DEFAULTS
 
@@ -90,5 +94,6 @@ ns.On("ADDON_LOADED", function(name)
 	end
 	db.muted = db.muted or {} -- [spell name] = true, or "auto" when FireProcs muted it
 	db.seen = db.seen or {}   -- [spell name] = true for every proc announced so far
+	db.selfBuffs = db.selfBuffs or {} -- [buff name] = { icon, on, group } for buff reminders
 	ns.db = db
 end)

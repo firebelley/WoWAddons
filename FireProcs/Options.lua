@@ -11,7 +11,7 @@ local _, ns = ...
 local Options = {}
 ns.Options = Options
 
-local category, procsCategory
+local category, procsCategory, buffsCategory
 
 local function Tooltip(widget, title, text)
 	widget:HookScript("OnEnter", function(self)
@@ -184,6 +184,15 @@ local function BuildMain()
 	Checkbox("detectGifts", "Long buffs from other players",
 		"Arcane Intellect, Fortitude, Blessings, world buffs and other long buffs someone gives you.", RefreshAuras)
 
+	local function RefreshReminders() ns.SelfBuffs.Refresh() end
+	Header("Buff reminders")
+	Checkbox("remindAnnounce", "Announce when one of your buffs is gone",
+		"\"Water Shield is gone\", \"Demon Armor is gone\"... for your own long buffs (a minute or more), including in combat. Choose which buffs in the Buffs page (/fprocs buffs).",
+		RefreshReminders)
+	Checkbox("remindIcon", "Keep an icon up until you recast it",
+		"A red, pulsing icon of the missing buff under the announcements. It goes away when you cast the buff (or an alternative, like Lightning Shield for Water Shield).",
+		RefreshReminders)
+
 	panel:SetScript("OnShow", function()
 		for _, fn in ipairs(refreshers) do ns.SafeCall(fn) end
 	end)
@@ -193,23 +202,25 @@ local function BuildMain()
 end
 
 ---------------------------------------------------------------------------
--- "Procs" page: one checkbox per proc seen.
+-- List pages: a scrolling list with one checkbox per entry.
+--   items() returns { { key, label, checked }, ... }
+--   onToggle(key, checked) is called when one is clicked.
 ---------------------------------------------------------------------------
 local ROW_HEIGHT = 26
 
-local function BuildProcs()
+local function BuildList(name, helpText, emptyText, items, onToggle)
 	local panel = CreateFrame("Frame")
 	panel:Hide()
 
 	local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 	title:SetPoint("TOPLEFT", 16, -16)
-	title:SetText("Procs")
+	title:SetText(name)
 
 	local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	help:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
 	help:SetPoint("RIGHT", panel, "RIGHT", -16, 0)
 	help:SetJustifyH("LEFT")
-	help:SetText("Every proc FireProcs has announced so far. Untick one to stop announcing it.")
+	help:SetText(helpText)
 
 	local ok, scroll = pcall(CreateFrame, "ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
 	if not ok then scroll = CreateFrame("ScrollFrame", nil, panel) end
@@ -227,7 +238,7 @@ local function BuildProcs()
 
 	local empty = child:CreateFontString(nil, "ARTWORK", "GameFontDisable")
 	empty:SetPoint("TOPLEFT", 4, -4)
-	empty:SetText("No procs seen yet - they show up here once they've been announced.")
+	empty:SetText(emptyText)
 
 	local rows = {}
 	local function Row(i)
@@ -239,8 +250,54 @@ local function BuildProcs()
 		row.label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
 		row.label:SetPoint("LEFT", row, "RIGHT", 4, 0)
 		row:SetScript("OnClick", function(self)
-			local db, name = ns.db, self.procName
-			if self:GetChecked() then
+			ns.SafeCall(onToggle, self.key, self:GetChecked() and true or false)
+		end)
+		rows[i] = row
+		return row
+	end
+
+	local function Refresh()
+		local list = items()
+		table.sort(list, function(a, b) return a.key:lower() < b.key:lower() end)
+		child:SetWidth(math.max(scroll:GetWidth(), 1))
+		child:SetHeight(math.max(#list * ROW_HEIGHT, 1))
+		empty:SetShown(#list == 0)
+		for i, item in ipairs(list) do
+			local row = Row(i)
+			row.key = item.key
+			row:SetChecked(item.checked)
+			row.label:SetText(item.label)
+			row:Show()
+		end
+		for i = #list + 1, #rows do rows[i]:Hide() end
+	end
+	panel:SetScript("OnShow", function() ns.SafeCall(Refresh) end)
+
+	return Settings.RegisterCanvasLayoutSubcategory(category, panel, name)
+end
+
+-- "Procs" page: one checkbox per proc seen.
+local function BuildProcs()
+	return BuildList("Procs",
+		"Every proc FireProcs has announced so far. Untick one to stop announcing it.",
+		"No procs seen yet - they show up here once they've been announced.",
+		function()
+			local db, list, added = ns.db, {}, {}
+			local function Add(name)
+				if added[name] then return end
+				added[name] = true
+				list[#list + 1] = {
+					key = name, checked = not db.muted[name],
+					label = db.muted[name] == "auto" and (name .. "  |cff888888(muted automatically: happens too often)|r") or name,
+				}
+			end
+			for name in pairs(db.seen) do Add(name) end
+			for name in pairs(db.muted) do Add(name) end
+			return list
+		end,
+		function(name, on)
+			local db = ns.db
+			if on then
 				db.muted[name] = nil
 				ns.ResetProcHistory(name)
 			else
@@ -249,40 +306,40 @@ local function BuildProcs()
 			end
 			ns.Auras.Update()
 		end)
-		rows[i] = row
-		return row
-	end
+end
 
-	local function Refresh()
-		local db = ns.db
-		local names, added = {}, {}
-		for name in pairs(db.seen) do names[#names + 1] = name; added[name] = true end
-		for name in pairs(db.muted) do
-			if not added[name] then names[#names + 1] = name end
-		end
-		table.sort(names, function(a, b) return a:lower() < b:lower() end)
-
-		child:SetWidth(math.max(scroll:GetWidth(), 1))
-		child:SetHeight(math.max(#names * ROW_HEIGHT, 1))
-		empty:SetShown(#names == 0)
-		for i, name in ipairs(names) do
-			local row = Row(i)
-			row.procName = name
-			row:SetChecked(not db.muted[name])
-			row.label:SetText(db.muted[name] == "auto"
-				and (name .. "  |cff888888(muted automatically: happens too often)|r") or name)
-			row:Show()
-		end
-		for i = #names + 1, #rows do rows[i]:Hide() end
-	end
-	panel:SetScript("OnShow", function() ns.SafeCall(Refresh) end)
-
-	procsCategory = Settings.RegisterCanvasLayoutSubcategory(category, panel, "Procs")
+-- "Buffs" page: one checkbox per buff reminder.
+local function BuildBuffs()
+	return BuildList("Buffs",
+		"Your own long buffs FireProcs reminds you about when they're gone (see Buff reminders on the main page). "
+			.. "Buffs are added here the first time you cast them. Untick one to never be reminded about it.",
+		"None yet - cast one of your long buffs (Water Shield, Demon Armor...) and it shows up here.",
+		function()
+			local list = {}
+			for name, e in pairs(ns.db.selfBuffs) do
+				local label = (e.icon and ("|T" .. e.icon .. ":16|t ") or "") .. name
+				local group = ns.SelfBuffs.GroupOf(name)
+				local alts = {}
+				for other in pairs(ns.db.selfBuffs) do
+					if other ~= name and ns.SelfBuffs.GroupOf(other) == group then alts[#alts + 1] = other end
+				end
+				if #alts > 0 then
+					table.sort(alts)
+					label = label .. "  |cff888888(or " .. table.concat(alts, ", ") .. ")|r"
+				end
+				list[#list + 1] = { key = name, label = label, checked = e.on ~= false }
+			end
+			return list
+		end,
+		function(name, on)
+			ns.db.selfBuffs[name].on = on
+			ns.SelfBuffs.Refresh()
+		end)
 end
 
 ---------------------------------------------------------------------------
 function Options.Open(page)
-	local cat = page == "procs" and procsCategory or category
+	local cat = (page == "procs" and procsCategory) or (page == "buffs" and buffsCategory) or category
 	if not cat then
 		ns.Print("the options panel isn't available on this client - see /fprocs help for commands.")
 		return
@@ -296,7 +353,10 @@ end
 ns.On("PLAYER_LOGIN", function()
 	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
 	BuildMain()
-	if Settings.RegisterCanvasLayoutSubcategory then BuildProcs() end
+	if Settings.RegisterCanvasLayoutSubcategory then
+		procsCategory = BuildProcs()
+		buffsCategory = BuildBuffs()
+	end
 end)
 
 -- If the game ever blocks FireProcs again, say which function so it can be fixed.

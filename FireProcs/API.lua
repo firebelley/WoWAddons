@@ -160,6 +160,7 @@ function API.ForEachAura(unit, filter, fn)
 					count = (not API.IsSecret(count) and count) or 0,
 					duration = a.duration or 0, expires = a.expirationTime or 0,
 					source = a.sourceUnit, spellId = a.spellId,
+					instance = not API.IsSecret(a.auraInstanceID) and a.auraInstanceID or nil,
 				})
 			end
 		end
@@ -175,6 +176,22 @@ function API.ForEachAura(unit, filter, fn)
 		end
 	end
 	return hidden
+end
+
+-- The set { [auraInstanceID] = true } of every buff on you, or nil if unknown.
+-- Unlike the buffs themselves, these IDs stay readable in combat, so a buff
+-- seen out of combat can be checked for later by its ID.
+function API.AuraInstanceIDs(unit, filter)
+	local fn = C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs
+	if not fn then return nil end
+	local ok, ids = pcall(fn, unit, filter)
+	if not ok or type(ids) ~= "table" or API.IsSecret(ids) then return nil end
+	local set = {}
+	for _, id in ipairs(ids) do
+		if API.IsSecret(id) then return nil end
+		set[id] = true
+	end
+	return set
 end
 
 -- Calls fn(name, spellID, isPassive) for every spell in your spellbook.

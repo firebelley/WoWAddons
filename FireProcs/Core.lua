@@ -13,6 +13,7 @@ local function Help()
 	ns.Print("commands:")
 	print("  /fprocs - open the options")
 	print("  /fprocs procs - open the list of procs (turn each on/off)")
+	print("  /fprocs buffs - open the list of buff reminders (turn each on/off)")
 	print("  /fprocs test - show a sample announcement")
 	print("  /fprocs move - unlock/lock the announcement position")
 	print("  /fprocs reset - put the announcements back in the default spot")
@@ -47,6 +48,8 @@ SlashCmdList.FIREPROCS = function(input)
 		ns.Options.Open()
 	elseif cmd == "procs" then
 		ns.Options.Open("procs")
+	elseif cmd == "buffs" then
+		ns.Options.Open("buffs")
 	elseif cmd == "test" then
 		ns.Display.Test()
 	elseif cmd == "move" then
@@ -84,6 +87,7 @@ SlashCmdList.FIREPROCS = function(input)
 		ns.Print(("status: in combat %s, buffs hidden %s"):format(
 			tostring(UnitAffectingCombat("player") and true or false), tostring(ns.API.AurasRestricted())))
 		print("  group: " .. ns.Drain.DescribeGroup())
+		print("  buff reminders: " .. ns.SelfBuffs.Describe())
 		local names = arg ~= "" and { arg } or { "Arcane Missiles", "Shadow Bolt", "Frostbolt", "Fireball", "Healing Touch", "Lightning Bolt" }
 		local any = false
 		for _, name in ipairs(names) do
