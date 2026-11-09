@@ -31,6 +31,8 @@ ns.SelfBuffs = SelfBuffs
 
 local present = {}  -- [name] = { instance, expires, icon } for tracked buffs on you now
 local missing = {}  -- [group] = name of the buff to show for it
+local missingSince = {} -- [group] = when it went missing, for hiding the icon after a while
+local hideTimer     -- hides the next icon whose time is up (Options: "Hide the icon after")
 local diedWith = {} -- [name] = true for buffs lost by dying
 local lastIDs       -- aura instance IDs at the last update
 local live = false
@@ -112,16 +114,33 @@ local function Learn(a)
 	ns.Print(("I'll let you know when |cffffd100%s|r is gone. Turn that off in /fprocs buffs."):format(a.name))
 end
 
+-- Icons for what's missing. With a time limit set, an icon goes once it's been
+-- up that long (the buff still counts as missing, so it isn't announced again
+-- until you've recast it and lost it again).
 local function Show()
 	local list = {}
+	local limit = (ns.db.remindIconMinutes or 0) * 60
+	local soonest -- seconds until the next icon's time is up
 	if ns.db.remindIcon ~= false then
 		for group, name in pairs(missing) do
 			if Enabled(name) then
-				list[#list + 1] = { name = name, icon = Entry(name).icon }
+				missingSince[group] = missingSince[group] or GetTime()
+				local left = limit > 0 and (missingSince[group] + limit - GetTime()) or nil
+				if not left or left > 0 then
+					list[#list + 1] = { name = name, icon = Entry(name).icon }
+					if left and (not soonest or left < soonest) then soonest = left end
+				end
 			else
 				missing[group] = nil
 			end
 		end
+	end
+	if hideTimer then hideTimer:Cancel() hideTimer = nil end
+	if soonest then
+		hideTimer = C_Timer.NewTimer(soonest + 0.05, function()
+			hideTimer = nil
+			ns.SafeCall(Show)
+		end)
 	end
 	table.sort(list, function(a, b) return a.name < b.name end)
 	ns.Display.SetMissing(list)
@@ -132,6 +151,7 @@ local function Remind(name, announce)
 	if not Enabled(name) then return ns.Trace(name .. " is gone, but its reminder is turned off") end
 	if GroupPresent(GroupOf(name)) then return ns.Trace(name .. " is gone, but an alternative to it is up") end
 	missing[GroupOf(name)] = name
+	missingSince[GroupOf(name)] = GetTime()
 	if announce and ns.db.remindAnnounce ~= false then
 		local now = GetTime()
 		if now - (announcedAt[name] or -100) >= ANNOUNCE_THROTTLE then
@@ -248,7 +268,7 @@ function SelfBuffs.Update(source)
 	end
 
 	for group in pairs(missing) do
-		if GroupPresent(group) then missing[group] = nil end
+		if GroupPresent(group) then missing[group], missingSince[group] = nil, nil end
 	end
 	Show()
 end

@@ -192,6 +192,13 @@ local function BuildMain()
 	Checkbox("remindIcon", "Keep an icon up until you recast it",
 		"A red, pulsing icon of the missing buff under the announcements. It goes away when you cast the buff (or an alternative, like Lightning Shield for Water Shield).",
 		RefreshReminders)
+	Slider("remindIconMinutes", "Hide the icon after",
+		"Take the icon away after this long, even if you haven't recast the buff. Never: it stays until you do. "
+			.. "Either way you aren't reminded about that buff again until you've recast it and lost it again.",
+		0, 10, 1,
+		function(v) return v == 0 and "Never" or ("%d min"):format(v) end,
+		RefreshReminders)
+	if sliderX ~= 0 then sliderX, y = 0, y - 48 end -- a slider on its own
 
 	panel:SetScript("OnShow", function()
 		for _, fn in ipairs(refreshers) do ns.SafeCall(fn) end

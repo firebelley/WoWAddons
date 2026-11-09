@@ -19,6 +19,7 @@ local DEFAULTS = {
 	remindBuffs = true,     -- notice when your own long buffs are gone
 	remindAnnounce = true,  -- ...announce it once
 	remindIcon = true,      -- ...and keep an icon up until you recast it
+	remindIconMinutes = 0,  -- ...or until this many minutes have passed (0 = no limit)
 }
 ns.DEFAULTS = DEFAULTS
 
