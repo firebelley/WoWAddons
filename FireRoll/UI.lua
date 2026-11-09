@@ -3,7 +3,7 @@ local _, ns = ...
 local UI = {}
 ns.UI = UI
 
-local WIDTH = 250
+local WIDTH = 262 -- room for Roll, Pass and End now with even padding on both sides
 local ROW_H = 18
 local MAX_ROWS = 15
 local CLOSE_AFTER = 30 -- seconds a finished roll stays up (unless the mouse is over it)
