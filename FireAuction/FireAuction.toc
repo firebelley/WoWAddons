@@ -10,4 +10,5 @@ Data.lua
 Scan.lua
 Tooltip.lua
 Window.lua
+MinimapButton.lua
 Options.lua

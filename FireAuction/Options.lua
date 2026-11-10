@@ -89,7 +89,7 @@ local function Build()
 		y = y - 34
 	end
 
-	local function Checkbox(key, label, tooltip)
+	local function Checkbox(key, label, tooltip, onChange)
 		local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
 		cb:SetSize(26, 26)
 		cb:SetPoint("TOPLEFT", 16, y)
@@ -97,7 +97,10 @@ local function Build()
 		text:SetPoint("LEFT", cb, "RIGHT", 4, 1)
 		text:SetText(label)
 		cb:SetHitRectInsets(0, -(text:GetStringWidth() + 8), 0, 0)
-		cb:SetScript("OnClick", function(self) ns.db[key] = self:GetChecked() and true or false end)
+		cb:SetScript("OnClick", function(self)
+			ns.db[key] = self:GetChecked() and true or false
+			if onChange then ns.SafeCall(onChange) end
+		end)
 		Tooltip(cb, label, tooltip)
 		refreshers[#refreshers + 1] = function() cb:SetChecked(ns.db[key] and true or false) end
 		y = y - 28
@@ -162,6 +165,9 @@ local function Build()
 			.. "Otherwise use the Scan button above the auction house window.")
 
 	Header("Prices")
+	Checkbox("minimapButton", "Show the minimap button",
+		"A coin on the edge of the minimap: click it for the price window, right-click for these options. Drag it to move it.",
+		function() ns.MinimapButton.Update() end)
 	Checkbox("tooltip", "Show auction prices in item tooltips",
 		"The lowest buyout from your latest scan, and how much it moved over the trend period.")
 	Slider("historyDays", "Keep prices for",

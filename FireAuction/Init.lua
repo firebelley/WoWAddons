@@ -6,6 +6,7 @@ ns.ADDON = ADDON
 local DEFAULTS = {
 	autoScan = true,  -- scan by itself when you open the auction house (if the game allows one)
 	tooltip = true,   -- auction price + trend in item tooltips
+	minimapButton = true, -- the coin on the minimap (MinimapButton.lua)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
 }
