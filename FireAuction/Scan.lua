@@ -48,20 +48,46 @@ local reader = CreateFrame("Frame")
 reader:Hide()
 Scan.reader = reader
 
-local function ReadOne(i, prices)
-	local ok, name, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = pcall(AH.GetReplicateItemInfo, i)
+local function Plain(v)
+	if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
+	return v
+end
+
+-- One listing: "buyout,stack,bid,seller" (bid only for bid-only auctions).
+local function ListingKey(buyout, count, bid, owner)
+	owner = Plain(owner)
+	if type(owner) ~= "string" then owner = "" end
+	return ("%.0f,%d,%.0f,%s"):format(buyout, count, bid, (owner:gsub("[,;]", "")))
+end
+
+local function ReadOne(i, prices, bidOnly)
+	local ok, name, _, count, _, _, _, _, minBid, _, buyout, bidAmount, _, _, owner, _, _, itemID =
+		pcall(AH.GetReplicateItemInfo, i)
 	if not (ok and type(itemID) == "number" and itemID > 0) then return false end
-	if buyout and buyout > 0 and count and count > 0 then -- bid-only auctions have no buyout
+	if not (count and count > 0) then return true end
+	if buyout and buyout > 0 then
 		local unit = buyout / count
 		local p = prices[itemID]
 		if not p then
-			p = { low = unit, qty = 0 }
+			p = { low = unit, qty = 0, list = {} }
 			prices[itemID] = p
 		elseif unit < p.low then
 			p.low = unit
 		end
 		p.qty = p.qty + count
 		if name and name ~= "" then p.name = name end
+		local key = ListingKey(buyout, count, 0, owner)
+		p.list[key] = (p.list[key] or 0) + 1
+	else
+		-- Bid-only: no buyout, so not part of the price, but still a listing.
+		local bid = (bidAmount and bidAmount > 0) and bidAmount or minBid or 0
+		local list = bidOnly[itemID]
+		if not list then
+			list = {}
+			bidOnly[itemID] = list
+		end
+		local key = ListingKey(0, count, bid, owner)
+		list[key] = (list[key] or 0) + 1
 	end
 	return true
 end
@@ -70,7 +96,7 @@ reader:SetScript("OnUpdate", function(self)
 	local ok, err = pcall(function()
 		local stop = math.min(self.index + CHUNK, self.total)
 		for i = self.index, stop do
-			if ReadOne(i, self.prices) then self.read = self.read + 1 end
+			if ReadOne(i, self.prices, self.bidOnly) then self.read = self.read + 1 end
 		end
 		self.index = stop + 1
 		if self.index > self.total then
@@ -91,6 +117,13 @@ reader:SetScript("OnUpdate", function(self)
 	if self.done then
 		local items = 0
 		for _ in pairs(self.prices) do items = items + 1 end
+		-- Bid-only listings go with items that have a price.
+		for id, list in pairs(self.bidOnly) do
+			local p = self.prices[id]
+			if p then
+				for key, n in pairs(list) do p.list[key] = (p.list[key] or 0) + n end
+			end
+		end
 		ns.Data.CommitScan(self.prices, true)
 		Finish(("scanned %d auctions: prices for %d items saved."):format(self.read, items))
 		if ns.Window then ns.Window.Refresh() end
@@ -109,7 +142,8 @@ local function StartReading()
 	Scan.state = "reading"
 	-- Indices start at 0; reading one past each end costs nothing and works
 	-- either way.
-	reader.index, reader.total, reader.read, reader.done, reader.prices = 0, total, 0, false, {}
+	reader.index, reader.total, reader.read, reader.done = 0, total, 0, false
+	reader.prices, reader.bidOnly = {}, {}
 	reader:Show()
 	UpdateBar()
 end

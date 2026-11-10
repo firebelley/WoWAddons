@@ -254,6 +254,173 @@ local function GraphHover(self)
 end
 
 ---------------------------------------------------------------------------
+-- Listings: a panel beside the window with every auction from the latest
+-- scan, opened with "See all listings".
+---------------------------------------------------------------------------
+local LIST_ROWS, LIST_ROW_H = 19, 18
+local listPanel, listRows, listOffset, listData = nil, {}, 0, {}
+
+local function ListingTooltip(row)
+	local l = row.listing
+	if not l then return end
+	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+	if l.buyout > 0 then
+		GameTooltip:SetText(("%d x %d"):format(l.count, l.stack), 1, 1, 1)
+		GameTooltip:AddDoubleLine("Buyout per item", ns.Money(l.unit), 1, 0.82, 0, 1, 1, 1)
+		GameTooltip:AddDoubleLine("Buyout per stack", ns.Money(l.buyout), 1, 0.82, 0, 1, 1, 1)
+	else
+		GameTooltip:SetText(("%d x %d (bid only)"):format(l.count, l.stack), 1, 1, 1)
+		GameTooltip:AddDoubleLine("Bid per item", ns.Money(l.unit), 1, 0.82, 0, 1, 1, 1)
+		GameTooltip:AddDoubleLine("Bid per stack", ns.Money(l.bid), 1, 0.82, 0, 1, 1, 1)
+	end
+	if l.count > 1 then
+		GameTooltip:AddLine(("%d auctions just like this one"):format(l.count), 0.7, 0.7, 0.7)
+	end
+	if l.seller then GameTooltip:AddDoubleLine("Seller", l.seller, 1, 0.82, 0, 1, 1, 1) end
+	GameTooltip:Show()
+end
+
+local function UpdateListRows()
+	local maxOffset = math.max(0, #listData - LIST_ROWS)
+	listOffset = math.max(0, math.min(listOffset, maxOffset))
+	local me = UnitName("player")
+	for i = 1, LIST_ROWS do
+		local row, l = listRows[i], listData[listOffset + i]
+		row.listing = l
+		if l then
+			if l.buyout > 0 then
+				row.price:SetText(ns.Money(l.unit))
+			else
+				row.price:SetText("|cff999999bid|r " .. ns.Money(l.unit))
+			end
+			row.stack:SetText(l.count > 1 and ("%d |cff999999x%d|r"):format(l.stack, l.count) or tostring(l.stack))
+			local seller = l.seller or "|cff999999?|r"
+			if l.seller and me and (l.seller == me or l.seller:match("^[^-]+") == me) then
+				seller = "|cff40ff40" .. l.seller .. " (you)|r"
+			end
+			row.seller:SetText(seller)
+			row:Show()
+		else
+			row:Hide()
+		end
+	end
+end
+
+local function UpdateListPanel()
+	if not (listPanel and listPanel:IsShown()) then return end
+	local rec = selected and ns.Data.Get(selected)
+	listData = ns.Data.Listings(rec)
+	listOffset = 0
+	listPanel.title:SetText(rec and (ns.Data.Name(selected, rec) or ("item " .. selected)) or "Listings")
+	if #listData == 0 then
+		listPanel.footer:SetText(rec and "None listed in the latest scan." or "")
+	else
+		local auctions, items = 0, 0
+		for _, l in ipairs(listData) do
+			auctions, items = auctions + l.count, items + l.count * l.stack
+		end
+		listPanel.footer:SetText(("%d auctions, %d items - scanned %s"):format(auctions, items, ns.TimeAgo(rec.s)))
+	end
+	UpdateListRows()
+end
+
+local function BuildListPanel()
+	local ok, p = pcall(CreateFrame, "Frame", "FireAuctionListings", frame, "BasicFrameTemplateWithInset")
+	if not ok then
+		p = CreateFrame("Frame", "FireAuctionListings", frame, "BackdropTemplate")
+		p:SetBackdrop({
+			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+			tile = true, tileSize = 32, edgeSize = 32,
+			insets = { left = 11, right = 12, top = 12, bottom = 11 },
+		})
+		local close = CreateFrame("Button", nil, p, "UIPanelCloseButton")
+		close:SetPoint("TOPRIGHT", -4, -4)
+	end
+	p:SetSize(300, HEIGHT)
+	p:SetPoint("TOPLEFT", frame, "TOPRIGHT", -2, 0)
+	p:EnableMouse(true)
+	p:Hide()
+
+	local title = type(p.TitleText) == "table" and p.TitleText or nil
+	if not title then
+		title = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		title:SetPoint("TOP", 0, -6)
+	end
+	title:SetWidth(240)
+	title:SetWordWrap(false)
+	p.title = title
+
+	local function Header(text, x, width, justify)
+		local h = p:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		h:SetPoint("TOPLEFT", x, -34)
+		h:SetWidth(width)
+		h:SetJustifyH(justify)
+		h:SetText(text)
+	end
+	Header("Price each", 14, 110, "RIGHT")
+	Header("Stack", 132, 54, "RIGHT")
+	Header("Seller", 196, 94, "LEFT")
+
+	local area = CreateFrame("Frame", nil, p)
+	area:SetPoint("TOPLEFT", 10, -50)
+	area:SetSize(280, LIST_ROWS * LIST_ROW_H)
+	area:EnableMouseWheel(true)
+	area:SetScript("OnMouseWheel", function(_, delta)
+		listOffset = listOffset - delta * 3
+		UpdateListRows()
+	end)
+	for i = 1, LIST_ROWS do
+		local row = CreateFrame("Frame", nil, area)
+		row:SetSize(280, LIST_ROW_H)
+		row:SetPoint("TOPLEFT", 0, -(i - 1) * LIST_ROW_H)
+		row:EnableMouse(true)
+		if i % 2 == 0 then
+			local stripe = row:CreateTexture(nil, "BACKGROUND")
+			stripe:SetAllPoints()
+			stripe:SetColorTexture(1, 1, 1, 0.04)
+		end
+		local hl = row:CreateTexture(nil, "HIGHLIGHT")
+		hl:SetAllPoints()
+		hl:SetColorTexture(1, 0.82, 0, 0.12)
+		row.price = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		row.price:SetPoint("LEFT", 4, 0)
+		row.price:SetWidth(110)
+		row.price:SetJustifyH("RIGHT")
+		row.stack = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		row.stack:SetPoint("LEFT", 122, 0)
+		row.stack:SetWidth(54)
+		row.stack:SetJustifyH("RIGHT")
+		row.seller = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		row.seller:SetPoint("LEFT", 186, 0)
+		row.seller:SetPoint("RIGHT", -2, 0)
+		row.seller:SetJustifyH("LEFT")
+		row.seller:SetWordWrap(false)
+		row:SetScript("OnEnter", ListingTooltip)
+		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		listRows[i] = row
+	end
+	p.footer = p:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	p.footer:SetPoint("BOTTOMLEFT", 14, 14)
+	p.footer:SetPoint("BOTTOMRIGHT", -14, 14)
+	p.footer:SetJustifyH("LEFT")
+
+	p:SetScript("OnShow", function()
+		ns.SafeCall(UpdateListPanel)
+		if detail.more then detail.more:Update() end
+	end)
+	p:SetScript("OnHide", function()
+		if detail.more then detail.more:Update() end
+	end)
+	listPanel = p
+end
+
+local function ToggleListPanel()
+	if not listPanel then BuildListPanel() end
+	listPanel:SetShown(not listPanel:IsShown())
+end
+
+---------------------------------------------------------------------------
 -- Details of the selected item
 ---------------------------------------------------------------------------
 local function UpdateDetail()
@@ -263,6 +430,7 @@ local function UpdateDetail()
 		detail.name:SetText("")
 		detail.text:SetText(next(results) and "Pick an item on the left." or "")
 		graph:Hide()
+		detail.more:Hide()
 		return
 	end
 	detail.icon:SetTexture(ItemIcon(selected))
@@ -292,6 +460,9 @@ local function UpdateDetail()
 		info[#info + 1] = ("Lowest / highest day: %s / %s"):format(ns.Money(low), ns.Money(high))
 	end
 	detail.text:SetText(table.concat(info, "\n"))
+	detail.more:Show()
+	detail.more:Update()
+	ns.SafeCall(UpdateListPanel)
 	graph:Show()
 	DrawGraph(rec)
 end
@@ -457,6 +628,44 @@ local function Build()
 	detail.text:SetPoint("RIGHT", 0, 0)
 	detail.text:SetJustifyH("LEFT")
 	detail.text:SetSpacing(4)
+
+	-- Hovering the item's icon shows its tooltip; shift-click links it.
+	local titleHover = CreateFrame("Button", nil, right)
+	titleHover:SetAllPoints(detail.icon)
+	titleHover:SetScript("OnEnter", function(self)
+		if not selected then return end
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetItemByID(selected)
+		GameTooltip:Show()
+	end)
+	titleHover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	titleHover:SetScript("OnClick", function()
+		if not (selected and IsModifiedClick and IsModifiedClick()) then return end
+		local link = select(2, (C_Item and C_Item.GetItemInfo or GetItemInfo)(selected))
+		if link and HandleModifiedItemClick then HandleModifiedItemClick(link) end
+	end)
+
+	-- "See all listings": opens the listings panel beside the window.
+	local more = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
+	more:SetSize(170, 22)
+	more:SetPoint("TOPLEFT", detail.text, "BOTTOMLEFT", 0, -10)
+	more:SetScript("OnClick", function() ns.SafeCall(ToggleListPanel) end)
+	function more:Update()
+		local rec = selected and ns.Data.Get(selected)
+		local n = 0
+		for _, l in ipairs(ns.Data.Listings(rec)) do n = n + l.count end
+		if listPanel and listPanel:IsShown() then
+			self:SetText("Hide listings")
+			self:Enable()
+		elseif n > 0 then
+			self:SetText(("See all %d listing%s"):format(n, n == 1 and "" or "s"))
+			self:Enable()
+		else
+			self:SetText("No listings")
+			self:Disable()
+		end
+	end
+	detail.more = more
 
 	-- Graph (room on the left for price labels, below for dates)
 	graph = CreateFrame("Frame", nil, right)

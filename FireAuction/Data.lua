@@ -8,6 +8,8 @@
 --   d  = { [day] = price } - one price per day: the average of that day's
 --        scans' lowest buyouts
 --   td, n = the day of the latest scan, and how many scans it had
+--   l  = the latest scan's listings: "n,buyout,stack,bid,seller;..." where n is
+--        how many identical auctions there were (bid only for bid-only ones)
 local _, ns = ...
 
 local Data = {}
@@ -43,6 +45,11 @@ function Data.CommitScan(prices, complete)
 		local low = math.floor(p.low + 0.5)
 		rec.p, rec.q, rec.s = low, p.qty, now
 		if p.name then rec.nm = p.name end
+		if p.list then
+			local parts = {}
+			for key, count in pairs(p.list) do parts[#parts + 1] = count .. "," .. key end
+			rec.l = table.concat(parts, ";")
+		end
 		if rec.td == today and rec.d[today] then
 			rec.n = (rec.n or 1) + 1
 			rec.d[today] = math.floor(rec.d[today] + (low - rec.d[today]) / rec.n + 0.5)
@@ -53,7 +60,7 @@ function Data.CommitScan(prices, complete)
 	end
 	if complete then
 		for id, rec in pairs(realm.items) do
-			if not prices[id] then rec.q = 0 end
+			if not prices[id] then rec.q, rec.l = 0, nil end
 		end
 	end
 	realm.lastScan = now
@@ -115,6 +122,30 @@ function Data.Trend(rec)
 	local before = now - slope * days
 	if before <= 0 or now <= 0 then return nil end
 	return (now - before) / before * 100, math.max(0, now + slope * days), slope, now
+end
+
+-- The latest scan's listings, cheapest first (bid-only ones last):
+-- { { count = auctions, buyout = per stack, stack = n, unit = per item, bid = per stack, seller = name }, ... }
+function Data.Listings(rec)
+	local list = {}
+	if not (rec and rec.l) then return list end
+	for entry in rec.l:gmatch("[^;]+") do
+		local n, buyout, stack, bid, seller = entry:match("^(%d+),(%d+),(%d+),(%d+),(.*)$")
+		if n then
+			buyout, stack, bid = tonumber(buyout), tonumber(stack), tonumber(bid)
+			list[#list + 1] = {
+				count = tonumber(n), buyout = buyout, stack = stack, bid = bid,
+				unit = (buyout > 0 and buyout or bid) / math.max(1, stack),
+				seller = seller ~= "" and seller or nil,
+			}
+		end
+	end
+	table.sort(list, function(a, b)
+		if (a.buyout > 0) ~= (b.buyout > 0) then return a.buyout > 0 end
+		if a.unit ~= b.unit then return a.unit < b.unit end
+		return a.stack < b.stack
+	end)
+	return list
 end
 
 function Data.Name(itemID, rec)
