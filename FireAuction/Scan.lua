@@ -48,20 +48,14 @@ local reader = CreateFrame("Frame")
 reader:Hide()
 Scan.reader = reader
 
-local function Plain(v)
-	if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
-	return v
-end
-
--- One listing: "buyout,stack,bid,seller" (bid only for bid-only auctions).
-local function ListingKey(buyout, count, bid, owner)
-	owner = Plain(owner)
-	if type(owner) ~= "string" then owner = "" end
-	return ("%.0f,%d,%.0f,%s"):format(buyout, count, bid, (owner:gsub("[,;]", "")))
+-- One listing: "buyout,stack,bid" (bid only for bid-only auctions). Identical
+-- auctions share a key and are counted together.
+local function ListingKey(buyout, count, bid)
+	return ("%.0f,%d,%.0f"):format(buyout, count, bid)
 end
 
 local function ReadOne(i, prices, bidOnly)
-	local ok, name, _, count, _, _, _, _, minBid, _, buyout, bidAmount, _, _, owner, _, _, itemID =
+	local ok, name, _, count, _, _, _, _, minBid, _, buyout, bidAmount, _, _, _, _, _, itemID =
 		pcall(AH.GetReplicateItemInfo, i)
 	if not (ok and type(itemID) == "number" and itemID > 0) then return false end
 	if not (count and count > 0) then return true end
@@ -76,7 +70,7 @@ local function ReadOne(i, prices, bidOnly)
 		end
 		p.qty = p.qty + count
 		if name and name ~= "" then p.name = name end
-		local key = ListingKey(buyout, count, 0, owner)
+		local key = ListingKey(buyout, count, 0)
 		p.list[key] = (p.list[key] or 0) + 1
 	else
 		-- Bid-only: no buyout, so not part of the price, but still a listing.
@@ -86,7 +80,7 @@ local function ReadOne(i, prices, bidOnly)
 			list = {}
 			bidOnly[itemID] = list
 		end
-		local key = ListingKey(0, count, bid, owner)
+		local key = ListingKey(0, count, bid)
 		list[key] = (list[key] or 0) + 1
 	end
 	return true

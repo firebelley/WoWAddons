@@ -276,14 +276,12 @@ local function ListingTooltip(row)
 	if l.count > 1 then
 		GameTooltip:AddLine(("%d auctions just like this one"):format(l.count), 0.7, 0.7, 0.7)
 	end
-	if l.seller then GameTooltip:AddDoubleLine("Seller", l.seller, 1, 0.82, 0, 1, 1, 1) end
 	GameTooltip:Show()
 end
 
 local function UpdateListRows()
 	local maxOffset = math.max(0, #listData - LIST_ROWS)
 	listOffset = math.max(0, math.min(listOffset, maxOffset))
-	local me = UnitName("player")
 	for i = 1, LIST_ROWS do
 		local row, l = listRows[i], listData[listOffset + i]
 		row.listing = l
@@ -294,11 +292,6 @@ local function UpdateListRows()
 				row.price:SetText("|cff999999bid|r " .. ns.Money(l.unit))
 			end
 			row.stack:SetText(l.count > 1 and ("%d |cff999999x%d|r"):format(l.stack, l.count) or tostring(l.stack))
-			local seller = l.seller or "|cff999999?|r"
-			if l.seller and me and (l.seller == me or l.seller:match("^[^-]+") == me) then
-				seller = "|cff40ff40" .. l.seller .. " (you)|r"
-			end
-			row.seller:SetText(seller)
 			row:Show()
 		else
 			row:Hide()
@@ -337,7 +330,7 @@ local function BuildListPanel()
 		local close = CreateFrame("Button", nil, p, "UIPanelCloseButton")
 		close:SetPoint("TOPRIGHT", -4, -4)
 	end
-	p:SetSize(300, HEIGHT)
+	p:SetSize(230, HEIGHT)
 	p:SetPoint("TOPLEFT", frame, "TOPRIGHT", -2, 0)
 	p:EnableMouse(true)
 	p:Hide()
@@ -347,7 +340,7 @@ local function BuildListPanel()
 		title = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 		title:SetPoint("TOP", 0, -6)
 	end
-	title:SetWidth(240)
+	title:SetWidth(170)
 	title:SetWordWrap(false)
 	p.title = title
 
@@ -358,13 +351,12 @@ local function BuildListPanel()
 		h:SetJustifyH(justify)
 		h:SetText(text)
 	end
-	Header("Price each", 14, 110, "RIGHT")
-	Header("Stack", 132, 54, "RIGHT")
-	Header("Seller", 196, 94, "LEFT")
+	Header("Price each", 14, 120, "RIGHT")
+	Header("Stack", 144, 66, "RIGHT")
 
 	local area = CreateFrame("Frame", nil, p)
 	area:SetPoint("TOPLEFT", 10, -50)
-	area:SetSize(280, LIST_ROWS * LIST_ROW_H)
+	area:SetSize(210, LIST_ROWS * LIST_ROW_H)
 	area:EnableMouseWheel(true)
 	area:SetScript("OnMouseWheel", function(_, delta)
 		listOffset = listOffset - delta * 3
@@ -372,7 +364,7 @@ local function BuildListPanel()
 	end)
 	for i = 1, LIST_ROWS do
 		local row = CreateFrame("Frame", nil, area)
-		row:SetSize(280, LIST_ROW_H)
+		row:SetSize(210, LIST_ROW_H)
 		row:SetPoint("TOPLEFT", 0, -(i - 1) * LIST_ROW_H)
 		row:EnableMouse(true)
 		if i % 2 == 0 then
@@ -385,17 +377,12 @@ local function BuildListPanel()
 		hl:SetColorTexture(1, 0.82, 0, 0.12)
 		row.price = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 		row.price:SetPoint("LEFT", 4, 0)
-		row.price:SetWidth(110)
+		row.price:SetWidth(120)
 		row.price:SetJustifyH("RIGHT")
 		row.stack = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		row.stack:SetPoint("LEFT", 122, 0)
-		row.stack:SetWidth(54)
+		row.stack:SetPoint("LEFT", 134, 0)
+		row.stack:SetWidth(66)
 		row.stack:SetJustifyH("RIGHT")
-		row.seller = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		row.seller:SetPoint("LEFT", 186, 0)
-		row.seller:SetPoint("RIGHT", -2, 0)
-		row.seller:SetJustifyH("LEFT")
-		row.seller:SetWordWrap(false)
 		row:SetScript("OnEnter", ListingTooltip)
 		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		listRows[i] = row
@@ -753,15 +740,35 @@ function Window.Search(text, itemID)
 end
 
 -- Shift-clicking an item while typing in the search box searches for it.
-if ChatEdit_InsertLink then
-	hooksecurefunc("ChatEdit_InsertLink", function(link)
-		if not (search and search:HasFocus() and type(link) == "string") then return end
-		local name = link:match("%[(.-)%]")
-		local id = tonumber(link:match("item:(%d+)"))
-		if name then search:SetText(name) end
-		if id then Window.Select(id) end
-	end)
+-- Forever sends item shift-clicks through ChatFrameUtil.InsertLink (older
+-- clients through ChatEdit_InsertLink); all of them pass HandleModifiedItemClick.
+-- Hook every one that exists - one click may reach several, so it's handled once.
+local lastLink, lastTime
+local function OnLinkClicked(link)
+	if not (search and search:HasFocus() and type(link) == "string") then return end
+	local id = tonumber(link:match("item:(%d+)"))
+	if not id then return end
+	local now = GetTime()
+	if link == lastLink and now == lastTime then return end
+	lastLink, lastTime = link, now
+	local name = link:match("%[(.-)%]")
+	if name then search:SetText(name) end
+	Window.Select(id)
 end
+
+ns.On("PLAYER_LOGIN", function()
+	if ChatFrameUtil and type(ChatFrameUtil.InsertLink) == "function" then
+		hooksecurefunc(ChatFrameUtil, "InsertLink", function(link) ns.SafeCall(OnLinkClicked, link) end)
+	end
+	if type(ChatEdit_InsertLink) == "function" then
+		hooksecurefunc("ChatEdit_InsertLink", function(link) ns.SafeCall(OnLinkClicked, link) end)
+	end
+	if type(HandleModifiedItemClick) == "function" then
+		hooksecurefunc("HandleModifiedItemClick", function(link)
+			if IsModifiedClick("CHATLINK") then ns.SafeCall(OnLinkClicked, link) end
+		end)
+	end
+end)
 
 -- Item names arrive from the server a moment after they're first asked for.
 local namesPending = false

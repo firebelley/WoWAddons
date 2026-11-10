@@ -8,8 +8,8 @@
 --   d  = { [day] = price } - one price per day: the average of that day's
 --        scans' lowest buyouts
 --   td, n = the day of the latest scan, and how many scans it had
---   l  = the latest scan's listings: "n,buyout,stack,bid,seller;..." where n is
---        how many identical auctions there were (bid only for bid-only ones)
+--   l  = the latest scan's listings: "n,buyout,stack,bid;..." where n is how
+--        many identical auctions there were (bid only for bid-only ones)
 local _, ns = ...
 
 local Data = {}
@@ -125,18 +125,19 @@ function Data.Trend(rec)
 end
 
 -- The latest scan's listings, cheapest first (bid-only ones last):
--- { { count = auctions, buyout = per stack, stack = n, unit = per item, bid = per stack, seller = name }, ... }
+-- { { count = auctions, buyout = per stack, stack = n, unit = per item, bid = per stack }, ... }
+-- (Scans saved before sellers were dropped have ",seller" after each entry;
+-- the pattern ignores it.)
 function Data.Listings(rec)
 	local list = {}
 	if not (rec and rec.l) then return list end
 	for entry in rec.l:gmatch("[^;]+") do
-		local n, buyout, stack, bid, seller = entry:match("^(%d+),(%d+),(%d+),(%d+),(.*)$")
+		local n, buyout, stack, bid = entry:match("^(%d+),(%d+),(%d+),(%d+)")
 		if n then
 			buyout, stack, bid = tonumber(buyout), tonumber(stack), tonumber(bid)
 			list[#list + 1] = {
 				count = tonumber(n), buyout = buyout, stack = stack, bid = bid,
 				unit = (buyout > 0 and buyout or bid) / math.max(1, stack),
-				seller = seller ~= "" and seller or nil,
 			}
 		end
 	end
