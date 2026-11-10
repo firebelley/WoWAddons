@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="FIREAUCTION_TOGGLE" header="FIREAUCTION">
+		FireAuction_Toggle()
+	</Binding>
+</Bindings>
