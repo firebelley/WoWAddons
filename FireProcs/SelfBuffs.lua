@@ -3,7 +3,8 @@
 -- keep an icon up until you cast them again.
 --
 -- Which buffs: any buff you cast on yourself from your spellbook that lasts a
--- minute or more. They're learned as you cast them, and each can be turned off
+-- minute or more, plus spells of yours the game credits to your pet (Soul
+-- Link, which has no timer and drops when the pet dies or is dismissed). They're learned as you cast them, and each can be turned off
 -- in Options > AddOns > FireProcs > Buffs (or /fprocs buffs).
 --
 -- Everything is driven by the game's buff updates (it sends one when a buff
@@ -93,10 +94,14 @@ end
 -- A buff worth reminding about: yours, from a spell in your spellbook, long.
 -- Returns true, or false plus the reason.
 local function IsCandidate(a)
+	local inBook = Spells.active[a.name] ~= nil
+	-- Your spell that the game says your pet applied, like Soul Link: it lasts
+	-- until the pet dies or is dismissed (no timer), and is worth recasting.
+	if a.source == "pet" and inBook then return true end
 	-- (Some buffs carry no caster; one named after your own spell is yours.)
 	if a.source ~= "player" and a.source ~= nil then return false, "not cast by you (from " .. tostring(a.source) .. ")" end
 	if (a.duration or 0) < MIN_DURATION then return false, ("lasts %ss (under %ss)"):format(tostring(a.duration), MIN_DURATION) end
-	if Spells.active[a.name] == nil then
+	if not inBook then
 		return false, ("no spell named %q in your spellbook (%d spells read)"):format(a.name, Spells.count)
 	end
 	return true
@@ -305,6 +310,7 @@ function SelfBuffs.Describe()
 		local left = TimeLeft(info)
 		up[#up + 1] = name .. (info.instance and "" or " (no ID)")
 			.. (left and (" %dm%02ds left"):format(math.floor(left / 60), math.floor(left % 60))
+				or ((info.expires or 0) == 0 and " (no timer)")
 				or (" (timer unreadable: ends %s, now %.0f)"):format(tostring(info.expires), GetTime()))
 	end
 	for _, name in pairs(missing) do gone[#gone + 1] = name end
