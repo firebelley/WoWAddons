@@ -73,14 +73,20 @@ end)
 
 -- Like ns.On, but only for one unit (so UNIT_AURA from the whole raid doesn't
 -- wake us up). fn receives the same arguments as the event.
+-- In combat the game hides which unit some events (UNIT_AURA...) are about,
+-- and comparing a hidden value fails - so when the game already filters to
+-- the unit, don't check it again.
 function ns.OnUnit(event, unit, fn)
 	local f = CreateFrame("Frame")
-	if not pcall(f.RegisterUnitEvent, f, event, unit) then
+	if pcall(f.RegisterUnitEvent, f, event, unit) then
+		f:SetScript("OnEvent", function(_, _, _, ...) ns.SafeCall(fn, unit, ...) end)
+	else
 		pcall(f.RegisterEvent, f, event)
+		f:SetScript("OnEvent", function(_, _, u, ...)
+			if issecretvalue and issecretvalue(u) then return end
+			if u == unit then ns.SafeCall(fn, u, ...) end
+		end)
 	end
-	f:SetScript("OnEvent", function(_, _, u, ...)
-		if u == unit then ns.SafeCall(fn, u, ...) end
-	end)
 end
 
 ---------------------------------------------------------------------------

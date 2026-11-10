@@ -219,7 +219,8 @@ local function RememberCast(spellID)
 end
 
 ns.OnUnit("UNIT_SPELLCAST_SENT", "player", function(_, _, castGUID, spellID)
-	if type(spellID) ~= "number" then return end
+	if API.IsSecret(spellID) or type(spellID) ~= "number" then return end -- hidden in combat
+	if API.IsSecret(castGUID) then castGUID = nil end
 	RememberCast(spellID)
 	if castGUID then
 		local now = GetTime()
@@ -233,7 +234,8 @@ end)
 -- A cast with a cast time lands well after it was sent; refresh it on success.
 -- A "cast" that was never sent is one the game made for you: a proc.
 ns.OnUnit("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, castGUID, spellID)
-	if type(spellID) ~= "number" then return end
+	if API.IsSecret(spellID) or type(spellID) ~= "number" then return end -- hidden in combat
+	if API.IsSecret(castGUID) then return end -- can't tell your casts from procs
 	if castGUID and sentCasts[castGUID] then
 		sentCasts[castGUID] = nil
 		RememberCast(spellID)
