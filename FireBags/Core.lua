@@ -135,6 +135,7 @@ local function Help()
 	print("  /fbags glow - turn the new item glow on/off")
 	print("  /fbags junk - sell grey items (at a vendor)")
 	print("  /fbags counts - turn bag/bank counts in tooltips on/off")
+	print("  /fbags craft - turn bank counts in profession windows on/off")
 	print("  /fbags background <default|rock|marble|dark> - window background (now " .. db.background .. ")")
 	print("  /fbags sortmode <auto|blizzard|custom> - sorter to use (now " .. db.sortMode .. ")")
 end
@@ -195,6 +196,10 @@ SlashCmdList.FIREBAGS = function(input)
 	elseif cmd == "counts" then
 		db.tooltipCounts = not db.tooltipCounts
 		ns.Print(db.tooltipCounts and "tooltip counts on." or "tooltip counts off.")
+	elseif cmd == "craft" then
+		db.craftCounts = not db.craftCounts
+		ns.Print(db.craftCounts and "bank counts in profession windows on (reopen the window)."
+			or "bank counts in profession windows off (reopen the window).")
 	elseif cmd == "background" then
 		if ns.BACKGROUNDS[arg] or arg == "default" then
 			db.background = arg

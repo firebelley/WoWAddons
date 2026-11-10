@@ -11,6 +11,7 @@ local DEFAULTS = {
 	sortMode = "auto", -- "auto" (Blizzard's sort if available), "blizzard", "custom"
 	newItemGlow = true,
 	tooltipCounts = true, -- "Bags: 12  Bank: 40" on item tooltips
+	craftCounts = true,   -- profession windows count your bank too
 	background = "default", -- window background: default, rock, marble, dark
 }
 

@@ -49,6 +49,11 @@ local function GetBankCounts()
 	return bankCounts
 end
 
+-- How many of an item are in your bags, and in your bank (saved snapshot).
+function ns.GetItemCounts(itemID)
+	return GetBagCounts()[itemID] or 0, GetBankCounts()[itemID] or 0
+end
+
 local function Invalidate() bagCounts = nil end
 ns.On("BAG_UPDATE", Invalidate)
 ns.On("BAG_UPDATE_DELAYED", Invalidate)

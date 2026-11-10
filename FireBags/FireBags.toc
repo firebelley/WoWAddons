@@ -16,4 +16,5 @@ Inventory.lua
 Bank.lua
 Junk.lua
 Counts.lua
+Crafting.lua
 Core.lua
