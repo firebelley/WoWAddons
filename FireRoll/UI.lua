@@ -105,6 +105,15 @@ local function Build()
 	icon:SetSize(24, 24)
 	icon:SetPoint("TOPLEFT", 10, -10)
 	icon:SetTexture(DICE)
+	frame.icon = icon
+
+	-- Gold wash over the window for the flash when a roll starts.
+	frame.flash = frame:CreateTexture(nil, "OVERLAY")
+	frame.flash:SetPoint("TOPLEFT", 4, -4)
+	frame.flash:SetPoint("BOTTOMRIGHT", -4, 4)
+	frame.flash:SetColorTexture(1, 0.75, 0.2, 1)
+	frame.flash:SetBlendMode("ADD")
+	frame.flash:SetAlpha(0)
 
 	frame.title = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	frame.title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 6, 0)
@@ -278,11 +287,60 @@ function UI.Update()
 	frame:SetHeight(-y + 6)
 end
 
+---------------------------------------------------------------------------
+-- "A roll started" animation: the window pops in, flashes gold three times,
+-- and the dice spin once.
+---------------------------------------------------------------------------
+local function Alpha(group, from, to, duration, order)
+	local a = group:CreateAnimation("Alpha")
+	if a.SetFromAlpha then a:SetFromAlpha(from) a:SetToAlpha(to) else a:SetChange(to - from) end
+	a:SetDuration(duration)
+	a:SetOrder(order)
+	return a
+end
+
+local popAnim, flashAnim, spinAnim
+local function BuildAnimations()
+	popAnim = frame:CreateAnimationGroup()
+	local grow = popAnim:CreateAnimation("Scale")
+	if grow.SetScaleFrom then grow:SetScaleFrom(0.85, 0.85) grow:SetScaleTo(1, 1)
+	else grow:SetFromScale(0.85, 0.85) grow:SetToScale(1, 1) end
+	grow:SetDuration(0.18)
+	grow:SetOrder(1)
+	if grow.SetSmoothing then grow:SetSmoothing("OUT") end
+	Alpha(popAnim, 0, 1, 0.15, 1)
+
+	flashAnim = frame.flash:CreateAnimationGroup()
+	for i = 0, 2 do
+		Alpha(flashAnim, 0, 0.35, 0.15, i * 2 + 1)
+		Alpha(flashAnim, 0.35, 0, 0.3, i * 2 + 2)
+	end
+	flashAnim:SetScript("OnFinished", function() frame.flash:SetAlpha(0) end)
+
+	spinAnim = frame.icon:CreateAnimationGroup()
+	local spin = spinAnim:CreateAnimation("Rotation")
+	spin:SetDegrees(-360)
+	spin:SetDuration(0.6)
+	if spin.SetSmoothing then spin:SetSmoothing("OUT") end
+end
+
+local function PlayStartAnimation(popIn)
+	if not popAnim then BuildAnimations() end
+	if popIn then popAnim:Stop() popAnim:Play() end
+	flashAnim:Stop()
+	flashAnim:Play()
+	spinAnim:Stop()
+	spinAnim:Play()
+end
+
+-- announce: true for a roll someone else started (sound too), false for
+-- your own; nil when just reopening the window (no animation).
 function UI.Show(announce)
 	if not frame then Build() end
 	local wasShown = frame:IsShown()
 	frame:Show()
 	UI.Update()
+	if announce ~= nil then pcall(PlayStartAnimation, not wasShown) end
 	if announce and not wasShown then
 		PlaySoundSafe((SOUNDKIT and SOUNDKIT.READY_CHECK) or 8960)
 	end
