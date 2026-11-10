@@ -12,6 +12,7 @@ local DEFAULTS = {
 	newItemGlow = true,
 	tooltipCounts = true, -- "Bags: 12  Bank: 40" on item tooltips
 	craftCounts = true,   -- profession windows count your bank too
+	craftVendor = true,   -- ...and show how many more you could make by buying vendor reagents
 	background = "default", -- window background: default, rock, marble, dark
 }
 
@@ -69,6 +70,7 @@ ns.On("ADDON_LOADED", function(name)
 	end
 	db.positions = db.positions or {}
 	db.chars = db.chars or {} -- per-character data (bank snapshots)
+	db.vendorItems = db.vendorItems or {} -- [itemID] = true for items merchants sell (Crafting.lua)
 
 	-- Older versions saved a single window position.
 	if db.position then

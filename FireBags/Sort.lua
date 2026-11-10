@@ -11,7 +11,7 @@
 --
 -- By default (sortmode auto) Blizzard's built-in sort is used whenever the
 -- client has one, because it's instant; it doesn't follow the special bag
--- rules above. FireBags' sorter runs with /fbags sortmode custom, or when the
+-- rules above. FireBags' sorter runs when picked in the options ("Sort with"), or when the
 -- client has no built-in sort.
 local _, ns = ...
 local API = ns.API

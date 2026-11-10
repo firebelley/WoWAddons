@@ -17,4 +17,5 @@ Bank.lua
 Junk.lua
 Counts.lua
 Crafting.lua
+Options.lua
 Core.lua
