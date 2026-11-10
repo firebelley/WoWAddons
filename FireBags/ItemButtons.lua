@@ -16,6 +16,25 @@ local IB = {}
 ns.ItemButtons = IB
 
 ---------------------------------------------------------------------------
+-- For other addons (FireAuction marks valuable items this way):
+--   FireBags.AddButtonHook(function(button, link, isBound) ... end)
+-- runs after every item button update; link is nil for an empty slot, and
+-- isBound is nil when unknown (the bank snapshot).
+--   FireBags.UpdateButtons() redraws every visible button.
+---------------------------------------------------------------------------
+local buttonHooks = {}
+FireBags = FireBags or {}
+
+function FireBags.AddButtonHook(fn)
+	buttonHooks[#buttonHooks + 1] = fn
+	FireBags.UpdateButtons()
+end
+
+function FireBags.UpdateButtons()
+	for _, w in ipairs(ns.windows or {}) do w:RequestButtonUpdate() end
+end
+
+---------------------------------------------------------------------------
 -- Creation helpers
 ---------------------------------------------------------------------------
 local function HasIcon(b)
@@ -190,6 +209,11 @@ local function ApplyVisual(b, v)
 	b.fbLoot:SetShown(texture and v.hasLoot or false)
 	b.fbDim:SetShown(texture and not MatchesSearch(v.link) or false)
 	SetGlow(b, texture and v.isNew, quality)
+
+	local link = texture and v.link or nil
+	for _, fn in ipairs(buttonHooks) do
+		ns.SafeCall(fn, b, link, v.isBound)
+	end
 end
 
 local function RefreshTooltip(b)
@@ -216,6 +240,7 @@ local function UpdateLive(b)
 		questKind = IB.QuestKind(bag, slot, info),
 		hasLoot = info and info.hasLoot,
 		link = info and info.hyperlink,
+		isBound = info and info.isBound or false,
 	})
 	b.hasItem = texture and 1 or nil
 	b.readable = info and info.isReadable

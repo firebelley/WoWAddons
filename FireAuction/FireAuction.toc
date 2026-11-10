@@ -11,4 +11,5 @@ Scan.lua
 Tooltip.lua
 Window.lua
 MinimapButton.lua
+BagIcons.lua
 Options.lua

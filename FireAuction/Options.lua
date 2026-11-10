@@ -29,6 +29,7 @@ StaticPopupDialogs.FIREAUCTION_FORGET = {
 			realm.lastScan = 0
 		end
 		ns.Window.Refresh()
+		ns.BagIcons.Refresh()
 		ns.Print("prices forgotten.")
 	end,
 	timeout = 0,
@@ -177,6 +178,54 @@ local function Build()
 		"How many days back the trend looks (the % in tooltips), and how far ahead the price window projects it.",
 		2, 30, 1, Days, function() ns.Window.Refresh() end)
 	if sliderX ~= 0 then sliderX, y = 0, y - 48 end
+
+	-- An amount of money: "[ 0 ] g  [ 50 ] s".
+	local function MoneyInput(key, label, tooltip, onChange)
+		local name = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		name:SetPoint("TOPLEFT", 46, y - 6)
+		name:SetText(label)
+		local boxes = {}
+		local function Save()
+			local g = tonumber(boxes[1]:GetText()) or 0
+			local s = math.min(99, tonumber(boxes[2]:GetText()) or 0)
+			local value = math.max(0, math.floor(g) * 10000 + math.floor(s) * 100)
+			if ns.db[key] ~= value then
+				ns.db[key] = value
+				if onChange then ns.SafeCall(onChange) end
+			end
+		end
+		local x = 46 + name:GetStringWidth() + 14
+		for i, coin in ipairs({ "g", "s" }) do
+			local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+			box:SetSize(i == 1 and 50 or 30, 20)
+			box:SetPoint("TOPLEFT", x, y - 2)
+			box:SetAutoFocus(false)
+			box:SetNumeric(true)
+			box:SetMaxLetters(i == 1 and 6 or 2)
+			box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+			box:SetScript("OnEditFocusLost", Save)
+			Tooltip(box, label, tooltip)
+			local unit = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+			unit:SetPoint("LEFT", box, "RIGHT", 4, 0)
+			unit:SetText(coin == "g" and "|TInterface\\MoneyFrame\\UI-GoldIcon:0|t" or "|TInterface\\MoneyFrame\\UI-SilverIcon:0|t")
+			boxes[i] = box
+			x = x + (i == 1 and 50 or 30) + 26
+		end
+		refreshers[#refreshers + 1] = function()
+			local v = ns.db[key] or 0
+			boxes[1]:SetText(tostring(math.floor(v / 10000)))
+			boxes[2]:SetText(tostring(math.floor(v / 100) % 100))
+		end
+		y = y - 30
+	end
+
+	Header("Bags")
+	Checkbox("markValuable", "Mark valuable items in my bags",
+		"Puts a gold coin on items in your bags whose lowest buyout at the auction house (latest scan) is at "
+			.. "least the amount below, per item. Soulbound items are never marked.",
+		function() ns.BagIcons.Refresh() end)
+	MoneyInput("markPrice", "Worth at least", "The auction price per item that gets the gold coin.",
+		function() ns.BagIcons.Refresh() end)
 
 	y = y - 6
 	Button("Open price window", "Search your saved prices and see an item's price over time (/fah).",

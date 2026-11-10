@@ -7,6 +7,8 @@ local DEFAULTS = {
 	autoScan = true,  -- scan by itself when you open the auction house (if the game allows one)
 	tooltip = true,   -- auction price + trend in item tooltips
 	minimapButton = true, -- the coin on the minimap (MinimapButton.lua)
+	markValuable = true,  -- gold coin on bag items worth at least markPrice (BagIcons.lua)
+	markPrice = 5000,     -- copper per item (50 silver)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
 }

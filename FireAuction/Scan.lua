@@ -127,6 +127,7 @@ reader:SetScript("OnUpdate", function(self)
 		ns.Data.CommitScan(self.prices, true)
 		Finish(("scanned %d auctions: prices for %d items saved."):format(self.read, items))
 		if ns.Window then ns.Window.Refresh() end
+		if ns.BagIcons then ns.BagIcons.Refresh() end
 	else
 		UpdateBar()
 	end
