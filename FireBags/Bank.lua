@@ -149,13 +149,36 @@ ns.bank = window
 sortTab = window:AddTab({
 	title = "Sort Bank",
 	text = function()
-		return ns.atBank and "Special bags are sorted within themselves."
-			or "|cffff4040Visit a banker to sort your bank.|r"
+		if not ns.atBank then return "|cffff4040Visit a banker to sort your bank.|r" end
+		if ns.bankModel == "tabs" then
+			return ns.db.bankTabsSeparate and "Each tab is sorted on its own." or "Sorted across all your tabs."
+		end
+		return "Special bags are sorted within themselves."
 	end,
 	atlas = "bags-button-autosort-up",
 	icon = "Interface\\Icons\\INV_Misc_Bag_08",
 	onClick = function() ns.SortBags("bank") end,
 })
+
+-- One grid for the whole bank, or each tab in its own section.
+if ns.bankModel == "tabs" then
+	local separateTab
+	separateTab = window:AddTab({
+		title = "Separate Tabs",
+		text = function()
+			return ns.db.bankTabsSeparate and "Each bank tab has its own section. Click to show them as one."
+				or "Your bank tabs are shown as one. Click to give each tab its own section."
+		end,
+		icon = "Interface\\Icons\\INV_Misc_Note_02",
+		onClick = function(self)
+			ns.db.bankTabsSeparate = not ns.db.bankTabsSeparate
+			separateTab:SetSelected(ns.db.bankTabsSeparate)
+			window:RequestRefresh()
+			if GameTooltip:GetOwner() == self then self:GetScript("OnEnter")(self) end
+		end,
+	})
+	window:HookScript("OnShow", function() separateTab:SetSelected(ns.db.bankTabsSeparate) end)
+end
 
 ---------------------------------------------------------------------------
 -- Buying bank tabs (tab-based banks)

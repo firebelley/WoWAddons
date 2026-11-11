@@ -223,11 +223,21 @@ function ns.GetInventorySections()
 	return ns.GroupSections(entries)
 end
 
--- Bank tabs each get their own titled section (like Blizzard's bank tabs);
--- legacy banks group bank bags like the inventory does.
+-- Bank tabs are one grid by default, or each their own titled section (like
+-- Blizzard's bank tabs) with the bank window's "Separate Tabs" toggle. Legacy
+-- banks group bank bags like the inventory does.
 local function BankSections(entries)
 	if ns.bankModel ~= "tabs" then
 		return ns.GroupSections(entries)
+	end
+	if not ns.db.bankTabsSeparate then
+		local all = { key = "bank", family = 0, plain = true, bags = {}, numSlots = 0, numFree = 0 }
+		for _, entry in ipairs(entries) do
+			table.insert(all.bags, entry)
+			all.numSlots = all.numSlots + entry.numSlots
+			all.numFree = all.numFree + entry.numFree
+		end
+		return { all }
 	end
 	local sections = {}
 	for i, entry in ipairs(entries) do

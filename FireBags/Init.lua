@@ -5,6 +5,7 @@ ns.ADDON = ADDON
 local DEFAULTS = {
 	columns = 10,      -- slots per row in the bag window
 	bankColumns = 14,  -- slots per row in the bank window
+	bankTabsSeparate = false, -- bank tabs as their own sections (true) or one grid (false)
 	scale = 1,
 	locked = false,
 	showKeyring = true,

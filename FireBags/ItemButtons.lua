@@ -6,7 +6,12 @@ local _, ns = ...
 local API = ns.API
 
 local SLOT = ns.SLOT_SIZE
-local EMPTY_SLOT_TEXTURE = "Interface\\PaperDoll\\UI-Backpack-EmptySlot"
+-- Empty slots look like Blizzard's combined bags: a blank slot with a faded,
+-- grey bag icon on it (one bag icon for every slot, not each bag's own).
+local EMPTY_SLOT_ATLAS = "bags-item-slot-blank"
+local EMPTY_SLOT_TEXTURE = "Interface\\Buttons\\UI-EmptySlot-Disabled"
+local EMPTY_ICON = "Interface\\Icons\\INV_Misc_Bag_08"
+local EMPTY_ICON_SHADE = { 0.5, 0.5, 0.5, 0.45 } -- multiplied by the section's tint
 local BORDER_TEXTURE = "Interface\\Common\\WhiteIconFrame"
 local GLOW_ATLAS = "bags-glow-white"
 local GLOW_FALLBACK = "Interface\\Buttons\\UI-ActionButton-Border"
@@ -62,8 +67,33 @@ local function AddDecorations(b)
 
 	local bg = b:CreateTexture(nil, "BACKGROUND", nil, -1)
 	bg:SetAllPoints()
-	bg:SetTexture(EMPTY_SLOT_TEXTURE)
-	bg:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+	if API.AtlasExists(EMPTY_SLOT_ATLAS) then
+		bg:SetAtlas(EMPTY_SLOT_ATLAS)
+	else
+		bg:SetTexture(EMPTY_SLOT_TEXTURE)
+		bg:SetTexCoord(0.140625, 0.859375, 0.140625, 0.859375) -- the slot inside the 64px texture
+	end
+
+	-- Blizzard's template fills an empty slot's item icon with its own slot art
+	-- (on Forever, the "wings" bags-item-slot64), drawn over ours. No art for
+	-- empty slots means the icon just hides and FireBags' own look shows.
+	b.GetItemButtonBackgroundTexture = function() return nil end
+	b.emptyBackgroundAtlas, b.emptyBackgroundTexture = nil, nil
+
+	local emptyIcon = b:CreateTexture(nil, "BACKGROUND", nil, 0)
+	emptyIcon:SetPoint("TOPLEFT", 2, -2)
+	emptyIcon:SetPoint("BOTTOMRIGHT", -2, 2)
+	emptyIcon:SetTexture(EMPTY_ICON)
+	emptyIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+	emptyIcon:SetDesaturated(true)
+	b.fbEmptyIcon = emptyIcon
+
+	-- The window tints empty slots by section (special bags, keyring).
+	function b:fbSetTint(r, g, bl)
+		bg:SetVertexColor(r, g, bl)
+		local s = EMPTY_ICON_SHADE
+		emptyIcon:SetVertexColor(r * s[1], g * s[2], bl * s[3], s[4])
+	end
 	b.fbBackground = bg
 
 	local border = b:CreateTexture(nil, "OVERLAY", nil, 1)
@@ -186,6 +216,7 @@ end
 local function ApplyVisual(b, v)
 	local texture = v.texture
 	SetItemButtonTexture(b, texture)
+	b.fbEmptyIcon:SetShown(not texture)
 	SetItemButtonCount(b, v.count or 0)
 	SetItemButtonDesaturated(b, v.locked or false)
 

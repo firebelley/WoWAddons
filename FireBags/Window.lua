@@ -315,7 +315,7 @@ function Window:LayoutSections(sections, acquire)
 					b:SetPoint("TOPLEFT", self, "TOPLEFT",
 						m.left + col * (SLOT + SPACING),
 						y - row * (SLOT + SPACING))
-					b.fbBackground:SetVertexColor(tint[1], tint[2], tint[3])
+					b:fbSetTint(tint[1], tint[2], tint[3])
 					if not b:IsShown() then b:Show() end
 					b:fbUpdate()
 					self.shownButtons[b] = true
