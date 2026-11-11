@@ -14,6 +14,7 @@ local PRICE_COLOR = { 1, 0.82, 0 }
 local TREND_COLOR = { 0.45, 0.65, 1 }
 
 local frame, search, sortButton, countText, rows = nil, nil, nil, nil, {}
+local titleText, houseButton, UpdateHouse
 local detail = {}
 local results, offset, selected = {}, 0, nil
 
@@ -24,6 +25,13 @@ local SORTS = {
 	{ key = "falling", label = "Falling" },
 }
 local sortIndex = 1
+
+-- Which auction house's prices the window shows: "faction" or "neutral" if
+-- switched, else nil - the one you're at (your faction's when you aren't).
+local view = nil
+local function View()
+	return view or ns.house or "faction"
+end
 
 local function ItemIcon(id)
 	return (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id))
@@ -65,7 +73,7 @@ end
 ---------------------------------------------------------------------------
 local function BuildResults()
 	wipe(results)
-	local realm = ns.Realm()
+	local realm = ns.Realm(View())
 	if not realm then return end
 	local query = search and strtrim(search:GetText() or ""):lower() or ""
 	local sort = SORTS[sortIndex].key
@@ -124,7 +132,7 @@ local function UpdateRows()
 		end
 	end
 	if #results == 0 then
-		local realm = ns.Realm()
+		local realm = ns.Realm(View())
 		local empty = not realm or next(realm.items) == nil
 		countText:SetText(empty and "No prices yet - scan at the auction house." or "No matches.")
 	elseif #results > ROWS then
@@ -329,7 +337,7 @@ end
 
 local function UpdateListPanel()
 	if not (listPanel and listPanel:IsShown()) then return end
-	local rec = selected and ns.Data.Get(selected)
+	local rec = selected and ns.Data.Get(selected, View())
 	listData = ns.Data.Listings(rec)
 	listOffset = 0
 	listPanel.title:SetText(rec and (ns.Data.Name(selected, rec) or ("item " .. selected)) or "Listings")
@@ -439,7 +447,7 @@ end
 -- Details of the selected item
 ---------------------------------------------------------------------------
 local function UpdateDetail()
-	local rec = selected and ns.Data.Get(selected)
+	local rec = selected and ns.Data.Get(selected, View())
 	detail.star:Update()
 	if not rec then
 		detail.icon:Hide()
@@ -541,7 +549,29 @@ local function Build()
 		title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 		title:SetPoint("TOP", 0, -6)
 	end
-	title:SetText("FireAuction - Prices")
+	titleText = title
+
+	-- Switch between your faction's auction house and the neutral one.
+	houseButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+	houseButton:SetSize(150, 22)
+	houseButton:SetPoint("BOTTOMLEFT", 14, 12)
+	houseButton:SetScript("OnClick", function(self)
+		view = View() == "neutral" and "faction" or "neutral"
+		Window.Refresh()
+		if GameTooltip:IsOwned(self) then self:GetScript("OnEnter")(self) end
+	end)
+	houseButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Auction house", 1, 1, 1)
+		GameTooltip:AddLine(("Showing prices from the %s auction house. Click for the %s one."):format(
+			View() == "neutral" and "neutral" or ns.HouseName("faction"),
+			View() == "neutral" and ns.HouseName("faction") or "neutral (Booty Bay, Gadgetzan, Everlook)"),
+			nil, nil, nil, true)
+		GameTooltip:AddLine("Each auction house has its own prices; scans are saved to the one you're at.",
+			0.6, 0.6, 0.6, true)
+		GameTooltip:Show()
+	end)
+	houseButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	-- Search and sort
 	local okSearch, box = pcall(CreateFrame, "EditBox", nil, f, "SearchBoxTemplate")
@@ -667,7 +697,7 @@ local function Build()
 	SetStar(starHighlight, true)
 	starHighlight:SetAlpha(0.35)
 	function star:Update()
-		self:SetShown(selected ~= nil and ns.Data.Get(selected) ~= nil)
+		self:SetShown(selected ~= nil and ns.Data.Get(selected, View()) ~= nil)
 		SetStar(self.tex, selected and IsFavorite(selected))
 	end
 	star:SetScript("OnClick", function(self)
@@ -722,7 +752,7 @@ local function Build()
 	more:SetPoint("TOPLEFT", detail.text, "BOTTOMLEFT", 0, -10)
 	more:SetScript("OnClick", function() ns.SafeCall(ToggleListPanel) end)
 	function more:Update()
-		local rec = selected and ns.Data.Get(selected)
+		local rec = selected and ns.Data.Get(selected, View())
 		local n = 0
 		for _, l in ipairs(ns.Data.Listings(rec)) do n = n + l.count end
 		if listPanel and listPanel:IsShown() then
@@ -785,18 +815,32 @@ local function Build()
 		if graph:IsVisible() then ns.SafeCall(UpdateDetail) end
 	end)
 	f:SetScript("OnShow", function()
+		UpdateHouse()
 		ns.SafeCall(BuildResults)
 		UpdateRows()
 		ns.SafeCall(UpdateDetail)
 	end)
 end
 
+function UpdateHouse() -- (declared at the top)
+	local name = ns.HouseName(View())
+	titleText:SetText("FireAuction - " .. name .. " Prices")
+	houseButton:SetText("Show " .. ns.HouseName(View() == "neutral" and "faction" or "neutral") .. " prices")
+end
+
 function Window.Refresh()
 	if frame and frame:IsShown() then
+		UpdateHouse()
 		ns.SafeCall(BuildResults)
 		UpdateRows()
 		ns.SafeCall(UpdateDetail)
 	end
+end
+
+-- Opening or leaving an auction house: show that one's prices again.
+function Window.HouseChanged()
+	view = nil
+	Window.Refresh()
 end
 
 function Window.Toggle()
@@ -816,7 +860,7 @@ function Window.Search(text, itemID)
 	search:SetText(text or "")
 	ns.SafeCall(BuildResults)
 	UpdateRows()
-	if itemID and ns.Data.Get(itemID) then
+	if itemID and ns.Data.Get(itemID, View()) then
 		Window.Select(itemID)
 	elseif #results == 1 then
 		Window.Select(results[1].id)

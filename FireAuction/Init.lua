@@ -120,16 +120,26 @@ ns.On("ADDON_LOADED", function(name)
 	ns.db = db
 end)
 
--- Prices for the auction house you use: per realm and faction.
-local realmKey
-function ns.Realm()
+-- Prices per auction house: your faction's ("Realm - Horde") and the neutral
+-- one in Booty Bay, Gadgetzan and Everlook ("Realm - Neutral").
+--   house: "faction" or "neutral"; nil means the one you're using - the
+--   neutral house while you're at it (ns.house, set by Scan.lua), otherwise
+--   your faction's.
+ns.house = nil
+
+function ns.HouseName(house)
+	house = house or ns.house or "faction"
+	if house == "neutral" then return "Neutral" end
+	return UnitFactionGroup("player") or "Faction"
+end
+
+function ns.Realm(house)
 	if not ns.db then return nil end
-	if not realmKey then
-		local faction = UnitFactionGroup("player")
-		if not faction then return nil end -- too early
-		realmKey = (GetRealmName() or "?") .. " - " .. faction
-	end
+	local faction = UnitFactionGroup("player")
+	if not faction then return nil end -- too early
+	house = house or ns.house or "faction"
+	local key = (GetRealmName() or "?") .. " - " .. (house == "neutral" and "Neutral" or faction)
 	local realms = ns.db.realms
-	if not realms[realmKey] then realms[realmKey] = { items = {}, lastScan = 0, lastRequest = 0 } end
-	return realms[realmKey]
+	if not realms[key] then realms[key] = { items = {}, lastScan = 0, lastRequest = 0 } end
+	return realms[key]
 end

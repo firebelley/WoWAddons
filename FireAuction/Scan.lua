@@ -118,7 +118,7 @@ reader:SetScript("OnUpdate", function(self)
 				for key, n in pairs(list) do p.list[key] = (p.list[key] or 0) + n end
 			end
 		end
-		ns.Data.CommitScan(self.prices, true)
+		ns.Data.CommitScan(self.prices, true, self.house)
 		Finish(("scanned %d auctions: prices for %d items saved."):format(self.read, items))
 		if ns.Window then ns.Window.Refresh() end
 		if ns.BagIcons then ns.BagIcons.Refresh() end
@@ -140,6 +140,7 @@ local function StartReading()
 	-- either way.
 	reader.index, reader.total, reader.read, reader.done = 0, total, 0, false
 	reader.prices, reader.bidOnly = {}, {}
+	reader.house = ns.house or "faction"
 	reader:Show()
 	UpdateBar()
 end
@@ -246,6 +247,7 @@ local function CreateBar()
 			else
 				text = "Not scanned yet"
 			end
+			if ns.house == "neutral" then text = "|cffffd100Neutral:|r " .. text end
 			local left = Scan.CooldownLeft()
 			if left > 0 then
 				text = text .. ("  |cff999999(next in %d min)|r"):format(math.ceil(left / 60))
@@ -267,9 +269,37 @@ local function CreateBar()
 	return f
 end
 
+---------------------------------------------------------------------------
+-- Which auction house: the goblin auctioneers of Booty Bay, Gadgetzan and
+-- Everlook belong to neither faction. Without an auctioneer to ask, those
+-- zones (the only ones with a neutral auction house) decide.
+---------------------------------------------------------------------------
+local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true } -- Stranglethorn Vale, Tanaris, Winterspring
+
+local function DetectHouse()
+	if UnitExists("npc") then
+		local faction = UnitFactionGroup("npc")
+		if faction == "Alliance" or faction == "Horde" then return nil end
+		return "neutral"
+	end
+	local map = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+	return map and NEUTRAL_ZONES[map] and "neutral" or nil
+end
+
+-- Tooltips, bag coins and crafting profit follow the auction house you're at.
+local function SetHouse(house)
+	if ns.house == house then return end
+	ns.house = house
+	ns.Debug("auction house: " .. ns.HouseName())
+	if ns.Window then ns.Window.HouseChanged() end
+	if ns.BagIcons then ns.BagIcons.Refresh() end
+	if ns.Crafting then ns.Crafting.Refresh() end
+end
+
 local function OnOpen()
 	if ns.atAH then return end
 	ns.atAH = true
+	SetHouse(DetectHouse())
 	C_Timer.After(0, function()
 		bar = bar or CreateBar()
 		UpdateBar()
@@ -289,6 +319,7 @@ local function OnClose()
 		local wasReading = Scan.state == "reading"
 		Finish(wasReading and "scan stopped: the auction house was closed before it was read." or nil)
 	end
+	SetHouse(nil)
 end
 
 local AUCTIONEER = Enum and Enum.PlayerInteractionType and Enum.PlayerInteractionType.Auctioneer

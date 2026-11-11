@@ -23,10 +23,12 @@ StaticPopupDialogs.FIREAUCTION_FORGET = {
 	button1 = YES,
 	button2 = NO,
 	OnAccept = function()
-		local realm = ns.Realm()
-		if realm then
-			wipe(realm.items)
-			realm.lastScan = 0
+		for _, house in ipairs({ "faction", "neutral" }) do
+			local realm = ns.Realm(house)
+			if realm then
+				wipe(realm.items)
+				realm.lastScan = 0
+			end
 		end
 		ns.Window.Refresh()
 		ns.BagIcons.Refresh()
@@ -55,7 +57,8 @@ local function Build()
 	about:SetJustifyH("LEFT")
 	about:SetText("Scans the auction house and keeps a price history for every item. Item tooltips show the "
 		.. "lowest buyout and how it moved; the price window (/fah, a key binding, or Prices at the auction "
-		.. "house) lets you search items and see their price over time. Prices are kept per realm and faction.")
+		.. "house) lets you search items and see their price over time. Prices are kept per realm, separately for your "
+		.. "faction's auction house and the neutral one (Booty Bay, Gadgetzan, Everlook).")
 	y = y - 50
 
 	local function Header(text)
@@ -237,8 +240,8 @@ local function Build()
 	y = y - 6
 	Button("Open price window", "Search your saved prices and see an item's price over time (/fah).",
 		function() ns.Window.Show() end)
-	Button("Forget prices", "Delete every saved price for this realm and faction.", function()
-		StaticPopup_Show("FIREAUCTION_FORGET", (GetRealmName() or "?") .. " (" .. (UnitFactionGroup("player") or "?") .. ")")
+	Button("Forget prices", "Delete every saved price for this realm: your faction's auction house and the neutral one.", function()
+		StaticPopup_Show("FIREAUCTION_FORGET", (GetRealmName() or "?") .. " (" .. (UnitFactionGroup("player") or "?") .. " and neutral)")
 	end)
 	EndButtons()
 

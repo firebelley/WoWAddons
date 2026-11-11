@@ -1,5 +1,6 @@
 -- The price history, and the trend worked out from it.
 --
+-- Kept per auction house (ns.Realm): your faction's, and the neutral one.
 -- Per item (realm.items[itemID]):
 --   p  = lowest buyout per item in the latest scan (copper)
 --   q  = how many were listed then (0 = none in the latest full scan)
@@ -25,15 +26,17 @@ function Data.DayTime(day)
 	return day * DAY + DAY / 2
 end
 
-function Data.Get(itemID)
-	local realm = ns.Realm()
+-- house: see ns.Realm (nil = the auction house you're using).
+function Data.Get(itemID, house)
+	local realm = ns.Realm(house)
 	return realm and itemID and realm.items[itemID]
 end
 
 -- prices = { [itemID] = { low = copper, qty = n, name = string|nil } }
 -- complete: it was a full scan, so items missing from it aren't listed now.
-function Data.CommitScan(prices, complete)
-	local realm = ns.Realm()
+-- house: the auction house it was scanned at (see ns.Realm).
+function Data.CommitScan(prices, complete, house)
+	local realm = ns.Realm(house)
 	if not realm then return end
 	local now, today = time(), Data.Today()
 	for id, p in pairs(prices) do
@@ -64,12 +67,12 @@ function Data.CommitScan(prices, complete)
 		end
 	end
 	realm.lastScan = now
-	Data.Prune()
+	Data.Prune(house)
 end
 
 -- Forget days older than the history setting (and items with nothing left).
-function Data.Prune()
-	local realm = ns.Realm()
+function Data.Prune(house)
+	local realm = ns.Realm(house)
 	if not realm then return end
 	local oldest = Data.Today() - ns.db.historyDays
 	for id, rec in pairs(realm.items) do
