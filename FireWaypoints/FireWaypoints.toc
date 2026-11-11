@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: FireWaypoints
+## Notes: Shift-click the world map to drop as many pins as you like. They show on the map and minimap, and your group sees them too (if they have FireWaypoints).
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariables: FireWaypointsDB
+## SavedVariablesPerCharacter: FireWaypointsCharDB
+
+Core.lua
+Map.lua
+Minimap.lua
+Options.lua
