@@ -318,13 +318,15 @@ end
 -- "Buffs" page: one checkbox per buff reminder.
 local function BuildBuffs()
 	return BuildList("Buffs",
-		"Your own long buffs FireProcs reminds you about when they're gone (see Buff reminders on the main page). "
+		"Your own long buffs FireProcs reminds you about when they're gone (see Buff reminders on the main page), "
+			.. "and short ones you keep up yourself, like seals, which only get an alert when they drop during a fight. "
 			.. "Buffs are added here the first time you cast them. Untick one to never be reminded about it.",
 		"None yet - cast one of your long buffs (Water Shield, Demon Armor...) and it shows up here.",
 		function()
 			local list = {}
 			for name, e in pairs(ns.db.selfBuffs) do
 				local label = (e.icon and ("|T" .. e.icon .. ":16|t ") or "") .. name
+				if e.combat then label = label .. "  |cff888888(only when it drops in combat)|r" end
 				local group = ns.SelfBuffs.GroupOf(name)
 				local alts = {}
 				for other in pairs(ns.db.selfBuffs) do

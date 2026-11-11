@@ -7,6 +7,12 @@
 -- Link, which has no timer and drops when the pet dies or is dismissed). They're learned as you cast them, and each can be turned off
 -- in Options > AddOns > FireProcs > Buffs (or /fprocs buffs).
 --
+-- Short buffs you keep up yourself (seals, Slice and Dice): under a minute,
+-- from a spell with no cooldown of its own. These are combat-only: an alert
+-- when one drops during a fight, no icon, nothing out of combat. Short buffs
+-- from spells with a cooldown (Sprint, Evasion, Shield Wall) are left alone -
+-- they're meant to run out.
+--
 -- Everything is driven by the game's buff updates (it sends one when a buff
 -- runs out, too) - nothing runs on a timer. In combat your buffs are hidden
 -- from addons, but a buff seen before the fight can still be checked for by
@@ -26,6 +32,8 @@ local CANCEL_WINDOW = 1  -- a buff gone this soon after you right-click one off 
 local ANNOUNCE_THROTTLE = 3
 local LOGIN_CHECK = 5    -- seconds after login before checking what's missing
 local END_MARGIN = 1     -- in combat, a hidden buff this close to its end time counts as gone
+local GCD = 2            -- a cooldown this short right after casting is just the global cooldown
+local JUDGEMENT = "Judgement" -- uses up a paladin's seal on purpose
 
 local SelfBuffs = {}
 ns.SelfBuffs = SelfBuffs
@@ -91,8 +99,23 @@ local function GroupPresent(group)
 	return false
 end
 
--- A buff worth reminding about: yours, from a spell in your spellbook, long.
--- Returns true, or false plus the reason.
+-- A short buff you keep up yourself (a seal): its spell has no cooldown. Only
+-- decided right after you cast it out of combat, when the cooldown it started
+-- can be read (in combat cooldowns are hidden); remembered once learned.
+local maintained = {} -- [name] = true/false, decided this session
+local function IsMaintained(name)
+	local e = Entry(name)
+	if e then return e.combat == true end
+	if maintained[name] ~= nil then return maintained[name] end
+	if API.AurasRestricted() or not Spells.WasRecentlyCast(name) then return false end
+	local _, cooldown = API.SpellCooldown(Spells.active[name])
+	maintained[name] = cooldown <= GCD
+	return maintained[name]
+end
+
+-- A buff worth reminding about: yours, from a spell in your spellbook, long -
+-- or short and kept up by you (combat-only reminders).
+-- Returns true plus "combat" for those, or false plus the reason.
 local function IsCandidate(a)
 	local inBook = Spells.active[a.name] ~= nil
 	-- Your spell that the game says your pet applied, like Soul Link: it lasts
@@ -100,14 +123,20 @@ local function IsCandidate(a)
 	if a.source == "pet" and inBook then return true end
 	-- (Some buffs carry no caster; one named after your own spell is yours.)
 	if a.source ~= "player" and a.source ~= nil then return false, "not cast by you (from " .. tostring(a.source) .. ")" end
-	if (a.duration or 0) < MIN_DURATION then return false, ("lasts %ss (under %ss)"):format(tostring(a.duration), MIN_DURATION) end
 	if not inBook then
 		return false, ("no spell named %q in your spellbook (%d spells read)"):format(a.name, Spells.count)
 	end
-	return true
+	local duration = a.duration or 0
+	if duration >= MIN_DURATION then return true end
+	if duration > 0 and IsMaintained(a.name) then return true, "combat" end
+	if duration > 0 and maintained[a.name] == false then
+		return false, ("lasts %ss and its spell has a cooldown, so it's meant to run out"):format(tostring(duration))
+	end
+	return false, ("lasts %ss (under %ss; short buffs from spells without a cooldown, like seals, are watched "
+		.. "in combat once you cast them out of combat)"):format(tostring(duration), MIN_DURATION)
 end
 
-local function Learn(a)
+local function Learn(a, kind)
 	local db = ns.db
 	local e = db.selfBuffs[a.name]
 	if e then
@@ -115,8 +144,12 @@ local function Learn(a)
 		e.duration = a.duration or e.duration -- to time it when recast in combat
 		return
 	end
-	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration }
-	ns.Print(("I'll let you know when |cffffd100%s|r is gone. Turn that off in /fprocs buffs."):format(a.name))
+	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, combat = kind == "combat" or nil }
+	if kind == "combat" then
+		ns.Print(("I'll let you know if |cffffd100%s|r drops during a fight. Turn that off in /fprocs buffs."):format(a.name))
+	else
+		ns.Print(("I'll let you know when |cffffd100%s|r is gone. Turn that off in /fprocs buffs."):format(a.name))
+	end
 end
 
 -- Icons for what's missing. With a time limit set, an icon goes once it's been
@@ -155,6 +188,21 @@ end
 local function Remind(name, announce)
 	if not Enabled(name) then return ns.Trace(name .. " is gone, but its reminder is turned off") end
 	if GroupPresent(GroupOf(name)) then return ns.Trace(name .. " is gone, but an alternative to it is up") end
+	if Entry(name).combat then
+		-- Combat-only: an alert when it drops mid-fight, nothing else.
+		if not (announce and UnitAffectingCombat("player")) then
+			return ns.Trace(name .. " is gone, but it's only reminded when it drops during a fight")
+		end
+		if Spells.WasRecentlyCast(JUDGEMENT) then
+			return ns.Trace(name .. " is gone: used up by Judgement, not reminding")
+		end
+		local now = GetTime()
+		if ns.db.remindAnnounce ~= false and now - (announcedAt[name] or -100) >= ANNOUNCE_THROTTLE then
+			announcedAt[name] = now
+			ns.Display.Alert(name .. " is gone", Entry(name).icon)
+		end
+		return ns.Trace(name .. " dropped during a fight: alerting")
+	end
 	missing[GroupOf(name)] = name
 	missingSince[GroupOf(name)] = GetTime()
 	if announce and ns.db.remindAnnounce ~= false then
@@ -199,8 +247,9 @@ function SelfBuffs.Update(source)
 	local restricted = API.AurasRestricted()
 	local now = {}
 	API.ForEachAura("player", "HELPFUL", function(a)
-		if IsCandidate(a) then
-			Learn(a)
+		local ok, kind = IsCandidate(a)
+		if ok then
+			Learn(a, kind)
 			local info = { instance = a.instance, expires = a.expires, icon = a.icon }
 			-- Still listed a moment after its end time: it's gone, the list is stale.
 			local left = TimeLeft(info)
@@ -317,7 +366,9 @@ function SelfBuffs.Describe()
 	table.sort(up)
 	table.sort(gone)
 	local known = {}
-	for name, e in pairs(ns.db.selfBuffs) do known[#known + 1] = name .. (e.on == false and " (off)" or "") end
+	for name, e in pairs(ns.db.selfBuffs) do
+		known[#known + 1] = name .. (e.combat and " (in combat)" or "") .. (e.on == false and " (off)" or "")
+	end
 	table.sort(known)
 	return ("watching: %s; up: %s; missing: %s; buff IDs readable: %s"):format(
 		#known > 0 and table.concat(known, ", ") or "none",
