@@ -43,6 +43,7 @@ local present = {}  -- [name] = { instance, expires, icon } for tracked buffs on
 local missing = {}  -- [group] = name of the buff to show for it
 local missingSince = {} -- [group] = when it went missing, for hiding the icon after a while
 local hideTimer     -- hides the next icon whose time is up (Options: "Hide the icon after")
+local dismissed = {} -- [group] = true: icon right-clicked away, until the buff is back (this session)
 local diedWith = {} -- [name] = true for buffs lost by dying
 local lastIDs       -- aura instance IDs at the last update
 local live = false
@@ -168,7 +169,9 @@ local function Show()
 	end
 	if ns.db.remindIcon ~= false then
 		for group, name in pairs(missing) do
-			if Enabled(name) then
+			if dismissed[group] then
+				-- right-clicked away: stays missing (no new reminder), just not shown
+			elseif Enabled(name) then
 				missingSince[group] = missingSince[group] or GetTime()
 				local left = limit > 0 and (missingSince[group] + limit - GetTime()) or nil
 				if not left or left > 0 then
@@ -334,6 +337,17 @@ function SelfBuffs.Update(source)
 	for group in pairs(missing) do
 		if GroupPresent(group) then missing[group], missingSince[group] = nil, nil end
 	end
+	for group in pairs(dismissed) do
+		if GroupPresent(group) then dismissed[group] = nil end
+	end
+	Show()
+end
+
+-- Right-clicking a reminder icon: hide it until the buff is back.
+function SelfBuffs.Dismiss(name)
+	local group = GroupOf(name)
+	dismissed[group] = true
+	ns.Trace(name .. " reminder dismissed until you recast it")
 	Show()
 end
 

@@ -211,6 +211,23 @@ local function CreateMissingButton()
 	a:SetDuration(0.8)
 	b:SetScript("OnShow", function() ag:Play() end)
 	b:SetScript("OnHide", function() ag:Stop() end)
+	-- Right-click dismisses it; left clicks go through to the world.
+	b:EnableMouse(true)
+	if b.SetPassThroughButtons then pcall(b.SetPassThroughButtons, b, "LeftButton") end
+	b:SetScript("OnMouseUp", function(self, button)
+		if button == "RightButton" and self.name then
+			GameTooltip:Hide()
+			ns.SafeCall(ns.SelfBuffs.Dismiss, self.name)
+		end
+	end)
+	b:SetScript("OnEnter", function(self)
+		if not self.name then return end
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+		GameTooltip:SetText(self.name .. " is gone", 1, 0.3, 0.3)
+		GameTooltip:AddLine("Right-click to dismiss until you recast it.", 0.8, 0.8, 0.8)
+		GameTooltip:Show()
+	end)
+	b:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	return b
 end
 
@@ -238,6 +255,7 @@ function Display.SetMissing(list)
 		b:ClearAllPoints()
 		b:SetPoint("LEFT", missingRow, "LEFT", (i - 1) * (AURA_SIZE + AURA_GAP), 0)
 		b.icon:SetTexture(m.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+		b.name = m.name
 		b:Show()
 	end
 	for i = n + 1, #missingButtons do missingButtons[i]:Hide() end
