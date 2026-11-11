@@ -12,9 +12,9 @@ local function AddPrice(tooltip, itemID)
 	else
 		right = "|cff999999none listed, was|r " .. ns.Money(rec.p)
 	end
-	local pct = ns.Data.Trend(rec)
+	local pct, _, _, _, days = ns.Data.Trend(rec)
 	if pct then
-		right = right .. "  " .. ns.Percent(pct) .. ("|cff999999 (%dd)|r"):format(ns.Data.TrendDays())
+		right = right .. "  " .. ns.Percent(pct) .. ("|cff999999 (%dd)|r"):format(days)
 	end
 
 	local left = "Auction house"

@@ -164,8 +164,8 @@ local function DrawGraph(rec)
 
 	local today = ns.Data.Today()
 	local first = math.min(history[1][1], today)
-	local trendDays = ns.Data.TrendDays()
-	local _, projected, slope, now = ns.Data.Trend(rec)
+	-- The trend covers the days it has prices for, and projects as far ahead.
+	local _, projected, slope, now, trendDays = ns.Data.Trend(rec)
 	local last = slope and (today + trendDays) or today
 	if last == first then first = first - 1 end
 
@@ -432,10 +432,10 @@ local function UpdateDetail()
 		info[#info + 1] = ("Lowest buyout: |cff999999none listed (was|r %s|cff999999)|r"):format(ns.Money(rec.p))
 	end
 	info[#info + 1] = "|cff999999Seen " .. ns.TimeAgo(rec.s) .. "|r"
-	local days = ns.Data.TrendDays()
-	local pct, projected = ns.Data.Trend(rec)
+	local pct, projected, _, _, days = ns.Data.Trend(rec)
 	if pct then
-		info[#info + 1] = ("Last %d days: %s   Projected in %d days: %s"):format(days, ns.Percent(pct), days, ns.Money(projected))
+		local span = days == 1 and "day" or (days .. " days")
+		info[#info + 1] = ("Last %s: %s   Projected in %s: %s"):format(span, ns.Percent(pct), span, ns.Money(projected))
 	else
 		info[#info + 1] = "|cff999999No trend yet - it needs prices from at least two days.|r"
 	end

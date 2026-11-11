@@ -94,34 +94,39 @@ function Data.TrendDays()
 end
 
 -- A straight line through the daily prices of the trend period (least squares).
--- Returns slope (copper per day) and the line's value today, or nil with fewer
--- than two days of prices.
+-- Returns slope (copper per day), the line's value today, and how many days
+-- back the oldest price in the period is; nil with fewer than two days of
+-- prices.
 function Data.Fit(rec)
 	local today = Data.Today()
 	local from = today - Data.TrendDays()
 	local n, sx, sy, sxx, sxy = 0, 0, 0, 0, 0
+	local oldest = today
 	for day, price in pairs(rec.d) do
 		if day >= from then
 			local x = day - today
 			n, sx, sy, sxx, sxy = n + 1, sx + x, sy + price, sxx + x * x, sxy + x * price
+			if day < oldest then oldest = day end
 		end
 	end
 	if n < 2 then return nil end
 	local den = n * sxx - sx * sx
 	if den == 0 then return nil end
 	local slope = (n * sxy - sx * sy) / den
-	return slope, (sy - slope * sx) / n
+	return slope, (sy - slope * sx) / n, math.max(1, today - oldest)
 end
 
--- How much the price moved over the trend period, in percent, plus what the
--- line projects for the same time ahead. nil without enough history.
+-- How much the price moved over the days the trend period has prices for
+-- (span: at most the trend period), in percent, and what the line projects
+-- for the same time ahead. Only measuring the days that have prices keeps two
+-- days of history from being stretched into a week-long rise or fall.
+-- Returns pct, projected, slope, now, span; nil without enough history.
 function Data.Trend(rec)
-	local slope, now = Data.Fit(rec)
+	local slope, now, span = Data.Fit(rec)
 	if not slope then return nil end
-	local days = Data.TrendDays()
-	local before = now - slope * days
+	local before = now - slope * span
 	if before <= 0 or now <= 0 then return nil end
-	return (now - before) / before * 100, math.max(0, now + slope * days), slope, now
+	return (now - before) / before * 100, math.max(0, now + slope * span), slope, now, span
 end
 
 -- The latest scan's listings, cheapest first (bid-only ones last):
