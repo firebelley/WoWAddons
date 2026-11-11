@@ -28,6 +28,7 @@ StaticPopupDialogs.FIREAUCTION_FORGET = {
 			if realm then
 				wipe(realm.items)
 				realm.lastScan = 0
+				realm.syncedFull = nil
 			end
 		end
 		ns.Window.Refresh()
@@ -293,6 +294,8 @@ SlashCmdList.FIREAUCTION = function(input)
 		ns.Sales.PrintListings()
 	elseif cmd == "testsale" then
 		ns.Sales.Test()
+	elseif cmd == "sync" then
+		ns.Sync.Now()
 	elseif cmd == "options" or cmd == "config" or cmd == "settings" then
 		Options.Open()
 	elseif cmd == "debug" then
@@ -307,6 +310,7 @@ SlashCmdList.FIREAUCTION = function(input)
 				realm and realm.lastScan > 0 and ns.TimeAgo(realm.lastScan) or "never"))
 		end
 		print("  " .. ns.Scan.HouseDebug())
+		print("  " .. ns.Sync.Status())
 	elseif cmd == "help" then
 		ns.Print("commands:")
 		print("  /fah - show/hide the price window")
@@ -315,6 +319,7 @@ SlashCmdList.FIREAUCTION = function(input)
 		print("  /fah sales - what's sold and waiting in the mailbox")
 		print("  /fah auctions - what you have listed, with time left")
 		print("  /fah testsale - show what a sale announcement looks like")
+		print("  /fah sync - get newer prices from your guild now (it also happens by itself)")
 		print("  /fah options - open the settings")
 	else
 		ns.Window.Show()
