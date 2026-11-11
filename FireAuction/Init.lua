@@ -9,6 +9,7 @@ local DEFAULTS = {
 	minimapButton = true, -- the coin on the minimap (MinimapButton.lua)
 	markValuable = true,  -- gold coin on bag items worth at least markPrice (BagIcons.lua)
 	markPrice = 5000,     -- copper per item (50 silver)
+	craftProfit = true,   -- profit line in profession windows (Crafting.lua)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
 }
@@ -114,6 +115,7 @@ ns.On("ADDON_LOADED", function(name)
 		if db[k] == nil then db[k] = v end
 	end
 	db.realms = db.realms or {} -- ["Realm - Faction"] = { items = {...}, lastScan, lastRequest }
+	db.vendorPrices = db.vendorPrices or {} -- [itemID] = copper per item, learned at merchants
 	ns.db = db
 end)
 

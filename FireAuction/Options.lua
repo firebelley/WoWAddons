@@ -227,6 +227,13 @@ local function Build()
 	MoneyInput("markPrice", "Worth at least", "The auction price per item that gets the gold coin.",
 		function() ns.BagIcons.Refresh() end)
 
+	Header("Crafting")
+	Checkbox("craftProfit", "Show crafting profit in profession windows",
+		"Under the selected recipe: what the crafted item sells for at auction (after the 5% cut, or to a vendor if "
+			.. "that pays more) minus what its reagents cost (the cheaper of auction and vendor price). Hover it for "
+			.. "the breakdown; hovering a recipe in the list shows it too. Vendor prices are learned from merchants you visit.",
+		function() ns.Crafting.Refresh() end)
+
 	y = y - 6
 	Button("Open price window", "Search your saved prices and see an item's price over time (/fah).",
 		function() ns.Window.Show() end)

@@ -162,7 +162,9 @@ end
 local function AddRowTooltip(button)
 	local c = button.fbCounts
 	if not (c and button.fbBankCount and button.fbBankCount:IsShown()) then return end
-	if not (GameTooltip:IsShown() and GameTooltip:GetOwner() == button.Label) then
+	-- Keep a tooltip already on this row (Blizzard's, or another addon's lines).
+	local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
+	if owner ~= button and owner ~= button.Label then
 		GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
 	end
 	GameTooltip:AddLine("Can craft:", 1, 0.82, 0)

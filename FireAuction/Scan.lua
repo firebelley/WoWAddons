@@ -122,6 +122,7 @@ reader:SetScript("OnUpdate", function(self)
 		Finish(("scanned %d auctions: prices for %d items saved."):format(self.read, items))
 		if ns.Window then ns.Window.Refresh() end
 		if ns.BagIcons then ns.BagIcons.Refresh() end
+		if ns.Crafting then ns.Crafting.Refresh() end
 	else
 		UpdateBar()
 	end
