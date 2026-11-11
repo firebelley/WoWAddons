@@ -7,6 +7,10 @@
 -- Link, which has no timer and drops when the pet dies or is dismissed). They're learned as you cast them, and each can be turned off
 -- in Options > AddOns > FireProcs > Buffs (or /fprocs buffs).
 --
+-- Tracking (Find Minerals, Find Herbs, Track Beasts...) counts too: it's read
+-- from the minimap's tracking menu, and reminded when it goes off on its own
+-- (dying, mostly) - not when you switch it off or to another one yourself.
+--
 -- Short buffs you keep up yourself (seals, Slice and Dice): under a minute,
 -- from a spell with no cooldown of its own. These are combat-only: when one
 -- drops during a fight, an alert and an icon until you recast it or the fight
@@ -60,6 +64,34 @@ for _, fn in ipairs({ "CancelUnitBuff", "CancelSpellByName" }) do
 end
 if C_UnitAuras and C_UnitAuras.CancelAuraByInstanceID then
 	pcall(hooksecurefunc, C_UnitAuras, "CancelAuraByInstanceID", OnCancel)
+end
+-- Turning tracking off (or switching it) on the minimap's tracking menu.
+if type(CancelTrackingBuff) == "function" then hooksecurefunc("CancelTrackingBuff", OnCancel) end
+if C_Minimap then
+	for _, fn in ipairs({ "SetTracking", "ClearAllTracking" }) do
+		if C_Minimap[fn] then pcall(hooksecurefunc, C_Minimap, fn, OnCancel) end
+	end
+end
+
+-- Tracking abilities (Find Minerals, Find Herbs, Find Treasure, a hunter's
+-- Track Beasts...) aren't buffs here but switches on the minimap's tracking
+-- menu, so they're read from there. Calls fn(name, icon) for each one that's on.
+local trackingKnown = {} -- [name] = true for tracking abilities you have, on or off
+local function ForEachTracking(fn)
+	local M = C_Minimap
+	if not (M and M.GetNumTrackingTypes and M.GetTrackingInfo) then return end
+	wipe(trackingKnown)
+	for i = 1, M.GetNumTrackingTypes() or 0 do
+		local ok, info, texture, active, kind = pcall(M.GetTrackingInfo, i)
+		if ok and type(info) == "string" then -- older form: separate values
+			info = { name = info, texture = texture, active = active, type = kind }
+		end
+		if ok and type(info) == "table" and info.type == "spell" and type(info.name) == "string"
+			and not API.IsSecret(info.name) and not API.IsSecret(info.active) then
+			trackingKnown[info.name] = true
+			if info.active then fn(info.name, info.texture) end
+		end
+	end
 end
 
 -- Seconds until a buff runs out, or nil when its timer can't be trusted.
@@ -144,10 +176,14 @@ local function Learn(a, kind)
 	if e then
 		e.icon = a.icon or e.icon
 		e.duration = a.duration or e.duration -- to time it when recast in combat
+		if kind == "tracking" then e.tracking = true end
 		return
 	end
-	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, combat = kind == "combat" or nil }
-	if kind == "combat" then
+	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, combat = kind == "combat" or nil,
+		tracking = kind == "tracking" or nil }
+	if kind == "tracking" then
+		ns.Print(("I'll let you know when |cffffd100%s|r is turned off. Turn that off in /fprocs buffs."):format(a.name))
+	elseif kind == "combat" then
 		ns.Print(("I'll let you know if |cffffd100%s|r drops during a fight. Turn that off in /fprocs buffs."):format(a.name))
 	else
 		ns.Print(("I'll let you know when |cffffd100%s|r is gone. Turn that off in /fprocs buffs."):format(a.name))
@@ -244,9 +280,11 @@ local function Lost(name, info, old)
 		diedWith[name] = true
 		return
 	end
-	if GetTime() - cancelledAt < CANCEL_WINDOW and not UnitAffectingCombat("player") then
+	-- (Tracking is only ever switched off from its menu, so that's on purpose even mid-fight.)
+	if GetTime() - cancelledAt < CANCEL_WINDOW and (info.tracking or not UnitAffectingCombat("player")) then
 		if not SelfBuffs.remindCancelled then
-			return ns.Trace(name .. " was cancelled by you out of combat: not reminding")
+			return ns.Trace(name .. (info.tracking and " was turned off by you" or " was cancelled by you out of combat")
+				.. ": not reminding")
 		end
 		ns.Trace(name .. " was cancelled by you, but /fprocs testcancel is on: reminding anyway")
 	end
@@ -269,6 +307,11 @@ function SelfBuffs.Update(source)
 			if not (left and left < -1) then now[a.name] = info end
 		end
 	end)
+	-- Tracking: readable in combat too, so always taken as it is.
+	ForEachTracking(function(name, icon)
+		Learn({ name = name, icon = icon }, "tracking")
+		now[name] = { icon = icon, tracking = true }
+	end)
 
 	local ids = API.AuraInstanceIDs("player", "HELPFUL")
 	if restricted and ns.tracing and not traceIDs then
@@ -287,7 +330,7 @@ function SelfBuffs.Update(source)
 		-- margin.
 		for name, info in pairs(present) do
 			local left = TimeLeft(info)
-			local there = not (left ~= nil and left <= END_MARGIN)
+			local there = not info.tracking and not (left ~= nil and left <= END_MARGIN)
 			if there and info.instance then
 				if ids then
 					there = ids[info.instance] and true or false
@@ -308,7 +351,8 @@ function SelfBuffs.Update(source)
 		end
 		for name, e in pairs(ns.db.selfBuffs) do
 			local info = now[name]
-			if Spells.WasRecentlyCast(name) and not (info and info.recastAt and GetTime() - info.recastAt < 3) then
+			if not e.tracking and Spells.WasRecentlyCast(name)
+				and not (info and info.recastAt and GetTime() - info.recastAt < 3) then
 				local t = GetTime()
 				now[name] = {
 					instance = (#new == 1 and new[1]) or (info and info.instance) or nil,
@@ -359,7 +403,8 @@ local function CheckAtLogin()
 	for name in pairs(ns.db.selfBuffs) do
 		local g = GroupOf(name)
 		-- Only your own spells: settings copied from another character can list theirs.
-		if Enabled(name) and Spells.active[name] and not GroupPresent(g) and not groups[g] then
+		local yours = Spells.active[name] or (Entry(name).tracking and trackingKnown[name])
+		if Enabled(name) and yours and not GroupPresent(g) and not groups[g] then
 			groups[g] = true
 			Remind(name, false)
 		end
@@ -415,6 +460,7 @@ function SelfBuffs.DescribeCurrent()
 end
 
 ns.OnUnit("UNIT_AURA", "player", function() SelfBuffs.Update("game's buff update") end)
+ns.On("MINIMAP_UPDATE_TRACKING", function() SelfBuffs.Update("tracking change") end)
 
 -- Buffs can stay hidden for a moment after combat ends; look again shortly
 -- after, so anything lost in the fight is caught even if no buff changes.
