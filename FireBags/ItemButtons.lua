@@ -287,7 +287,10 @@ function IB.AcquireLive(window, bag, slot)
 	local name = ("%sItem%d_%d"):format(window:GetName(), bag + 100, slot)
 	b = CreateItemButton(name, GetHolder(window, bag), templates)
 	b:SetID(slot)
-	if b.SetBagID then b:SetBagID(bag) end
+	-- Don't call b:SetBagID(): from addon code it stores a tainted bag number,
+	-- and Blizzard's click handler passes that to UseContainerItem, which then
+	-- gets blocked (e.g. learning a recipe). Without it the button reads the
+	-- bag from its holder's ID, which stays clean.
 	b.fbBag, b.fbSlot = bag, slot
 	b.fbUpdate = UpdateLive
 	AddDecorations(b)
