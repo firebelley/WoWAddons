@@ -116,6 +116,7 @@ ns.On("ADDON_LOADED", function(name)
 	end
 	db.realms = db.realms or {} -- ["Realm - Faction"] = { items = {...}, lastScan, lastRequest }
 	db.vendorPrices = db.vendorPrices or {} -- [itemID] = copper per item, learned at merchants
+	db.favorites = db.favorites or {} -- [itemID] = true: pinned to the top of the price window
 	ns.db = db
 end)
 

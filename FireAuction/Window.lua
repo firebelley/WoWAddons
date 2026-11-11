@@ -30,6 +30,29 @@ local function ItemIcon(id)
 		or (GetItemIcon and GetItemIcon(id)) or 134400 -- question mark
 end
 
+---------------------------------------------------------------------------
+-- Favorites: pinned to the top of the list in every sort (all characters).
+---------------------------------------------------------------------------
+local function IsFavorite(id)
+	return ns.db.favorites[id] == true
+end
+
+local STAR_ATLAS_ON, STAR_ATLAS_OFF = "auctionhouse-icon-favorite", "auctionhouse-icon-favorite-off"
+local hasStarAtlas = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(STAR_ATLAS_ON) ~= nil
+
+-- on: filled star; off: an empty one (or a faded star without the atlas).
+local function SetStar(texture, on)
+	if hasStarAtlas then
+		texture:SetAtlas(on and STAR_ATLAS_ON or STAR_ATLAS_OFF)
+		texture:SetAlpha(1)
+	else
+		texture:SetTexture("Interface\\Common\\ReputationStar")
+		texture:SetTexCoord(0, 0.5, 0, 0.5)
+		texture:SetDesaturated(not on)
+		texture:SetAlpha(on and 1 or 0.4)
+	end
+end
+
 local function QualityColor(id)
 	local q = C_Item and C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(id)
 	local c = q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
@@ -52,20 +75,24 @@ local function BuildResults()
 			pcall(C_Item.RequestLoadItemDataByID, id)
 		end
 		if query == "" or (name and name:lower():find(query, 1, true)) then
-			local entry = { id = id, rec = rec, name = name or ("item " .. id) }
+			local entry = { id = id, rec = rec, name = name or ("item " .. id), fav = IsFavorite(id) }
 			if sort == "rising" or sort == "falling" then entry.pct = ns.Data.Trend(rec) end
-			if (sort ~= "rising" and sort ~= "falling") or entry.pct then
+			-- Rising/falling only lists items with a trend - except favorites, which always show.
+			if (sort ~= "rising" and sort ~= "falling") or entry.pct or entry.fav then
 				results[#results + 1] = entry
 			end
 		end
 	end
 	table.sort(results, function(a, b)
+		if a.fav ~= b.fav then return a.fav end
 		if sort == "price" then
 			if a.rec.p ~= b.rec.p then return (a.rec.p or 0) > (b.rec.p or 0) end
-		elseif sort == "rising" then
-			if a.pct ~= b.pct then return a.pct > b.pct end
-		elseif sort == "falling" then
-			if a.pct ~= b.pct then return a.pct < b.pct end
+		elseif sort == "rising" or sort == "falling" then
+			if a.pct ~= b.pct then
+				if not a.pct or not b.pct then return a.pct ~= nil end
+				if sort == "rising" then return a.pct > b.pct end
+				return a.pct < b.pct
+			end
 		end
 		return a.name < b.name
 	end)
@@ -81,6 +108,7 @@ local function UpdateRows()
 			row.icon:SetTexture(ItemIcon(entry.id))
 			row.name:SetText(entry.name)
 			row.name:SetTextColor(QualityColor(entry.id))
+			row.star:SetShown(entry.fav)
 			if entry.pct then
 				row.value:SetText(ns.Percent(entry.pct))
 			elseif (entry.rec.q or 0) > 0 then
@@ -412,6 +440,7 @@ end
 ---------------------------------------------------------------------------
 local function UpdateDetail()
 	local rec = selected and ns.Data.Get(selected)
+	detail.star:Update()
 	if not rec then
 		detail.icon:Hide()
 		detail.name:SetText("")
@@ -458,6 +487,14 @@ function Window.Select(itemID)
 	selected = itemID
 	UpdateRows()
 	UpdateDetail()
+end
+
+function Window.ToggleFavorite(itemID)
+	if not itemID then return end
+	ns.db.favorites[itemID] = not IsFavorite(itemID) or nil
+	ns.SafeCall(BuildResults)
+	UpdateRows()
+	if detail.star then detail.star:Update() end
 end
 
 ---------------------------------------------------------------------------
@@ -577,13 +614,27 @@ local function Build()
 		row.name:SetPoint("RIGHT", row.value, "LEFT", -4, 0)
 		row.name:SetJustifyH("LEFT")
 		row.name:SetWordWrap(false)
-		row:SetScript("OnClick", function(self)
-			if self.entry then Window.Select(self.entry.id) end
+		-- A small star on the icon's corner for favorites.
+		row.star = row:CreateTexture(nil, "OVERLAY")
+		row.star:SetSize(12, 12)
+		row.star:SetPoint("CENTER", row.icon, "TOPLEFT", 1, -1)
+		SetStar(row.star, true)
+		row.star:Hide()
+		row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		row:SetScript("OnClick", function(self, button)
+			if not self.entry then return end
+			if button == "RightButton" then
+				Window.ToggleFavorite(self.entry.id)
+			else
+				Window.Select(self.entry.id)
+			end
 		end)
 		row:SetScript("OnEnter", function(self)
 			if not self.entry then return end
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 			GameTooltip:SetItemByID(self.entry.id)
+			GameTooltip:AddLine(IsFavorite(self.entry.id) and "Right-click to unfavorite" or "Right-click to favorite (pin to the top)",
+				0.6, 0.6, 0.6)
 			GameTooltip:Show()
 		end)
 		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -605,9 +656,42 @@ local function Build()
 	detail.icon = right:CreateTexture(nil, "ARTWORK")
 	detail.icon:SetSize(32, 32)
 	detail.icon:SetPoint("TOPLEFT", 0, 0)
+	-- Favorite star, top right of the details.
+	local star = CreateFrame("Button", nil, right)
+	star:SetSize(22, 22)
+	star:SetPoint("RIGHT", right, "TOPRIGHT", -2, -16)
+	star.tex = star:CreateTexture(nil, "ARTWORK")
+	star.tex:SetAllPoints()
+	local starHighlight = star:CreateTexture(nil, "HIGHLIGHT")
+	starHighlight:SetAllPoints()
+	SetStar(starHighlight, true)
+	starHighlight:SetAlpha(0.35)
+	function star:Update()
+		self:SetShown(selected ~= nil and ns.Data.Get(selected) ~= nil)
+		SetStar(self.tex, selected and IsFavorite(selected))
+	end
+	star:SetScript("OnClick", function(self)
+		Window.ToggleFavorite(selected)
+		if GameTooltip:IsOwned(self) then self:GetScript("OnEnter")(self) end
+	end)
+	star:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+		if selected and IsFavorite(selected) then
+			GameTooltip:SetText("Favorite", 1, 1, 1)
+			GameTooltip:AddLine("Pinned to the top of the list. Click to unpin.", nil, nil, nil, true)
+		else
+			GameTooltip:SetText("Favorite", 1, 1, 1)
+			GameTooltip:AddLine("Click to pin this item to the top of the list. You can also right-click items in the list.",
+				nil, nil, nil, true)
+		end
+		GameTooltip:Show()
+	end)
+	star:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	detail.star = star
+
 	detail.name = right:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 	detail.name:SetPoint("LEFT", detail.icon, "RIGHT", 8, 0)
-	detail.name:SetPoint("RIGHT", 0, 0)
+	detail.name:SetPoint("RIGHT", star, "LEFT", -6, 0)
 	detail.name:SetJustifyH("LEFT")
 	detail.name:SetWordWrap(false)
 	detail.text = right:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
