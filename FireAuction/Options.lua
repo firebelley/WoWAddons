@@ -230,6 +230,11 @@ local function Build()
 	MoneyInput("markPrice", "Worth at least", "The auction price per item that gets the gold coin.",
 		function() ns.BagIcons.Refresh() end)
 
+	Header("Selling")
+	Checkbox("announceSales", "Announce when one of my auctions sells",
+		"A big message in the middle of the screen and a coin sound, wherever you are, with what sold and for how "
+			.. "much. What's waiting in the mailbox is always listed on the minimap button's tooltip (and /fah sales).")
+
 	Header("Crafting")
 	Checkbox("craftProfit", "Show crafting profit in profession windows",
 		"Under the selected recipe: what the crafted item sells for at auction (after the 5% cut, or to a vendor if "
@@ -282,6 +287,10 @@ SlashCmdList.FIREAUCTION = function(input)
 		ns.Window.Toggle()
 	elseif cmd == "scan" then
 		ns.Scan.Start(false)
+	elseif cmd == "sales" then
+		ns.Sales.Print()
+	elseif cmd == "testsale" then
+		ns.Sales.Test()
 	elseif cmd == "options" or cmd == "config" or cmd == "settings" then
 		Options.Open()
 	elseif cmd == "debug" then
@@ -301,6 +310,8 @@ SlashCmdList.FIREAUCTION = function(input)
 		print("  /fah - show/hide the price window")
 		print("  /fah <item name> - search for an item")
 		print("  /fah scan - scan the auction house (while it's open)")
+		print("  /fah sales - what's sold and waiting in the mailbox")
+		print("  /fah testsale - show what a sale announcement looks like")
 		print("  /fah options - open the settings")
 	else
 		ns.Window.Show()

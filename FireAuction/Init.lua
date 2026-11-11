@@ -10,6 +10,7 @@ local DEFAULTS = {
 	markValuable = true,  -- gold coin on bag items worth at least markPrice (BagIcons.lua)
 	markPrice = 5000,     -- copper per item (50 silver)
 	craftProfit = true,   -- profit line in profession windows (Crafting.lua)
+	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
 }

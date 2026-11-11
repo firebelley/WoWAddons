@@ -73,6 +73,7 @@ local function Create()
 		else
 			GameTooltip:AddLine("Not scanned yet - open the auction house.", 0.7, 0.7, 0.7)
 		end
+		if ns.Sales then ns.SafeCall(ns.Sales.AddLines, GameTooltip, 10) end
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddDoubleLine("Click", "Price window", 1, 0.82, 0, 1, 1, 1)
 		GameTooltip:AddDoubleLine("Right-click", "Options", 1, 0.82, 0, 1, 1, 1)

@@ -13,4 +13,5 @@ Window.lua
 MinimapButton.lua
 BagIcons.lua
 Crafting.lua
+Sales.lua
 Options.lua
