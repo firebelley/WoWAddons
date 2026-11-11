@@ -286,12 +286,16 @@ SlashCmdList.FIREAUCTION = function(input)
 		Options.Open()
 	elseif cmd == "debug" then
 		ns.debug = not ns.debug
-		local realm = ns.Realm()
-		local n = 0
-		if realm then for _ in pairs(realm.items) do n = n + 1 end end
-		ns.Print(("debug %s. %d items saved; last scan %s; scan state %s; next scan allowed in %ds."):format(
-			ns.debug and "on" or "off", n, realm and realm.lastScan > 0 and ns.TimeAgo(realm.lastScan) or "never",
-			ns.Scan.state, ns.Scan.CooldownLeft()))
+		ns.Print(("debug %s. Scan state %s; next scan allowed in %ds."):format(
+			ns.debug and "on" or "off", ns.Scan.state, ns.Scan.CooldownLeft()))
+		for _, house in ipairs({ "faction", "neutral" }) do
+			local realm = ns.Realm(house)
+			local n = 0
+			if realm then for _ in pairs(realm.items) do n = n + 1 end end
+			print(("  %s prices: %d items, last scan %s"):format(ns.HouseName(house), n,
+				realm and realm.lastScan > 0 and ns.TimeAgo(realm.lastScan) or "never"))
+		end
+		print("  " .. ns.Scan.HouseDebug())
 	elseif cmd == "help" then
 		ns.Print("commands:")
 		print("  /fah - show/hide the price window")

@@ -18,6 +18,7 @@ local TIMEOUT = 30   -- seconds without an answer before giving up
 ns.atAH = false
 local token = 0      -- invalidates timers from an older scan
 local bar
+local SetHouse, DetectHouse -- which auction house you're at (further down)
 
 local function UpdateBar()
 	if bar and bar:IsShown() then ns.SafeCall(bar.Update, bar) end
@@ -169,6 +170,8 @@ function Scan.Start(auto)
 		ns.Print("open the auction house to scan.")
 		return
 	end
+	-- Check again: the auctioneer may not have been known yet when the window opened.
+	SetHouse(DetectHouse())
 	local realm = ns.Realm()
 	if not realm then return end
 
@@ -270,24 +273,60 @@ local function CreateBar()
 end
 
 ---------------------------------------------------------------------------
--- Which auction house: the goblin auctioneers of Booty Bay, Gadgetzan and
--- Everlook belong to neither faction. Without an auctioneer to ask, those
--- zones (the only ones with a neutral auction house) decide.
+-- Which auction house, in order of trust:
+--   1. the town: Booty Bay, Gadgetzan and Everlook have the neutral ones
+--   2. the auctioneer: the goblin ones belong to neither faction
+--   3. the zone (Stranglethorn, Tanaris, Winterspring): no faction auction
+--      houses there
 ---------------------------------------------------------------------------
-local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true } -- Stranglethorn Vale, Tanaris, Winterspring
+local NEUTRAL_TOWNS = { ["Booty Bay"] = true, ["Gadgetzan"] = true, ["Everlook"] = true }
+local NEUTRAL_MAPS = {
+	[1434] = true, [1446] = true, [1452] = true, -- classic map IDs
+	[224] = true, [210] = true, [71] = true, [83] = true, -- modern map IDs
+}
 
-local function DetectHouse()
+-- The player's map and the maps it sits in.
+local function MapChain()
+	local chain = {}
+	local map = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+	while map and #chain < 6 do
+		chain[#chain + 1] = map
+		local info = C_Map.GetMapInfo and C_Map.GetMapInfo(map)
+		map = info and info.parentMapID
+		if map == 0 then map = nil end
+	end
+	return chain
+end
+
+local function InNeutralTown()
+	local sub = GetSubZoneText and GetSubZoneText() or ""
+	local mini = GetMinimapZoneText and GetMinimapZoneText() or ""
+	return NEUTRAL_TOWNS[sub] or NEUTRAL_TOWNS[mini] or false
+end
+
+function DetectHouse() -- (declared at the top)
+	if InNeutralTown() then return "neutral" end
 	if UnitExists("npc") then
 		local faction = UnitFactionGroup("npc")
 		if faction == "Alliance" or faction == "Horde" then return nil end
 		return "neutral"
 	end
-	local map = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
-	return map and NEUTRAL_ZONES[map] and "neutral" or nil
+	for _, map in ipairs(MapChain()) do
+		if NEUTRAL_MAPS[map] then return "neutral" end
+	end
+	return nil
+end
+
+-- For /fah debug: what the detection sees.
+function Scan.HouseDebug()
+	local npc = UnitExists("npc") and ((UnitName("npc") or "?") .. " (" .. tostring(UnitFactionGroup("npc")) .. ")") or "none"
+	return ("auction house %s; town %q / %q; auctioneer %s; maps %s; detected %s"):format(
+		ns.atAH and "open" or "closed", GetSubZoneText and GetSubZoneText() or "", GetMinimapZoneText and GetMinimapZoneText() or "",
+		npc, table.concat(MapChain(), " > "), ns.atAH and ns.HouseName(DetectHouse() or "faction") or "-")
 end
 
 -- Tooltips, bag coins and crafting profit follow the auction house you're at.
-local function SetHouse(house)
+function SetHouse(house) -- (declared at the top)
 	if ns.house == house then return end
 	ns.house = house
 	ns.Debug("auction house: " .. ns.HouseName())
