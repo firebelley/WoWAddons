@@ -8,8 +8,9 @@
 -- in Options > AddOns > FireProcs > Buffs (or /fprocs buffs).
 --
 -- Short buffs you keep up yourself (seals, Slice and Dice): under a minute,
--- from a spell with no cooldown of its own. These are combat-only: an alert
--- when one drops during a fight, no icon, nothing out of combat. Short buffs
+-- from a spell with no cooldown of its own. These are combat-only: when one
+-- drops during a fight, an alert and an icon until you recast it or the fight
+-- ends; nothing out of combat. Short buffs
 -- from spells with a cooldown (Sprint, Evasion, Shield Wall) are left alone -
 -- they're meant to run out.
 --
@@ -159,6 +160,12 @@ local function Show()
 	local list = {}
 	local limit = (ns.db.remindIconMinutes or 0) * 60
 	local soonest -- seconds until the next icon's time is up
+	-- Combat-only buffs (seals): their icon goes when the fight ends.
+	if not UnitAffectingCombat("player") then
+		for group, name in pairs(missing) do
+			if Entry(name) and Entry(name).combat then missing[group], missingSince[group] = nil, nil end
+		end
+	end
 	if ns.db.remindIcon ~= false then
 		for group, name in pairs(missing) do
 			if Enabled(name) then
@@ -201,6 +208,9 @@ local function Remind(name, announce)
 			announcedAt[name] = now
 			ns.Display.Alert(name .. " is gone", Entry(name).icon)
 		end
+		-- ...and its icon until you recast it or the fight ends (see Show).
+		missing[GroupOf(name)] = name
+		missingSince[GroupOf(name)] = now
 		return ns.Trace(name .. " dropped during a fight: alerting")
 	end
 	missing[GroupOf(name)] = name

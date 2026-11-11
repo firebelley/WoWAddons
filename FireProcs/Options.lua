@@ -319,7 +319,8 @@ end
 local function BuildBuffs()
 	return BuildList("Buffs",
 		"Your own long buffs FireProcs reminds you about when they're gone (see Buff reminders on the main page), "
-			.. "and short ones you keep up yourself, like seals, which only get an alert when they drop during a fight. "
+			.. "and short ones you keep up yourself, like seals, which are only reminded about when they drop during "
+			.. "a fight (the icon goes when you recast it or the fight ends). "
 			.. "Buffs are added here the first time you cast them. Untick one to never be reminded about it.",
 		"None yet - cast one of your long buffs (Water Shield, Demon Armor...) and it shows up here.",
 		function()
