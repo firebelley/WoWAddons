@@ -44,29 +44,46 @@ end
 ---------------------------------------------------------------------------
 -- Your listings
 ---------------------------------------------------------------------------
+local STATUS_SOLD = Enum and Enum.AuctionStatus and Enum.AuctionStatus.Sold or 1
+-- When the game only gives a band for the time left: [band] = { at least, at most } seconds.
+local BANDS = { [0] = { 0, 1800 }, [1] = { 1800, 7200 }, [2] = { 7200, 43200 }, [3] = { 43200, 172800 } }
+
 local function ReadOwned()
 	local c = Char()
 	if not (c and AH and AH.GetNumOwnedAuctions and AH.GetOwnedAuctionInfo) then return end
+	local house = ns.house or "faction"
+	local now = time()
 	local fresh = {}
 	for i = 1, AH.GetNumOwnedAuctions() or 0 do
 		local ok, a = pcall(AH.GetOwnedAuctionInfo, i)
-		if ok and a and a.auctionID then
+		-- Sold ones wait here for their mail; they're not for sale any more.
+		if ok and a and a.auctionID and a.status ~= STATUS_SOLD then
 			local id = a.itemKey and a.itemKey.itemID
 			local link = a.itemLink
-			fresh[a.auctionID] = {
+			local entry = {
 				name = (link and link:match("%[(.-)%]")) or ItemName(id),
 				link = link, id = id, qty = a.quantity or 1,
 				buyout = a.buyoutAmount, bid = a.bidAmount,
+				hasBid = a.bidder ~= nil or nil, house = house, seen = now,
 			}
+			local band = BANDS[a.timeLeft]
+			if a.timeLeftSeconds then
+				entry.ends = now + a.timeLeftSeconds
+			elseif band then
+				entry.endsMin, entry.endsMax = now + band[1], now + band[2]
+			end
+			fresh[a.auctionID] = entry
 		end
 	end
-	-- A partial list only adds; a full one replaces (cancelled ones go).
+	-- A partial list only adds; a full one replaces this auction house's
+	-- listings (cancelled ones go). The other house's are kept.
 	local full = not AH.HasFullOwnedAuctionResults or AH.HasFullOwnedAuctionResults()
 	if full then
-		c.owned = fresh
-	else
-		for k, v in pairs(fresh) do c.owned[k] = v end
+		for k, v in pairs(c.owned) do
+			if (v.house or "faction") == house then c.owned[k] = nil end
+		end
 	end
+	for k, v in pairs(fresh) do c.owned[k] = v end
 	local n = 0
 	for _ in pairs(c.owned) do n = n + 1 end
 	ns.Debug(("your auctions: %d listed"):format(n))
@@ -87,6 +104,7 @@ ns.On("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(kind)
 	if AUCTIONEER and kind == AUCTIONEER then QueryOwned(2) end
 end)
 ns.On("AUCTION_HOUSE_AUCTION_CREATED", function() QueryOwned(1) end)
+ns.On("AUCTION_CANCELED", function() QueryOwned(1) end)
 
 -- One of your listings by item name (for the chat message, which has no ID).
 local function OwnedByName(c, name)
@@ -100,6 +118,100 @@ local function OwnedByName(c, name)
 		end
 	end
 	return bestID, best
+end
+
+-- Seconds until it ends (at most, when only a band is known), and whether that's exact.
+local function EndsIn(a, now)
+	if a.ends then return a.ends - now, true end
+	if a.endsMax then return a.endsMax - now, false end
+	return nil
+end
+
+-- Your listings still for sale, soonest to end first. Ones past their end
+-- have expired (back to you by mail) and are forgotten. Returns the list,
+-- the buyout total, and when the auction house last showed them.
+function Sales.Listings()
+	local c = Char()
+	local list, total, seen = {}, 0, nil
+	if not c then return list, 0 end
+	local now = time()
+	for auctionID, a in pairs(c.owned) do
+		local left = EndsIn(a, now)
+		if left and left <= 0 then
+			c.owned[auctionID] = nil
+		else
+			list[#list + 1] = a
+			local price = (a.buyout and a.buyout > 0 and a.buyout) or a.bid or 0
+			total = total + price
+			if a.seen and (not seen or a.seen < seen) then seen = a.seen end
+		end
+	end
+	table.sort(list, function(a, b)
+		local la, lb = EndsIn(a, now) or math.huge, EndsIn(b, now) or math.huge
+		if la ~= lb then return la < lb end
+		return (a.name or "") < (b.name or "")
+	end)
+	return list, total, seen
+end
+
+local function Duration(sec)
+	if sec >= 3600 then
+		local h = math.floor(sec / 3600)
+		if h >= 10 then return h .. "h" end
+		return ("%dh %dm"):format(h, math.floor(sec % 3600 / 60))
+	elseif sec >= 60 then
+		return math.floor(sec / 60) .. "m"
+	end
+	return "<1m"
+end
+
+local function ListingText(a)
+	local text = a.link or a.name or "?"
+	if (a.qty or 1) > 1 then text = text .. " x" .. a.qty end
+	if a.house == "neutral" then text = text .. " |cff999999(" .. ns.HouseName("neutral") .. ")|r" end
+	return text
+end
+
+local function ListingRight(a, now)
+	local price = (a.buyout and a.buyout > 0 and a.buyout) or a.bid
+	local right = price and ns.Money(price) or "?"
+	if a.hasBid then right = "|cff40ff40bid|r " .. right end
+	local left, exact = EndsIn(a, now)
+	if left then
+		right = right .. " |cff999999" .. (exact and "" or "<") .. Duration(left) .. "|r"
+	end
+	return right
+end
+
+function Sales.AddListings(tooltip, max)
+	local list, total = Sales.Listings()
+	local n = #list
+	if n == 0 then return false end
+	local now = time()
+	tooltip:AddLine(" ")
+	tooltip:AddDoubleLine(("Listed - %d auction%s:"):format(n, n == 1 and "" or "s"), "time left",
+		1, 0.82, 0, 0.6, 0.6, 0.6)
+	for i = 1, math.min(n, max or 10) do
+		tooltip:AddDoubleLine("  " .. ListingText(list[i]), ListingRight(list[i], now), 1, 1, 1, 1, 1, 1)
+	end
+	if n > (max or 10) then tooltip:AddLine(("  ...and %d more (/fah auctions)"):format(n - (max or 10)), 0.7, 0.7, 0.7) end
+	tooltip:AddDoubleLine("If all sell", ns.Money(math.floor(total * (1 - AH_CUT))), 1, 0.82, 0, 1, 1, 1)
+	return true
+end
+
+function Sales.PrintListings()
+	local list, total, seen = Sales.Listings()
+	if #list == 0 then
+		ns.Print("you have nothing listed (as of your last visit to the auction house).")
+		return
+	end
+	local now = time()
+	ns.Print(("%d auction%s listed, %s if all sell%s:"):format(#list, #list == 1 and "" or "s",
+		ns.Money(math.floor(total * (1 - AH_CUT))),
+		seen and (" |cff999999(as of the auction house " .. ns.TimeAgo(seen) .. ")|r") or ""))
+	for _, a in ipairs(list) do
+		print("  " .. ListingText(a) .. " - " .. ListingRight(a, now))
+	end
 end
 
 ---------------------------------------------------------------------------

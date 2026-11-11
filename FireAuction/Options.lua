@@ -289,6 +289,8 @@ SlashCmdList.FIREAUCTION = function(input)
 		ns.Scan.Start(false)
 	elseif cmd == "sales" then
 		ns.Sales.Print()
+	elseif cmd == "auctions" or cmd == "listings" or cmd == "listed" then
+		ns.Sales.PrintListings()
 	elseif cmd == "testsale" then
 		ns.Sales.Test()
 	elseif cmd == "options" or cmd == "config" or cmd == "settings" then
@@ -311,6 +313,7 @@ SlashCmdList.FIREAUCTION = function(input)
 		print("  /fah <item name> - search for an item")
 		print("  /fah scan - scan the auction house (while it's open)")
 		print("  /fah sales - what's sold and waiting in the mailbox")
+		print("  /fah auctions - what you have listed, with time left")
 		print("  /fah testsale - show what a sale announcement looks like")
 		print("  /fah options - open the settings")
 	else
