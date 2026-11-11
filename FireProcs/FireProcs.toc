@@ -4,6 +4,7 @@
 ## Author: Firebelley
 ## Version: 0.1.0
 ## SavedVariables: FireProcsDB
+## SavedVariablesPerCharacter: FireProcsCharDB
 
 Init.lua
 API.lua

@@ -90,12 +90,26 @@ function ns.OnUnit(event, unit, fn)
 end
 
 ---------------------------------------------------------------------------
--- Saved settings
+-- Saved settings, per character (FireProcsCharDB).
+--
+-- They used to be shared by the whole account (FireProcsDB). A character's
+-- first login with per-character settings starts from a copy of those, so
+-- nothing has to be set up again; FireProcsDB itself is left alone, so every
+-- character - including new ones - starts from the same place.
 ---------------------------------------------------------------------------
+local function Copy(t)
+	if type(t) ~= "table" then return t end
+	local out = {}
+	for k, v in pairs(t) do out[k] = Copy(v) end
+	return out
+end
+
 ns.On("ADDON_LOADED", function(name)
 	if name ~= ADDON then return end
-	FireProcsDB = FireProcsDB or {}
-	local db = FireProcsDB
+	if type(FireProcsCharDB) ~= "table" then
+		FireProcsCharDB = type(FireProcsDB) == "table" and Copy(FireProcsDB) or {}
+	end
+	local db = FireProcsCharDB
 	for k, v in pairs(DEFAULTS) do
 		if db[k] == nil then db[k] = v end
 	end

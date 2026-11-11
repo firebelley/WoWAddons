@@ -334,7 +334,8 @@ local function CheckAtLogin()
 	local groups = {}
 	for name in pairs(ns.db.selfBuffs) do
 		local g = GroupOf(name)
-		if Enabled(name) and not GroupPresent(g) and not groups[g] then
+		-- Only your own spells: settings copied from another character can list theirs.
+		if Enabled(name) and Spells.active[name] and not GroupPresent(g) and not groups[g] then
 			groups[g] = true
 			Remind(name, false)
 		end
