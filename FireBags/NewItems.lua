@@ -40,9 +40,15 @@ function NI.Update()
 	end
 
 	-- Items that moved (e.g. by sorting) keep their glow at the new slot.
+	-- (Collected first: adding to newSlots while looping over it is an error.)
+	local moved = {}
 	for key, itemID in pairs(newSlots) do
-		if slots[key] ~= itemID then
-			newSlots[key] = nil
+		if slots[key] ~= itemID then moved[#moved + 1] = key end
+	end
+	for _, key in ipairs(moved) do
+		local itemID = newSlots[key]
+		newSlots[key] = nil
+		if itemID then
 			for otherKey, otherID in pairs(slots) do
 				if otherID == itemID and lastSlots[otherKey] ~= itemID and not newSlots[otherKey] then
 					newSlots[otherKey] = itemID
