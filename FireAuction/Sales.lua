@@ -31,10 +31,29 @@ local function Char()
 	ns.db.chars = ns.db.chars or {}
 	local c = ns.db.chars[key]
 	if not c then
-		c = { owned = {}, sales = {} }
+		c = { owned = {}, sales = {}, unitPrices = true }
 		ns.db.chars[key] = c
 	end
+	if not c.unitPrices then
+		-- Sales of several items used to be priced as if the auction house gave
+		-- the whole listing's price; it gives the price of one.
+		for _, s in ipairs(c.sales) do
+			local qty = s.qty or 1
+			if not s.exact and qty > 1 then
+				if s.net then s.net = s.net * qty end
+				if s.gross then s.gross = s.gross * qty end
+			end
+		end
+		c.unitPrices = true
+	end
 	return c
+end
+
+-- The auction house gives a listing's price per item; this is the whole
+-- listing's (buyout, or the bid when there's no buyout). nil if unknown.
+local function ListingPrice(a)
+	local unit = (a.buyout and a.buyout > 0 and a.buyout) or a.bid
+	return unit and unit * (a.qty or 1)
 end
 
 local function ItemName(id)
@@ -112,8 +131,8 @@ local function OwnedByName(c, name)
 	for auctionID, a in pairs(c.owned) do
 		if a.name == name then
 			-- Buyers usually take the cheapest first.
-			local price = (a.buyout and a.buyout > 0 and a.buyout / a.qty) or math.huge
-			local bestPrice = best and ((best.buyout and best.buyout > 0 and best.buyout / best.qty) or math.huge)
+			local price = (a.buyout and a.buyout > 0 and a.buyout) or math.huge
+			local bestPrice = best and ((best.buyout and best.buyout > 0 and best.buyout) or math.huge)
 			if not best or price < bestPrice then bestID, best = auctionID, a end
 		end
 	end
@@ -141,8 +160,7 @@ function Sales.Listings()
 			c.owned[auctionID] = nil
 		else
 			list[#list + 1] = a
-			local price = (a.buyout and a.buyout > 0 and a.buyout) or a.bid or 0
-			total = total + price
+			total = total + (ListingPrice(a) or 0)
 			if a.seen and (not seen or a.seen < seen) then seen = a.seen end
 		end
 	end
@@ -173,7 +191,7 @@ local function ListingText(a)
 end
 
 local function ListingRight(a, now)
-	local price = (a.buyout and a.buyout > 0 and a.buyout) or a.bid
+	local price = ListingPrice(a)
 	local right = price and ns.Money(price) or "?"
 	if a.hasBid then right = "|cff40ff40bid|r " .. right end
 	local left, exact = EndsIn(a, now)
@@ -183,20 +201,21 @@ local function ListingRight(a, now)
 	return right
 end
 
+-- Returns what they'd bring in if all sold (after the cut), or nil if nothing's listed.
 function Sales.AddListings(tooltip, max)
 	local list, total = Sales.Listings()
 	local n = #list
-	if n == 0 then return false end
+	if n == 0 then return nil end
 	local now = time()
+	local net = math.floor(total * (1 - AH_CUT))
 	tooltip:AddLine(" ")
-	tooltip:AddDoubleLine(("Listed - %d auction%s:"):format(n, n == 1 and "" or "s"), "time left",
-		1, 0.82, 0, 0.6, 0.6, 0.6)
+	tooltip:AddDoubleLine(("Listed (%d)"):format(n), "time left", 1, 0.82, 0, 0.6, 0.6, 0.6)
 	for i = 1, math.min(n, max or 10) do
 		tooltip:AddDoubleLine("  " .. ListingText(list[i]), ListingRight(list[i], now), 1, 1, 1, 1, 1, 1)
 	end
 	if n > (max or 10) then tooltip:AddLine(("  ...and %d more (/fah auctions)"):format(n - (max or 10)), 0.7, 0.7, 0.7) end
-	tooltip:AddDoubleLine("If all sell", ns.Money(math.floor(total * (1 - AH_CUT))), 1, 0.82, 0, 1, 1, 1)
-	return true
+	tooltip:AddDoubleLine("Total", ns.Money(net), 1, 0.82, 0, 1, 1, 1)
+	return net
 end
 
 function Sales.PrintListings()
@@ -238,20 +257,55 @@ local function SaleText(s)
 end
 
 -- Lines for a tooltip (or chat): each sale, then the total.
+-- Sales of the same item as one line: the amounts added up (newest first).
+local function Grouped(list)
+	local groups, byName = {}, {}
+	for _, s in ipairs(list) do
+		local key = s.name or s.link or "?"
+		local g = byName[key]
+		if not g then
+			g = { name = s.name, link = s.link, qty = 0, net = 0, known = true, exact = true, mailed = 0, sales = 0 }
+			byName[key] = g
+			groups[#groups + 1] = g
+		end
+		g.link = g.link or s.link
+		g.qty = g.qty + (s.qty or 1)
+		g.sales = g.sales + 1
+		if s.net then g.net = g.net + s.net else g.known = false end
+		if not s.exact then g.exact = false end
+		if s.inMail then g.mailed = g.mailed + 1 end
+	end
+	return groups
+end
+
+-- Returns the money owed and whether some of it is unknown, or nil if nothing's sold.
 function Sales.AddLines(tooltip, max)
 	local total, n, unknown, list = Sales.Owed()
-	if n == 0 then return false end
+	if n == 0 then return nil end
+	local groups = Grouped(list)
 	tooltip:AddLine(" ")
-	tooltip:AddLine("Sold - money owed to you:", 1, 0.82, 0)
+	tooltip:AddLine(("Sold (%d)"):format(n), 1, 0.82, 0)
+	n = #groups
 	for i = 1, math.min(n, max or 10) do
-		local s = list[i]
-		local right = s.net and ((s.exact and "" or "~") .. ns.Money(s.net)) or "?"
-		if not s.inMail then right = "|cff999999(on its way)|r " .. right end
-		tooltip:AddDoubleLine("  " .. SaleText(s), right, 1, 1, 1, 1, 1, 1)
+		local g = groups[i]
+		local right
+		if g.known then
+			right = (g.exact and "" or "~") .. ns.Money(g.net)
+		elseif g.net > 0 then
+			right = "at least " .. ns.Money(g.net)
+		else
+			right = "?"
+		end
+		if g.mailed == 0 then
+			right = "|cff999999(on its way)|r " .. right
+		elseif g.mailed < g.sales then
+			right = "|cff999999(some on its way)|r " .. right
+		end
+		tooltip:AddDoubleLine("  " .. SaleText(g), right, 1, 1, 1, 1, 1, 1)
 	end
 	if n > (max or 10) then tooltip:AddLine(("  ...and %d more"):format(n - (max or 10)), 0.7, 0.7, 0.7) end
 	tooltip:AddDoubleLine("Total", (unknown and "at least " or "") .. ns.Money(total), 1, 0.82, 0, 1, 1, 1)
-	return true
+	return total, unknown
 end
 
 ---------------------------------------------------------------------------
@@ -291,7 +345,7 @@ local function Sold(name, auction)
 	local s = { name = name, t = time() }
 	if auction then
 		s.name, s.link, s.id, s.qty = auction.name or name, auction.link, auction.id, auction.qty
-		local gross = (auction.buyout and auction.buyout > 0 and auction.buyout) or auction.bid
+		local gross = ListingPrice(auction)
 		if gross and gross > 0 then
 			s.gross = gross
 			s.net = math.floor(gross * (1 - AH_CUT))

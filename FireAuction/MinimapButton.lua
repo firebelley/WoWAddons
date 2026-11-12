@@ -74,8 +74,14 @@ local function Create()
 			GameTooltip:AddLine("Not scanned yet - open the auction house.", 0.7, 0.7, 0.7)
 		end
 		if ns.Sales then
-			ns.SafeCall(ns.Sales.AddLines, GameTooltip, 10)
-			ns.SafeCall(ns.Sales.AddListings, GameTooltip, 10)
+			local _, sold, unknown = ns.SafeCall(ns.Sales.AddLines, GameTooltip, 10)
+			local _, listed = ns.SafeCall(ns.Sales.AddListings, GameTooltip, 10)
+			-- Both: what you'd have once everything listed sells too.
+			if type(sold) == "number" and type(listed) == "number" then
+				GameTooltip:AddLine(" ")
+				GameTooltip:AddDoubleLine("Sold + listed", (unknown and "at least " or "") .. ns.Money(sold + listed),
+					1, 0.82, 0, 1, 1, 1)
+			end
 		end
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddDoubleLine("Click", "Price window", 1, 0.82, 0, 1, 1, 1)

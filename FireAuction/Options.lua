@@ -242,6 +242,11 @@ local function Build()
 			.. "that pays more) minus what its reagents cost (the cheaper of auction and vendor price). Hover it for "
 			.. "the breakdown; hovering a recipe in the list shows it too. Vendor prices are learned from merchants you visit.",
 		function() ns.Crafting.Refresh() end)
+	Checkbox("craftWorth", "Show crafting profit for reagents in item tooltips",
+		"\"Crafting profit (Bolt of Silk Cloth)\" on a reagent: what you make on each one you buy at today's lowest "
+			.. "buyout and craft into something (the best of your recipes that use it), after the auction house cut "
+			.. "and the other reagents. Red is a loss. "
+			.. "Your recipes are saved when you open a profession window, for all your characters.")
 
 	y = y - 6
 	Button("Open price window", "Search your saved prices and see an item's price over time (/fah).",

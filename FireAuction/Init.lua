@@ -10,6 +10,7 @@ local DEFAULTS = {
 	markValuable = true,  -- gold coin on bag items worth at least markPrice (BagIcons.lua)
 	markPrice = 5000,     -- copper per item (50 silver)
 	craftProfit = true,   -- profit line in profession windows (Crafting.lua)
+	craftWorth = true,    -- "Worth as <crafted item>" on reagent tooltips, from your saved recipes (Crafting.lua)
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
@@ -86,7 +87,8 @@ end
 -- "+12%" in green, "-8%" in red, "0%" in grey.
 function ns.Percent(pct)
 	if math.abs(pct) < 0.5 then return "|cff9999990%|r" end
-	local text = ("%+d%%"):format(math.floor(pct + (pct > 0 and 0.5 or -0.5)))
+	local rounded = pct > 0 and math.floor(pct + 0.5) or math.ceil(pct - 0.5)
+	local text = ("%+d%%"):format(rounded)
 	return (pct > 0 and "|cff40ff40" or "|cffff5050") .. text .. "|r"
 end
 
@@ -118,6 +120,8 @@ ns.On("ADDON_LOADED", function(name)
 	db.realms = db.realms or {} -- ["Realm - Faction"] = { items = {...}, lastScan, lastRequest }
 	db.vendorPrices = db.vendorPrices or {} -- [itemID] = copper per item, learned at merchants
 	db.favorites = db.favorites or {} -- [itemID] = true: pinned to the top of the price window
+	db.recipes = db.recipes or {} -- [recipeID] = { o = output itemID, m = made per craft, r = { { qty, itemID, ... }, ... } }
+	db.craftMaxPrice, db.targetProfit = nil, nil -- replaced by craftWorth
 	ns.db = db
 end)
 

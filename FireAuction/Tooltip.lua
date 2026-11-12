@@ -32,6 +32,7 @@ if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum.Too
 	TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip, data)
 		if not IsMainTooltip(tooltip) then return end
 		ns.SafeCall(AddPrice, tooltip, data and data.id)
+		ns.SafeCall(ns.Crafting.AddCraftWorth, tooltip, data and data.id)
 	end)
 else
 	for _, tooltip in ipairs({ GameTooltip, ItemRefTooltip }) do
@@ -39,6 +40,7 @@ else
 			local _, link = self:GetItem()
 			local id = link and tonumber(link:match("item:(%d+)"))
 			ns.SafeCall(AddPrice, self, id)
+			ns.SafeCall(ns.Crafting.AddCraftWorth, self, id)
 		end)
 	end
 end

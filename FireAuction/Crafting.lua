@@ -10,6 +10,9 @@
 --   Reagent cost: each reagent at the cheapest of its auction price and its
 --                 vendor price. Vendor prices are learned from every merchant
 --                 you visit (unlimited stock, bought with gold).
+--
+-- Also saves your recipes when a profession window opens, for "Worth as ..."
+-- on reagent tooltips (see "Saved recipes" below).
 local _, ns = ...
 
 local Crafting = {}
@@ -86,6 +89,22 @@ local function OutputItem(recipeID, s)
 	end
 end
 
+-- What `made` of the item bring in: at auction after the cut, or from a vendor
+-- if that pays more. Returns copper, "auction"/"vendor", whether it was listed
+-- in the latest scan, and when that was; nil without a price.
+function Crafting.SellValue(id, made)
+	local sell, source, current, scanned
+	local rec = ns.Data.Get(id)
+	if rec and rec.p then
+		sell, source, current, scanned = rec.p * made * (1 - AH_CUT), "auction", rec.q ~= 0, rec.s
+	end
+	local vendor = C_Item and C_Item.GetItemInfo and select(11, C_Item.GetItemInfo(id))
+	if type(vendor) == "number" and vendor > 0 and vendor * made > (sell or 0) then
+		sell, source, current = vendor * made, "vendor", true
+	end
+	return sell, source, current, scanned
+end
+
 -- Returns nil when the recipe can't be read, else:
 --   reagents = { { id, qty, unit, source, current }, ... }
 --   cost, missing (reagents without a price)
@@ -124,14 +143,7 @@ function Crafting.Evaluate(recipeID)
 	if id then
 		r.output = id
 		r.made = ((s.quantityMin or 1) + (s.quantityMax or s.quantityMin or 1)) / 2
-		local rec = ns.Data.Get(id)
-		if rec and rec.p then
-			r.sell, r.sellSource, r.current, r.scanned = rec.p * r.made * (1 - AH_CUT), "auction", rec.q ~= 0, rec.s
-		end
-		local vendor = C_Item and C_Item.GetItemInfo and select(11, C_Item.GetItemInfo(id))
-		if type(vendor) == "number" and vendor > 0 and vendor * r.made > (r.sell or 0) then
-			r.sell, r.sellSource, r.current = vendor * r.made, "vendor", true
-		end
+		r.sell, r.sellSource, r.current, r.scanned = Crafting.SellValue(id, r.made)
 		if r.sell then r.profit = r.sell - r.cost end
 	end
 	return r
@@ -269,6 +281,168 @@ local function TrackRow(button, node)
 		hookedRows[button] = true
 		button:HookScript("OnEnter", function(b) ns.SafeCall(AddRowTooltip, b) end)
 	end
+end
+
+---------------------------------------------------------------------------
+-- Saved recipes and "Worth as ..."
+--
+-- Opening a profession window saves its learned recipes (account-wide), so
+-- reagent tooltips can say, anywhere, what that reagent is worth when you
+-- craft it into something - the most you can pay for it and break even:
+--   (what the crafted items sell for - the other reagents)
+--     / how many of this reagent one craft takes
+-- The best of your recipes that use it is shown.
+---------------------------------------------------------------------------
+local reagentIndex -- [reagent itemID] = { recipeID, ... }, rebuilt after saving
+
+local function ViewingOwnProfession()
+	local T = C_TradeSkillUI
+	for _, fn in ipairs({ "IsTradeSkillLinked", "IsTradeSkillGuild", "IsTradeSkillGuildMember", "IsNPCCrafting", "IsRuneforging" }) do
+		if T[fn] then
+			local ok, other = pcall(T[fn])
+			if ok and other then return false end
+		end
+	end
+	return true
+end
+
+local function SaveRecipe(recipeID)
+	local ok, s = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
+	if not (ok and s and s.reagentSlotSchematics) then return end
+	local output = OutputItem(recipeID, s)
+	if not output then return end
+	local basic = Enum.CraftingReagentType and Enum.CraftingReagentType.Basic
+	local slots = {}
+	for _, slot in ipairs(s.reagentSlotSchematics) do
+		if slot.required ~= false and (not basic or slot.reagentType == basic) then
+			local entry = { math.max(1, slot.quantityRequired or 1) }
+			for _, reagent in ipairs(slot.reagents or {}) do
+				if reagent.itemID then entry[#entry + 1] = reagent.itemID end
+			end
+			if #entry > 1 then slots[#slots + 1] = entry end
+		end
+	end
+	if #slots == 0 then return end
+	ns.db.recipes[recipeID] = {
+		o = output,
+		m = ((s.quantityMin or 1) + (s.quantityMax or s.quantityMin or 1)) / 2,
+		r = slots,
+	}
+end
+
+local function SaveRecipes()
+	local T = C_TradeSkillUI
+	if not (ns.db and T and T.GetRecipeSchematic and T.GetRecipeInfo) or not ViewingOwnProfession() then return end
+	local list
+	for _, fn in ipairs({ "GetAllRecipeIDs", "GetFilteredRecipeIDs" }) do
+		if not list and T[fn] then
+			local ok, ids = pcall(T[fn])
+			if ok and type(ids) == "table" and #ids > 0 then list = ids end
+		end
+	end
+	if not list then return end
+	for _, id in ipairs(list) do
+		local ok, info = pcall(T.GetRecipeInfo, id)
+		if ok and info and info.learned then SaveRecipe(id) end
+	end
+	reagentIndex = nil
+end
+
+-- The list updates many times while the window opens; save once it settles.
+local savePending = false
+local function SaveSoon()
+	if savePending then return end
+	savePending = true
+	C_Timer.After(1, function()
+		savePending = false
+		ns.SafeCall(SaveRecipes)
+	end)
+end
+ns.On("TRADE_SKILL_SHOW", SaveSoon)
+ns.On("TRADE_SKILL_LIST_UPDATE", SaveSoon)
+ns.On("NEW_RECIPE_LEARNED", SaveSoon)
+
+local function ReagentIndex()
+	if reagentIndex then return reagentIndex end
+	reagentIndex = {}
+	for recipeID, recipe in pairs(ns.db.recipes) do
+		for _, slot in ipairs(recipe.r) do
+			for i = 2, #slot do
+				local list = reagentIndex[slot[i]]
+				if not list then
+					list = {}
+					reagentIndex[slot[i]] = list
+				end
+				list[#list + 1] = recipeID
+			end
+		end
+	end
+	return reagentIndex
+end
+
+-- What one of itemID is worth crafted into something (break-even price):
+-- { price = copper, output = itemID } for the best recipe, or nil (no saved
+-- recipe uses it, prices are missing, or crafting it never pays).
+function Crafting.CraftWorth(itemID)
+	local list = ns.db and ReagentIndex()[itemID]
+	if not list then return nil end
+	local best
+	for _, recipeID in ipairs(list) do
+		local recipe = ns.db.recipes[recipeID]
+		local sell = recipe and recipe.o ~= itemID and Crafting.SellValue(recipe.o, recipe.m)
+		if sell then
+			local other, qty, priced = 0, 0, true
+			for _, slot in ipairs(recipe.r) do
+				local uses = false
+				for i = 2, #slot do
+					if slot[i] == itemID then uses = true end
+				end
+				if uses then
+					qty = qty + slot[1]
+				else
+					local cheapest
+					for i = 2, #slot do
+						local unit = ReagentCost(slot[i])
+						if unit and (not cheapest or unit < cheapest) then cheapest = unit end
+					end
+					if not cheapest then
+						priced = false
+						break
+					end
+					other = other + cheapest * slot[1]
+				end
+			end
+			if priced and qty > 0 then
+				local price = math.floor((sell - other) / qty)
+				if price > 0 and (not best or price > best.price) then
+					best = { price = price, output = recipe.o }
+				end
+			end
+		end
+	end
+	return best
+end
+
+-- Item tooltips, right under the auction price:
+--   "Crafting profit (Bolt of Silk Cloth)   +32c each  +29%"
+-- what you make on each one bought at today's lowest buyout and crafted
+-- (the % in green, or red for a loss). While none is listed there's nothing
+-- to compare against, so it says what one would have to cost to break even.
+function Crafting.AddCraftWorth(tooltip, itemID)
+	if not (ns.db and ns.db.craftWorth and itemID) then return end
+	local best = Crafting.CraftWorth(itemID)
+	if not best then return end
+	local left = "Crafting profit |cff999999(" .. ItemName(best.output) .. ")|r"
+	local right
+	local rec = ns.Data.Get(itemID)
+	if rec and (rec.p or 0) > 0 and (rec.q or 0) > 0 then
+		local profit = best.price - rec.p
+		local sign = profit > 0 and "+" or profit < 0 and "-" or ""
+		right = sign .. ns.Money(math.abs(profit)) .. " each  " .. ns.Percent(profit / rec.p * 100)
+	else
+		right = "|cff999999none listed, break even at|r " .. ns.Money(best.price)
+	end
+	tooltip:AddDoubleLine(left, right, 1, 0.82, 0, 1, 1, 1)
 end
 
 ---------------------------------------------------------------------------
