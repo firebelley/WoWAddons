@@ -69,7 +69,7 @@ local function ItemName(id)
 end
 
 -- What it usually sells for here: the average of the trend period's daily
--- prices (the lowest listed, from your scans), or the latest scan's.
+-- prices (market prices, from your scans), or the latest scan's.
 local function UsualPrice(id)
 	local rec = ns.Data.Get(id)
 	if not rec then return nil end
@@ -78,7 +78,7 @@ local function UsualPrice(id)
 		if day > from then sum, n = sum + price, n + 1 end
 	end
 	if n > 0 then return math.floor(sum / n + 0.5) end
-	return rec.p
+	return ns.Data.Market(rec)
 end
 
 -- What you'd relist at: the cheapest listing left on screen after what the

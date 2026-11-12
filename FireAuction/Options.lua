@@ -57,7 +57,7 @@ local function Build()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Scans the auction house and keeps a price history for every item. Item tooltips show the "
-		.. "lowest buyout and how it moved; the price window (/fah, a key binding, or Prices at the auction "
+		.. "market price (what most of it sells around, not a few cheap ones) and how it moved; the price window (/fah, a key binding, or Prices at the auction "
 		.. "house) lets you search items and see their price over time. Prices are kept per realm, separately for your "
 		.. "faction's auction house and the neutral one (Booty Bay, Gadgetzan, Everlook).")
 	y = y - 50
@@ -174,7 +174,8 @@ local function Build()
 		"A coin on the edge of the minimap: click it for the price window, right-click for these options. Drag it to move it.",
 		function() ns.MinimapButton.Update() end)
 	Checkbox("tooltip", "Show auction prices in item tooltips",
-		"The lowest buyout from your latest scan, and how much it moved over the trend period.")
+		"The market price from your latest scan - what most of it sells around - and how much it moved over the "
+			.. "trend period. The lowest listed shows under it when that was noticeably cheaper.")
 	Slider("historyDays", "Keep prices for",
 		"How many days of prices to keep. Older days are removed at the next scan.", 7, 90, 1, Days,
 		function() ns.Window.Refresh() end)
@@ -225,7 +226,7 @@ local function Build()
 
 	Header("Bags")
 	Checkbox("markValuable", "Mark valuable items in my bags",
-		"Puts a gold coin on items in your bags whose lowest buyout at the auction house (latest scan) is at "
+		"Puts a gold coin on items in your bags whose market price at the auction house (latest scan) is at "
 			.. "least the amount below, per item. Soulbound items are never marked.",
 		function() ns.BagIcons.Refresh() end)
 	MoneyInput("markPrice", "Worth at least", "The auction price per item that gets the gold coin.",

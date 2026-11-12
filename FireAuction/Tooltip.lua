@@ -1,16 +1,22 @@
--- Item tooltips: "Auction house   1g 20s  +12% (7d)".
+-- Item tooltips: "Auction house   1g 20s  +12% (7d)" - the market price
+-- (Data.MarketPrice), with a "lowest listed" line under it when some were
+-- noticeably cheaper.
 local _, ns = ...
+
+local CHEAPER = 0.95 -- the lowest gets its own line below this share of the market price
 
 local function AddPrice(tooltip, itemID)
 	if not (ns.db and ns.db.tooltip and itemID) then return end
 	local rec = ns.Data.Get(itemID)
-	if not (rec and rec.p) then return end
+	local market = ns.Data.Market(rec)
+	if not market then return end
 
+	local listed = (rec.q or 0) > 0
 	local right
-	if (rec.q or 0) > 0 then
-		right = ns.Money(rec.p)
+	if listed then
+		right = ns.Money(market)
 	else
-		right = "|cff999999none listed, was|r " .. ns.Money(rec.p)
+		right = "|cff999999none listed, was|r " .. ns.Money(market)
 	end
 	local pct, _, _, _, days = ns.Data.Trend(rec)
 	if pct then
@@ -22,6 +28,9 @@ local function AddPrice(tooltip, itemID)
 		left = left .. " |cff999999(" .. ns.TimeAgo(rec.s) .. ")|r"
 	end
 	tooltip:AddDoubleLine(left, right, 1, 0.82, 0, 1, 1, 1)
+	if listed and rec.p and rec.p < market * CHEAPER then
+		tooltip:AddDoubleLine("   lowest listed", ns.Money(rec.p), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+	end
 end
 
 local function IsMainTooltip(tooltip)

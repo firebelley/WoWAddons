@@ -47,7 +47,7 @@ end
 -- Where the resell price comes from, for tooltips.
 local function SellSource(approx)
 	if approx then
-		return "No listings loaded, so it's the usual price: the average of your scans' lowest price over the last "
+		return "No listings loaded, so it's the usual price: the average of your scans' market price over the last "
 			.. ns.Data.TrendDays() .. " days."
 	end
 	return "The cheapest listing left after Quick buy buys what it can - what you'd list against."

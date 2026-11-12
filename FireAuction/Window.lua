@@ -94,7 +94,8 @@ local function BuildResults()
 	table.sort(results, function(a, b)
 		if a.fav ~= b.fav then return a.fav end
 		if sort == "price" then
-			if a.rec.p ~= b.rec.p then return (a.rec.p or 0) > (b.rec.p or 0) end
+			local ma, mb = ns.Data.Market(a.rec) or 0, ns.Data.Market(b.rec) or 0
+			if ma ~= mb then return ma > mb end
 		elseif sort == "rising" or sort == "falling" then
 			if a.pct ~= b.pct then
 				if not a.pct or not b.pct then return a.pct ~= nil end
@@ -120,7 +121,7 @@ local function UpdateRows()
 			if entry.pct then
 				row.value:SetText(ns.Percent(entry.pct))
 			elseif (entry.rec.q or 0) > 0 then
-				row.value:SetText(ns.Money(entry.rec.p))
+				row.value:SetText(ns.Money(ns.Data.Market(entry.rec)))
 			else
 				row.value:SetText("|cff999999none listed|r")
 			end
@@ -463,10 +464,18 @@ local function UpdateDetail()
 	detail.name:SetTextColor(QualityColor(selected))
 
 	local info = {}
+	-- Prices saved before market prices only have the lowest buyout.
+	local market = ns.Data.Market(rec)
+	local label = rec.m and "Market" or "Lowest buyout"
 	if (rec.q or 0) > 0 then
-		info[#info + 1] = ("Lowest buyout: %s  |cff999999(%d listed)|r"):format(ns.Money(rec.p), rec.q)
+		if rec.m and rec.m ~= rec.p then
+			info[#info + 1] = ("Market: %s   Lowest: %s  |cff999999(%d listed)|r"):format(ns.Money(market),
+				ns.Money(rec.p), rec.q)
+		else
+			info[#info + 1] = ("%s: %s  |cff999999(%d listed)|r"):format(label, ns.Money(market), rec.q)
+		end
 	else
-		info[#info + 1] = ("Lowest buyout: |cff999999none listed (was|r %s|cff999999)|r"):format(ns.Money(rec.p))
+		info[#info + 1] = ("%s: |cff999999none listed (was|r %s|cff999999)|r"):format(label, ns.Money(market))
 	end
 	info[#info + 1] = "|cff999999Seen " .. ns.TimeAgo(rec.s) .. "|r"
 	local pct, projected, _, _, days = ns.Data.Trend(rec)

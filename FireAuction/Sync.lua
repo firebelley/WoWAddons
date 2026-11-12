@@ -28,15 +28,21 @@
 --   D stream seq records...                  stream data (each message stands alone)
 --   E stream messages records                the stream is over
 -- summary = newest-scan today K count*K (prices per day, the last K days)
--- record  = id-gap mask [price qty age] dayprice...
---   (mask bit 1: the latest price follows; bit j+1: a price for the stream's day j)
+-- record  = id-gap mask [price qty age market] dayprice...
+--   (mask bit 1: the latest prices follow - lowest, how many, how old, and the
+--   market price; bit j+1: a price for the stream's day j - the day's market
+--   price)
+--
+-- Version 2 added the market price. Versions don't mix: messages from another
+-- version are ignored, and you're told once (per member) that someone needs
+-- to update.
 local _, ns = ...
 
 local Sync = {}
 ns.Sync = Sync
 
 local PREFIX = "FireAH"
-local VERSION = 1
+local VERSION = 2
 local MAX_LEN = 250      -- characters per message (the game allows 255)
 local MAX_DAYS = 60      -- days of history compared and shared
 local HELLO_DELAY = 12   -- seconds after logging in
@@ -368,7 +374,7 @@ local function RecordText(s, rec, gap)
 	end
 	if not latest and #prices == 0 then return nil end
 	local out = Num(gap) .. Bits(flags, #s.days + 1)
-	if latest then out = out .. Num(rec.p) .. Num(rec.q or 0) .. Num(s.base - rec.s) end
+	if latest then out = out .. Num(rec.p) .. Num(rec.q or 0) .. Num(s.base - rec.s) .. Num(rec.m or rec.p) end
 	return out .. table.concat(prices), latest, #prices
 end
 
@@ -517,7 +523,7 @@ local function OnBegin(r, from, sender)
 	}
 end
 
-local function Merge(st, realm, id, p, q, s, dayPrices)
+local function Merge(st, realm, id, p, q, s, m, dayPrices)
 	local today = Today()
 	local rec = realm.items[id]
 	local new = rec == nil
@@ -525,7 +531,7 @@ local function Merge(st, realm, id, p, q, s, dayPrices)
 	if p then
 		st.seen[id] = true
 		if not rec.s or s > rec.s then
-			rec.p, rec.q, rec.s, rec.l = p, q, s, nil
+			rec.p, rec.m, rec.q, rec.s, rec.l = p, m, q, s, nil
 			if not new then st.updated = st.updated + 1 end
 		end
 	end
@@ -572,10 +578,11 @@ local function OnData(r, from)
 			local id = prev + r:Num()
 			prev = id
 			local flags = r:Bits(#st.days + 1)
-			local p, q, s
+			local p, q, s, m
 			if flags[1] then
 				p, q = r:Num(), r:Num()
 				s = st.base - r:Num()
+				m = r:Num()
 			end
 			local dayPrices = {}
 			for j, day in ipairs(st.days) do
@@ -583,8 +590,9 @@ local function OnData(r, from)
 			end
 			-- Sanity: skip anything that can't be a real price.
 			local sane = id > 0 and id < 10000000
-				and (not p or (p > 0 and p < 1e11 and q < 1e7 and s <= now + 86400 and s > now - 200 * 86400))
-			if sane then Merge(st, realm, id, p, q, s, dayPrices) end
+				and (not p or (p > 0 and p < 1e11 and q < 1e7 and s <= now + 86400 and s > now - 200 * 86400
+					and m >= p and m < 1e11))
+			if sane then Merge(st, realm, id, p, q, s, m, dayPrices) end
 		end
 	end)
 	if not ok then
@@ -731,11 +739,30 @@ end
 
 local HANDLERS = { H = OnHello, O = OnOffer, G = OnGo, B = OnBegin, D = OnData, E = OnEnd }
 
+-- Someone on another version: say so once per member, so it's clear why
+-- prices aren't coming from (or going to) them.
+local toldVersion = {}
+local function OtherVersion(version, sender)
+	local name = ShortName(sender or "?")
+	if toldVersion[name] then return end
+	toldVersion[name] = true
+	if version > VERSION then
+		ns.Print(("%s has a newer FireAuction - update yours to share prices with them again."):format(name))
+	else
+		ns.Print(("%s has an older FireAuction - prices aren't shared with them until they update."):format(name))
+	end
+end
+
 local function OnMessage(prefix, text, channel, sender)
 	if prefix ~= PREFIX or channel ~= "GUILD" then return end
 	if IsSecret(text) or IsSecret(sender) or type(text) ~= "string" or #text < 5 then return end
 	local handler = HANDLERS[text:sub(1, 1)]
-	if not handler or DEC[byte(text, 2)] ~= VERSION then return end
+	if not handler then return end
+	local version = DEC[byte(text, 2)]
+	if version ~= VERSION then
+		if version and text:sub(3, 5) ~= node then OtherVersion(version, sender) end
+		return
+	end
 	local from = text:sub(3, 5)
 	if from == node then return end -- our own, echoed back
 	if not ns.db then return end

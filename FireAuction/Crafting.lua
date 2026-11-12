@@ -4,10 +4,10 @@
 --   for the breakdown. Hovering a recipe in the list adds the same numbers to
 --   its tooltip.
 --
---   Sells for:    lowest buyout of the crafted item (latest scan) x how many
+--   Sells for:    market price of the crafted item (latest scan) x how many
 --                 one craft makes, minus the auction house's 5% cut - or what
 --                 a vendor pays, if that's more.
---   Reagent cost: each reagent at the cheapest of its auction price and its
+--   Reagent cost: each reagent at the cheapest of its lowest buyout and its
 --                 vendor price. Vendor prices are learned from every merchant
 --                 you visit (unlimited stock, bought with gold).
 --
@@ -95,8 +95,9 @@ end
 function Crafting.SellValue(id, made)
 	local sell, source, current, scanned
 	local rec = ns.Data.Get(id)
-	if rec and rec.p then
-		sell, source, current, scanned = rec.p * made * (1 - AH_CUT), "auction", rec.q ~= 0, rec.s
+	local market = ns.Data.Market(rec)
+	if market then
+		sell, source, current, scanned = market * made * (1 - AH_CUT), "auction", rec.q ~= 0, rec.s
 	end
 	local vendor = C_Item and C_Item.GetItemInfo and select(11, C_Item.GetItemInfo(id))
 	if type(vendor) == "number" and vendor > 0 and vendor * made > (sell or 0) then
@@ -400,7 +401,7 @@ function Crafting.Uses(itemID)
 			u.sell, u.source, u.current = Crafting.SellValue(recipe.o, recipe.m)
 			if u.sell then
 				local rec = ns.Data.Get(recipe.o)
-				u.unit = u.source == "vendor" and u.sell / recipe.m or (rec and rec.p)
+				u.unit = u.source == "vendor" and u.sell / recipe.m or ns.Data.Market(rec)
 			end
 			for _, slot in ipairs(recipe.r) do
 				local mine = false

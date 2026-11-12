@@ -1,5 +1,5 @@
--- A gold coin on items in your bags whose auction price (lowest buyout per
--- item, latest scan) is at least the amount set in the options.
+-- A gold coin on items in your bags whose auction price (the market price
+-- per item, latest scan) is at least the amount set in the options.
 --
 -- Works with FireBags (through its button hook) or Blizzard's bags.
 local _, ns = ...
@@ -14,7 +14,8 @@ local function IsValuable(link, isBound)
 	if not (db and db.markValuable and link) or isBound then return false end
 	local id = tonumber(link:match("item:(%d+)"))
 	local rec = id and ns.Data.Get(id)
-	return rec and rec.p and rec.p >= (db.markPrice or 0) or false
+	local price = ns.Data.Market(rec)
+	return price and price >= (db.markPrice or 0) or false
 end
 
 local function Decorate(button, link, isBound)

@@ -3,11 +3,14 @@
 -- Kept per auction house (ns.Realm): your faction's, and the neutral one.
 -- Per item (realm.items[itemID]):
 --   p  = lowest buyout per item in the latest scan (copper)
+--   m  = the market price in the latest scan (Data.MarketPrice); missing in
+--        prices saved before it was added - Data.Market falls back to p
 --   q  = how many were listed then (0 = none in the latest full scan)
 --   s  = when that scan was (time())
 --   nm = name
 --   d  = { [day] = price } - one price per day: the average of that day's
---        scans' lowest buyouts
+--        scans' market prices (days saved before market prices: the lowest
+--        buyouts)
 --   td, n = the day of the latest scan, and how many scans it had
 --   l  = the latest scan's listings: "n,buyout,stack,bid;..." where n is how
 --        many identical auctions there were (bid only for bid-only ones)
@@ -24,6 +27,41 @@ end
 
 function Data.DayTime(day)
 	return day * DAY + DAY / 2
+end
+
+-- The market price: what most of it really sells around, not a few cheap
+-- ones. Of all the units listed (with a buyout), take the cheapest quarter;
+-- the market price is the one in the middle of those. So 40 at 1s 70c under
+-- 1000 at 2s is 2s, one at 1s under 2000 at 2s is 2s, and 2000 at 2s under
+-- 5000 at 3s is still 2s.
+--   list: { ["buyout,stack,bid"] = auctions } (a scan's listings)
+-- nil without buyouts.
+local MARKET_SHARE = 0.25
+function Data.MarketPrice(list)
+	local units, total = {}, 0
+	for key, n in pairs(list or {}) do
+		local buyout, stack = key:match("^(%d+),(%d+)")
+		buyout, stack = tonumber(buyout), tonumber(stack)
+		if buyout and buyout > 0 and stack and stack > 0 then
+			units[#units + 1] = { buyout / stack, stack * n }
+			total = total + stack * n
+		end
+	end
+	if total == 0 then return nil end
+	table.sort(units, function(a, b) return a[1] < b[1] end)
+	local target = math.ceil(math.max(1, math.ceil(total * MARKET_SHARE)) / 2)
+	local count = 0
+	for _, u in ipairs(units) do
+		count = count + u[2]
+		if count >= target then return math.floor(u[1] + 0.5) end
+	end
+	return math.floor(units[#units][1] + 0.5)
+end
+
+-- The item's market price (the lowest buyout for prices saved before market
+-- prices were).
+function Data.Market(rec)
+	return rec and (rec.m or rec.p)
 end
 
 -- house: see ns.Realm (nil = the auction house you're using).
@@ -46,7 +84,8 @@ function Data.CommitScan(prices, complete, house)
 			realm.items[id] = rec
 		end
 		local low = math.floor(p.low + 0.5)
-		rec.p, rec.q, rec.s = low, p.qty, now
+		local market = math.max(low, Data.MarketPrice(p.list) or low)
+		rec.p, rec.m, rec.q, rec.s = low, market, p.qty, now
 		if p.name then rec.nm = p.name end
 		if p.list then
 			local parts = {}
@@ -55,10 +94,10 @@ function Data.CommitScan(prices, complete, house)
 		end
 		if rec.td == today and rec.d[today] then
 			rec.n = (rec.n or 1) + 1
-			rec.d[today] = math.floor(rec.d[today] + (low - rec.d[today]) / rec.n + 0.5)
+			rec.d[today] = math.floor(rec.d[today] + (market - rec.d[today]) / rec.n + 0.5)
 		else
 			rec.td, rec.n = today, 1
-			rec.d[today] = low
+			rec.d[today] = market
 		end
 	end
 	if complete then
