@@ -11,6 +11,11 @@
 -- from the minimap's tracking menu, and reminded when it goes off on its own
 -- (dying, mostly) - not when you switch it off or to another one yourself.
 --
+-- Temporary weapon enchants (Firestone, poisons, sharpening stones, a
+-- shaman's weapon imbues...) count too: they're on the weapon, not buffs, and
+-- readable even in combat. Learned the first time you have one; reminded when
+-- it runs out - not when you swap that weapon out or right-click it off.
+--
 -- Short buffs you keep up yourself (seals, Slice and Dice): under a minute,
 -- from a spell with no cooldown of its own. These are combat-only: when one
 -- drops during a fight, an alert and an icon until you recast it or the fight
@@ -65,6 +70,11 @@ end
 if C_UnitAuras and C_UnitAuras.CancelAuraByInstanceID then
 	pcall(hooksecurefunc, C_UnitAuras, "CancelAuraByInstanceID", OnCancel)
 end
+-- Right-clicking a weapon enchant off.
+if C_Spell and C_Spell.CancelItemTempEnchantment then
+	pcall(hooksecurefunc, C_Spell, "CancelItemTempEnchantment", OnCancel)
+end
+if type(CancelItemTempEnchantment) == "function" then hooksecurefunc("CancelItemTempEnchantment", OnCancel) end
 -- Turning tracking off (or switching it) on the minimap's tracking menu.
 if type(CancelTrackingBuff) == "function" then hooksecurefunc("CancelTrackingBuff", OnCancel) end
 if C_Minimap then
@@ -92,6 +102,49 @@ local function ForEachTracking(fn)
 			if info.active then fn(info.name, info.texture) end
 		end
 	end
+end
+
+-- Temporary weapon enchants. Calls fn(inventory slot, enchant info) for each.
+local WEAPON_INV_SLOT = { [0] = 16, [1] = 17, [2] = 18 } -- Enum.WeaponSlot -> main hand, off hand, ranged
+local SLOT_LABEL = { [16] = "Main hand", [17] = "Off hand", [18] = "Ranged" }
+local function ForEachEnchant(fn)
+	if not (C_Item and C_Item.GetWeaponEnchantInfo and Enum and Enum.WeaponSlot) then return end
+	for _, slot in pairs(Enum.WeaponSlot) do
+		local inv = WEAPON_INV_SLOT[slot]
+		local ok, enchants = pcall(C_Item.GetWeaponEnchantInfo, slot)
+		if inv and ok and type(enchants) == "table" then
+			for _, e in pairs(enchants) do
+				if type(e) == "table" and not API.IsSecret(e.hasEnchant) and e.hasEnchant then fn(inv, e) end
+			end
+		end
+	end
+end
+
+-- An enchant's name, from the weapon's tooltip: the green line like
+-- "Firestone 1 (2 hrs)" -> "Firestone". Remembered by enchant ID; if the
+-- tooltip can't be read, "Main hand enchant".
+local function EnchantName(inv, enchantID)
+	if API.IsSecret(enchantID) then enchantID = nil end
+	local names = ns.db.enchantNames
+	if enchantID and names[enchantID] then return names[enchantID] end
+	local T = C_TooltipInfo
+	local ok, data = false, nil
+	if T and T.GetInventoryItem then ok, data = pcall(T.GetInventoryItem, "player", inv) end
+	if ok and type(data) == "table" and type(data.lines) == "table" then
+		for _, line in ipairs(data.lines) do
+			local text, c = line.leftText, line.leftColor
+			if type(text) == "string" and not API.IsSecret(text) and type(c) == "table" and type(c.r) == "number"
+				and not API.IsSecret(c.r) and c.r < 0.2 and c.g > 0.8 and c.b < 0.2 then
+				local name = text:match("^(.-)%s*%(%d[^%)]*%)$")
+				if name and name ~= "" then
+					name = name:gsub("%s+%d+$", "")
+					if enchantID then names[enchantID] = name end
+					return name
+				end
+			end
+		end
+	end
+	return (SLOT_LABEL[inv] or "Weapon") .. " enchant"
 end
 
 -- Seconds until a buff runs out, or nil when its timer can't be trusted.
@@ -177,10 +230,12 @@ local function Learn(a, kind)
 		e.icon = a.icon or e.icon
 		e.duration = a.duration or e.duration -- to time it when recast in combat
 		if kind == "tracking" then e.tracking = true end
+		if kind == "enchant" then e.enchant = true end
 		return
 	end
 	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, combat = kind == "combat" or nil,
-		tracking = kind == "tracking" or nil }
+		tracking = kind == "tracking" or nil, enchant = kind == "enchant" or nil }
+	if a.quiet then return end
 	if kind == "tracking" then
 		ns.Print(("I'll let you know when |cffffd100%s|r is turned off. Turn that off in /fprocs buffs."):format(a.name))
 	elseif kind == "combat" then
@@ -276,15 +331,34 @@ local function Lost(name, info, old)
 			return
 		end
 	end
+	if info.enchant then
+		if GetInventoryItemID("player", info.enchant) ~= info.item then
+			return ns.Trace(name .. " went with the weapon you swapped out: not reminding")
+		end
+		-- Another enchant on that weapon now: a different poison/stone (either
+		-- one counts from now on) - or the same one, whose name couldn't be read
+		-- the first time (then the stand-in name is dropped).
+		for other, o in pairs(present) do
+			if o.enchant == info.enchant then
+				if name == (SLOT_LABEL[info.enchant] or "Weapon") .. " enchant" then
+					ns.db.selfBuffs[name] = nil
+					return ns.Trace(name .. " is " .. other)
+				end
+				Link(other, name)
+				return
+			end
+		end
+	end
 	if UnitIsDeadOrGhost("player") then
 		diedWith[name] = true
 		return
 	end
-	-- (Tracking is only ever switched off from its menu, so that's on purpose even mid-fight.)
-	if GetTime() - cancelledAt < CANCEL_WINDOW and (info.tracking or not UnitAffectingCombat("player")) then
+	-- (Tracking is only ever switched off from its menu, and a weapon enchant
+	-- from its icon, so that's on purpose even mid-fight.)
+	if GetTime() - cancelledAt < CANCEL_WINDOW and (info.tracking or info.enchant or not UnitAffectingCombat("player")) then
 		if not SelfBuffs.remindCancelled then
-			return ns.Trace(name .. (info.tracking and " was turned off by you" or " was cancelled by you out of combat")
-				.. ": not reminding")
+			return ns.Trace(name .. (info.tracking and " was turned off by you"
+				or info.enchant and " was cancelled by you" or " was cancelled by you out of combat") .. ": not reminding")
 		end
 		ns.Trace(name .. " was cancelled by you, but /fprocs testcancel is on: reminding anyway")
 	end
@@ -312,6 +386,17 @@ function SelfBuffs.Update(source)
 		Learn({ name = name, icon = icon }, "tracking")
 		now[name] = { icon = icon, tracking = true }
 	end)
+	-- Weapon enchants: readable in combat too.
+	ForEachEnchant(function(inv, e)
+		local name = EnchantName(inv, e.enchantID)
+		local icon = e.enchantIconID
+		if API.IsSecret(icon) or not icon or icon == 0 then icon = GetInventoryItemTexture("player", inv) end
+		-- (A stand-in name is learned quietly: it's normally renamed a moment later.)
+		Learn({ name = name, icon = icon, quiet = name == (SLOT_LABEL[inv] or "Weapon") .. " enchant" }, "enchant")
+		local left = not API.IsSecret(e.timeLeft) and tonumber(e.timeLeft) or 0
+		now[name] = { icon = icon, enchant = inv, item = GetInventoryItemID("player", inv),
+			expires = left > 0 and GetTime() + left / 1000 or 0 }
+	end)
 
 	local ids = API.AuraInstanceIDs("player", "HELPFUL")
 	if restricted and ns.tracing and not traceIDs then
@@ -330,7 +415,7 @@ function SelfBuffs.Update(source)
 		-- margin.
 		for name, info in pairs(present) do
 			local left = TimeLeft(info)
-			local there = not info.tracking and not (left ~= nil and left <= END_MARGIN)
+			local there = not (info.tracking or info.enchant) and not (left ~= nil and left <= END_MARGIN)
 			if there and info.instance then
 				if ids then
 					there = ids[info.instance] and true or false
@@ -351,7 +436,7 @@ function SelfBuffs.Update(source)
 		end
 		for name, e in pairs(ns.db.selfBuffs) do
 			local info = now[name]
-			if not e.tracking and Spells.WasRecentlyCast(name)
+			if not (e.tracking or e.enchant) and Spells.WasRecentlyCast(name)
 				and not (info and info.recastAt and GetTime() - info.recastAt < 3) then
 				local t = GetTime()
 				now[name] = {
@@ -403,7 +488,7 @@ local function CheckAtLogin()
 	for name in pairs(ns.db.selfBuffs) do
 		local g = GroupOf(name)
 		-- Only your own spells: settings copied from another character can list theirs.
-		local yours = Spells.active[name] or (Entry(name).tracking and trackingKnown[name])
+		local yours = Spells.active[name] or (Entry(name).tracking and trackingKnown[name]) or Entry(name).enchant
 		if Enabled(name) and yours and not GroupPresent(g) and not groups[g] then
 			groups[g] = true
 			Remind(name, false)
@@ -461,6 +546,9 @@ end
 
 ns.OnUnit("UNIT_AURA", "player", function() SelfBuffs.Update("game's buff update") end)
 ns.On("MINIMAP_UPDATE_TRACKING", function() SelfBuffs.Update("tracking change") end)
+ns.On("WEAPON_ENCHANT_CHANGED", function() SelfBuffs.Update("weapon enchant change") end)
+ns.On("WEAPON_SLOT_CHANGED", function() SelfBuffs.Update("weapon change") end)
+ns.OnUnit("UNIT_INVENTORY_CHANGED", "player", function() SelfBuffs.Update("equipment change") end)
 
 -- Buffs can stay hidden for a moment after combat ends; look again shortly
 -- after, so anything lost in the fight is caught even if no buff changes.

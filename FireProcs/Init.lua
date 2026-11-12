@@ -116,5 +116,6 @@ ns.On("ADDON_LOADED", function(name)
 	db.muted = db.muted or {} -- [spell name] = true, or "auto" when FireProcs muted it
 	db.seen = db.seen or {}   -- [spell name] = true for every proc announced so far
 	db.selfBuffs = db.selfBuffs or {} -- [buff name] = { icon, on, group } for buff reminders
+	db.enchantNames = db.enchantNames or {} -- [weapon enchant ID] = name read from the weapon's tooltip
 	ns.db = db
 end)

@@ -194,11 +194,13 @@ end
 ---------------------------------------------------------------------------
 -- The bar above the auction house window
 ---------------------------------------------------------------------------
+local MIN_BAR_WIDTH = 330
+
 local function CreateBar()
 	local parent = AuctionHouseFrame or AuctionFrame
 	if not parent then return nil end
 	local f = CreateFrame("Frame", "FireAuctionBar", parent, "BackdropTemplate")
-	f:SetSize(330, 28)
+	f:SetSize(MIN_BAR_WIDTH, 28)
 	f:SetPoint("BOTTOMRIGHT", parent, "TOPRIGHT", 0, 2)
 	if f.SetBackdrop then
 		f:SetBackdrop({
@@ -258,6 +260,11 @@ local function CreateBar()
 			end
 		end
 		status:SetText(text)
+		-- Grow (leftwards) to fit the text: its margins plus the two buttons.
+		-- In steps of 20 so it doesn't twitch as the text changes.
+		local textWidth = status.GetUnboundedStringWidth and status:GetUnboundedStringWidth() or status:GetStringWidth()
+		local width = math.max(MIN_BAR_WIDTH, math.ceil((textWidth + 16 + 129) / 20) * 20)
+		if math.abs(self:GetWidth() - width) > 1 then self:SetWidth(width) end
 		scan:SetEnabled(not Scan.Busy())
 	end
 
