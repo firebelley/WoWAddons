@@ -747,9 +747,9 @@ local function OtherVersion(version, sender)
 	if toldVersion[name] then return end
 	toldVersion[name] = true
 	if version > VERSION then
-		ns.Print(("%s has a newer FireAuction - update yours to share prices with them again."):format(name))
+		ns.Print(("%s has a newer FireAuction - update to sync with them."):format(name))
 	else
-		ns.Print(("%s has an older FireAuction - prices aren't shared with them until they update."):format(name))
+		ns.Print(("%s has an older FireAuction - no syncing until they update."):format(name))
 	end
 end
 

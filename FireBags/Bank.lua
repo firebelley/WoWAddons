@@ -114,7 +114,7 @@ local function Refresh(window)
 		local snapshot = GetSnapshot()
 		if not snapshot then
 			window:SetStatus("")
-			window:SetMessage("Visit a banker once to save a snapshot of your bank.\nAfter that you can browse it from anywhere.")
+			window:SetMessage("Visit a banker once to browse your bank from anywhere.")
 			window:LayoutSections({}, nil)
 		else
 			local itemsByBag = {}
@@ -202,8 +202,8 @@ end
 -- The client only lets Blizzard's own bank window buy tabs, so this button
 -- explains how to do it instead of buying.
 StaticPopupDialogs.FIREBAGS_BUY_BANK_TAB = {
-	text = "Addons aren't allowed to buy bank tabs.\n\nTo buy the next tab%s, disable FireBags in the AddOns menu, "
-		.. "visit a banker and buy it from Blizzard's bank window, then turn FireBags back on.",
+	text = "Addons can't buy bank tabs.\n\nTo buy one%s, disable FireBags, buy it at a banker, then turn FireBags "
+		.. "back on.",
 	button1 = OKAY,
 	timeout = 0,
 	whileDead = true,

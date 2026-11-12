@@ -147,7 +147,7 @@ local function BuildMain()
 
 	Header("Announcements")
 	Button("Test", "Show a sample announcement.", function() ns.Display.Test() end)
-	Button("Unlock / Lock", "Unlock to drag the announcements to a new spot (close this window first), then press again to lock.",
+	Button("Unlock / Lock", "Unlock, close this window and drag the announcements, then lock again.",
 		function()
 			local moving = ns.Display.ToggleMove()
 			if moving then ns.Display.Test() end
@@ -168,17 +168,18 @@ local function BuildMain()
 
 	Header("What to announce")
 	Checkbox("detectBuffs", "Proc buffs",
-		"Buffs you get by chance: Clearcasting, Flurry, Enrage, Shadow Trance... In combat this client hides most buffs from addons, so these are mostly caught out of combat - the spell-change option below covers many of them in combat.",
+		"Chance buffs like Clearcasting, Flurry, Enrage. Mostly caught out of combat; the option below covers many "
+			.. "in combat.",
 		RefreshAuras)
 	Checkbox("detectChanges", "Spells that become free or instant",
-		"Missile Barrage (Arcane Missiles costs nothing), Clearcasting (spells cost nothing), Nightfall (instant Shadow Bolt)... Works in combat.")
+		"Missile Barrage, Clearcasting, Nightfall... Works in combat.")
 	Checkbox("detectAbilities", "Abilities that light up",
 		"Abilities that become usable after something happens: Overpower, Revenge, Riposte, Execute...")
 	Checkbox("glowButtons", "Make their action buttons glow",
 		"Add the proc glow to action buttons of abilities that light up, until they're used.",
 		function(on) if not on then ns.Glow.ClearAll() end end)
 	Checkbox("detectDrain", "Life-drain heals",
-		"Touch of the Grave and similar passives that heal you by chance. In a group, heals right after a healer casts a healing spell are skipped (theirs look the same).")
+		"Passive heals like Touch of the Grave. In a group, heals right after a healer's cast are skipped.")
 	Checkbox("detectTriggered", "Spells that go off by themselves",
 		"Spells of yours that fire without you casting them.")
 	Checkbox("detectGifts", "Long buffs from other players",
@@ -187,14 +188,13 @@ local function BuildMain()
 	local function RefreshReminders() ns.SelfBuffs.Refresh() end
 	Header("Buff reminders")
 	Checkbox("remindAnnounce", "Announce when one of your buffs is gone",
-		"\"Water Shield is gone\", \"Demon Armor is gone\"... for your own long buffs (a minute or more), including in combat. Choose which buffs in the Buffs page (/fprocs buffs).",
+		"\"Water Shield is gone\" for your own long buffs, even in combat. Pick buffs on the Buffs page.",
 		RefreshReminders)
 	Checkbox("remindIcon", "Keep an icon up until you recast it",
-		"A red, pulsing icon of the missing buff under the announcements. It goes away when you cast the buff (or an alternative, like Lightning Shield for Water Shield).",
+		"A pulsing icon of the missing buff until you recast it.",
 		RefreshReminders)
 	Slider("remindIconMinutes", "Hide the icon after",
-		"Take the icon away after this long, even if you haven't recast the buff. Never: it stays until you do. "
-			.. "Either way you aren't reminded about that buff again until you've recast it and lost it again.",
+		"Hide the icon after this long even if not recast. Never: keep it until you recast.",
 		0, 10, 1,
 		function(v) return v == 0 and "Never" or ("%d min"):format(v) end,
 		RefreshReminders)
@@ -318,13 +318,10 @@ end
 -- "Buffs" page: one checkbox per buff reminder.
 local function BuildBuffs()
 	return BuildList("Buffs",
-		"Your own long buffs FireProcs reminds you about when they're gone (see Buff reminders on the main page), "
-			.. "and short ones you keep up yourself, like seals, which are only reminded about when they drop during "
-			.. "a fight (the icon goes when you recast it or the fight ends). Tracking (Find Minerals, Find Herbs...) "
-			.. "is reminded when it goes off without you switching it off. Weapon enchants (Firestone, poisons, "
-			.. "sharpening stones...) are reminded when they run out. "
-			.. "Buffs are added here the first time you cast them. Untick one to never be reminded about it.",
-		"None yet - cast one of your long buffs (Water Shield, Demon Armor...) and it shows up here.",
+		"Buffs you're reminded about, added the first time you cast them. Long buffs, tracking and weapon "
+			.. "enchants are reminded when they're gone. Short ones like seals only when they drop in a fight. "
+			.. "Untick to stop reminders.",
+		"None yet - cast one of your buffs and it shows up here.",
 		function()
 			local list = {}
 			for name, e in pairs(ns.db.selfBuffs) do

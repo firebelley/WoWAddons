@@ -134,7 +134,7 @@ local function StartReading()
 	local total = AH.GetNumReplicateItems() or 0
 	ns.Debug("reading " .. total .. " auctions")
 	if total == 0 then
-		Finish("the auction house sent no auctions (it may be empty, or scanned too recently - try again in a few minutes).")
+		Finish("no auctions received - try again in a few minutes.")
 		return
 	end
 	Scan.state = "reading"
@@ -186,7 +186,7 @@ function Scan.Start(auto)
 
 	C_Timer.After(TIMEOUT, function()
 		if token == mine and Scan.state == "waiting" then
-			Finish("the auction house didn't answer. It allows a full scan about every 15 minutes - try again later.")
+			Finish("no answer from the auction house - try again later.")
 		end
 	end)
 end

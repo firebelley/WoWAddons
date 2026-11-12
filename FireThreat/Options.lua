@@ -34,13 +34,11 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Lists the enemies you're fighting (from their nameplates - keep enemy nameplates on). "
-		.. "Red always means act, and is listed first.\n"
-		.. "Tanking - green: attacking you. Yellow: someone's about to pull it. Red: attacking someone else.\n"
-		.. "Damage or healing - green: someone else has it. Yellow: you're about to pull it, ease off. Red: attacking you.\n"
-		.. "The bar is your threat towards pulling it. Hover an enemy to point a yellow arrow at it - this client "
-		.. "doesn't let addons target enemies from a list.")
-	y = y - 74
+	about:SetText("Enemies you're fighting (needs enemy nameplates on). Red means act and is listed first.\n"
+		.. "Tank - green: on you. Yellow: about to be pulled. Red: on someone else.\n"
+		.. "Damage/healing - green: on someone else. Yellow: ease off. Red: on you.\n"
+		.. "Hover an enemy to point an arrow at it.")
+	y = y - 62
 
 	local lastButton
 	local function Button(text, tooltip, onClick)
@@ -112,7 +110,7 @@ local function Build()
 		if sliderX == 0 then sliderX = 250 else sliderX = 0; y = y - 48 end
 	end
 
-	Button("Unlock / Lock", "Unlock to drag the list by its title bar (close this window first), then press again to lock.",
+	Button("Unlock / Lock", "Unlock, close this window and drag the title bar, then lock again.",
 		function()
 			ns.Print(ns.ToggleMove() and "drag the title bar, then press Unlock / Lock again (or type /fthreat move)." or "position saved.")
 		end)
@@ -151,7 +149,7 @@ local function Build()
 		return rb
 	end
 	local auto = Radio("auto", "Automatic",
-		"Tank when you're in Defensive Stance, Bear Form or have Righteous Fury (or your group role is tank), otherwise damage/healing.")
+		"Tank in Defensive Stance, Bear Form, Righteous Fury or the tank role.")
 	auto.text:SetWidth(180)
 	auto.text:SetJustifyH("LEFT")
 	x = x + 180 - auto.text:GetStringWidth()
@@ -170,9 +168,9 @@ local function Build()
 	Checkbox("markNameplates", "Red arrow over red enemies",
 		"Marks their nameplates in the world, so you can spot them without looking at the list.")
 	Checkbox("warnLost", "Tanking: warn when an enemy leaves you",
-		"A raid-warning style message, e.g. \"Defias Thug is on Healername!\", when an enemy that was attacking you goes for someone in your group.")
+		"Raid-warning style alert when an enemy leaves you for someone in your group.")
 	Checkbox("warnAggro", "Damage / healing: warn when you pull an enemy",
-		"A raid-warning style message, e.g. \"Defias Thug is attacking you!\", when an enemy that was on someone in your group turns to you.")
+		"Raid-warning style alert when an enemy turns to you.")
 	Checkbox("warnSound", "Play a sound with the warnings", "The raid warning sound.")
 
 	panel:SetScript("OnShow", function()

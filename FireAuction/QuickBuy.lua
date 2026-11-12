@@ -31,6 +31,9 @@ local boughtNow = {}  -- [itemID] = true: bought some since the auction house op
 local outside         -- { itemID, quantity, total } a purchase through Blizzard's Buy popup
 local LOG_SIZE = 20   -- purchases kept in the session log
 local message         -- last result, shown under the button until the next change
+-- Lost to someone else: the cheap ones went before the quote, or between the
+-- quote and the purchase.
+local TAKEN = "|cffff5050Not available|r (someone else bought them)"
 
 -- The lowest price each that sells `count` of them for more than `total`,
 -- after the auction house's cut.
@@ -81,21 +84,33 @@ local function UsualPrice(id)
 	return ns.Data.Market(rec)
 end
 
--- What you'd relist at: the cheapest listing left on screen after what the
--- button would buy (up to maxPrice, `quantity` of them) - yours count, you'd
--- list next to them. nil when the listings aren't loaded.
-local function ListedSellPrice(id, maxPrice, quantity)
+-- What the button would take from each listing on screen, cheapest first:
+-- { { price, quantity, take }, ... } - at or under maxPrice, up to quantity,
+-- not your own; with "Cheapest listing only" on, only at the lowest of those
+-- prices. nil when the listings aren't loaded yet.
+local function Walk(id, maxPrice, quantity)
 	local AH = C_AuctionHouse
-	local count = 0
+	local rows, count, level = {}, 0, nil
 	for i = 1, AH.GetNumCommoditySearchResults(id) or 0 do
 		local r = AH.GetCommoditySearchResultInfo(id, i)
 		if not r then return nil end
 		local take = 0
-		if maxPrice and r.unitPrice <= maxPrice then
+		if maxPrice and r.unitPrice <= maxPrice and count < quantity and not (level and r.unitPrice > level) then
 			take = math.max(0, math.min(r.quantity - (r.numOwnerItems or 0), quantity - count))
+			if take > 0 and ns.db.quickBuyCheapest then level = level or r.unitPrice end
 		end
 		count = count + take
-		if take < r.quantity then return r.unitPrice end
+		rows[#rows + 1] = { price = r.unitPrice, quantity = r.quantity, take = take }
+	end
+	return rows
+end
+
+-- What you'd relist at: the cheapest listing left on screen after what the
+-- button would buy - yours count, you'd list next to them. nil when the
+-- listings aren't loaded.
+local function ListedSellPrice(id, maxPrice, quantity)
+	for _, row in ipairs(Walk(id, maxPrice, quantity) or {}) do
+		if row.take < row.quantity then return row.price end
 	end
 	return nil
 end
@@ -106,19 +121,12 @@ local function Remaining(id)
 	return math.max(0, want - (Settings(id).bought or 0))
 end
 
--- What's listed at or under maxPrice (not counting your own), cheapest first,
--- up to quantity: how many, and what they cost in all.
+-- What the button would buy right now: how many, and what they cost in all.
 local function Available(id, maxPrice, quantity)
-	local AH = C_AuctionHouse
 	local count, total = 0, 0
-	for i = 1, AH.GetNumCommoditySearchResults(id) or 0 do
-		local r = AH.GetCommoditySearchResultInfo(id, i)
-		if not r or r.unitPrice > maxPrice or count >= quantity then break end
-		local take = math.min(r.quantity - (r.numOwnerItems or 0), quantity - count)
-		if take > 0 then
-			count = count + take
-			total = total + take * r.unitPrice
-		end
+	for _, row in ipairs(Walk(id, maxPrice, quantity) or {}) do
+		count = count + row.take
+		total = total + row.take * row.price
 	end
 	return count, total
 end
@@ -131,8 +139,7 @@ local function Summary(id)
 	if count <= 0 or summarized[id] == count then return end
 	summarized[id] = count
 	local total = s.spent or 0
-	ns.Print(("|cffffd100%s:|r bought %d for %s (%s each). Relist at %s each or more to make a profit (after the "
-		.. "5%% cut)."):format(ItemName(id), count, ns.Money(total), ns.Money(math.floor(total / count + 0.5)),
+	ns.Print(("|cffffd100%s:|r bought %d for %s (%s each). Break-even: %s each."):format(ItemName(id), count, ns.Money(total), ns.Money(math.floor(total / count + 0.5)),
 		ns.Money(RelistPrice(total, count))))
 end
 
@@ -167,7 +174,7 @@ local function Update()
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
 		if count <= 0 then
-			text = "None listed at or under that"
+			text = "None listed"
 		elseif total > GetMoney() then
 			text = "Not enough money (" .. ns.Money(total) .. ")"
 		elseif BlizzardDialogOpen() then
@@ -217,8 +224,7 @@ ns.On("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
 	if not (pending and pending.stage == "quote") then return end
 	if totalPrice > pending.total then
 		C_AuctionHouse.CancelCommoditiesPurchase()
-		return Finish(("|cffff5050Not bought:|r the price went up to %s (someone got the cheap ones first)")
-			:format(ns.Money(totalPrice)))
+		return Finish(TAKEN)
 	end
 	pending.stage, pending.at, pending.total = "buying", GetTime(), totalPrice
 	C_AuctionHouse.ConfirmCommoditiesPurchase(pending.itemID, pending.quantity)
@@ -228,7 +234,7 @@ end)
 ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
 	if not pending then return end
 	C_AuctionHouse.CancelCommoditiesPurchase()
-	Finish("|cffff5050Not bought:|r they're gone")
+	Finish(TAKEN)
 end)
 
 ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
@@ -255,7 +261,7 @@ ns.On("COMMODITY_PURCHASE_FAILED", function()
 		outside = nil
 		return
 	end
-	Finish("|cffff5050Not bought:|r the purchase failed")
+	Finish(TAKEN)
 end)
 
 -- Purchases through Blizzard's Buy popup: what it starts (and confirms) and
@@ -396,14 +402,31 @@ local function Create()
 	each:SetPoint("LEFT", c, "RIGHT", 4, 0)
 	wantBox.next, coinBoxes[1].next, coinBoxes[2].next, coinBoxes[3].next = coinBoxes[1], coinBoxes[2], coinBoxes[3], nil
 
-	local hint = Label(panel, "one click, no confirmation", "GameFontDisableSmall")
-	hint:SetPoint("LEFT", title, "RIGHT", 6, 0)
+	-- "Cheapest listing only": each click buys just the lowest price within
+	-- "Up to" - fewer listings to lose to someone else.
+	local cheapLabel = Label(panel, "Cheapest listing only", "GameFontHighlightSmall")
+	cheapLabel:SetPoint("TOPRIGHT", 0, -1)
+	local cheap = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+	cheap:SetSize(22, 22)
+	cheap:SetPoint("RIGHT", cheapLabel, "LEFT", -1, 0)
+	cheap:SetChecked(ns.db.quickBuyCheapest)
+	cheap:SetScript("OnClick", function(self)
+		ns.db.quickBuyCheapest = self:GetChecked() and true or false
+		message = nil
+		ns.SafeCall(Update)
+	end)
+	cheap:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Cheapest listing only", 1, 1, 1)
+		GameTooltip:AddLine("Buy only the lowest price within \"Up to\". Smaller buys are less likely to be taken by "
+			.. "someone else.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	cheap:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	local tips = {
-		[wantBox] = { "Want", "How many you want in all. Everything bought this session counts toward it "
-			.. "(Clear starts over); leave it empty to buy everything at or under your price." },
-		[coinBoxes[1]] = { "Up to", "The most you'll pay for one. Starts at what it's worth crafted, if one of "
-			.. "your recipes uses it." },
+		[wantBox] = { "Want", "How many to buy in total. Leave empty for no limit." },
+		[coinBoxes[1]] = { "Up to", "The most to pay for one." },
 	}
 	tips[coinBoxes[2]], tips[coinBoxes[3]] = tips[coinBoxes[1]], tips[coinBoxes[1]]
 	for box, tip in pairs(tips) do
@@ -431,7 +454,7 @@ local function Create()
 	end)
 	refresh:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("Refresh the listings", 1, 1, 1)
+		GameTooltip:SetText("Refresh", 1, 1, 1)
 		GameTooltip:Show()
 	end)
 	refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -452,8 +475,7 @@ local function Create()
 	clear:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Clear", 1, 1, 1)
-		GameTooltip:AddLine("Start the session over: what you've bought, what it cost, and the log. "
-			.. "What it came to is printed in chat first.", nil, nil, nil, true)
+		GameTooltip:AddLine("Start the session over. A summary is printed first.", nil, nil, nil, true)
 		GameTooltip:Show()
 	end)
 	clear:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -467,9 +489,8 @@ local function Create()
 	button:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Quick buy", 1, 1, 1)
-		GameTooltip:AddLine("Buys what's listed at or under your price, cheapest first, up to how many you still "
-			.. "want - right away, no confirmation. If the game's final price is more than this button says "
-			.. "(someone bought the cheap ones first), nothing is bought.", nil, nil, nil, true)
+		GameTooltip:AddLine("Buys at or under your price, cheapest first, with no confirmation. Nothing is bought "
+			.. "if the price went up.", nil, nil, nil, true)
 		if BlizzardDialogOpen() then GameTooltip:AddLine("Close the Buy dialog first.", 1, 0.3, 0.3, true) end
 		GameTooltip:Show()
 	end)

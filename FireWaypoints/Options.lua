@@ -22,10 +22,9 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Shift-click the world map to drop a pin - as many as you like. Right-click a pin to remove it. "
-		.. "Pins show on the world map and the minimap, and everyone in your group with FireWaypoints sees yours "
-		.. "(and you see theirs, in their class color). /fwp 45.2 60.1 drops one at those coordinates in your zone.")
-	y = y - 58
+	about:SetText("Shift-click the world map to drop a pin, right-click to remove it. Your group sees your pins if "
+		.. "they have FireWaypoints. /fwp 45.2 60.1 drops one at those coordinates.")
+	y = y - 36
 
 	local function Checkbox(key, label, tooltip, onChange)
 		local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")

@@ -47,20 +47,20 @@ end
 -- Where the resell price comes from, for tooltips.
 local function SellSource(approx)
 	if approx then
-		return "No listings loaded, so it's the usual price: the average of your scans' market price over the last "
-			.. ns.Data.TrendDays() .. " days."
+		return "No listings loaded: " .. ns.Data.TrendDays() .. "-day average market price."
 	end
-	return "The cheapest listing left after Quick buy buys what it can - what you'd list against."
+	return "Cheapest listing left after Quick buy."
 end
 
--- The crafted item's price, for tooltips: "Bolt of Silk Cloth sells for 8s 70c".
+-- A recipe row's tooltip lines (the recipe's name is the title): "Sells for
+-- 8s 70c (last seen). 4 Silk Cloth + 12c other reagents per craft." and
+-- "Each Silk Cloth is worth 2s 6c after the cut."
 local function CraftSource(u, itemName)
-	local text = Name(u.output) .. " sells for " .. ns.Money(u.unit or 0)
-		.. (u.source == "vendor" and " (to a vendor)" or not u.current and " (last seen; not listed in your latest scan)"
-			or "") .. ". One craft takes " .. u.qty .. " " .. itemName
-		.. (u.other > 0 and (" and " .. ns.Money(u.other) .. " of other reagents") or "")
-		.. (u.made > 1 and (" and makes " .. u.made) or "") .. "."
-	return text, ("After the 5%% cut, each %s brings in %s that way."):format(itemName, ns.Money(u.worth))
+	local text = "Sells for " .. ns.Money(u.unit or 0)
+		.. (u.source == "vendor" and " (vendor)" or not u.current and " (last seen)" or "") .. ". "
+		.. u.qty .. " " .. itemName .. (u.other > 0 and (" + " .. ns.Money(u.other) .. " other reagents") or "")
+		.. " per craft" .. (u.made > 1 and (", makes " .. u.made) or "") .. "."
+	return text, ("Each %s is worth %s after the cut."):format(itemName, ns.Money(u.worth))
 end
 
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
@@ -84,8 +84,7 @@ local function Lines(id)
 
 	-- This session
 	Add("This session", nil, want and ("%d / %d"):format(bought, want) or (bought > 0 and tostring(bought) or nil),
-		"header", Tip("This session", "Everything you've bought of it (Quick buy or Blizzard's Buy button) since "
-			.. "you last pressed Clear."))
+		"header", Tip("This session", "Everything bought since you last pressed Clear."))
 	if want then
 		Add(nil, nil, nil, "bar")
 		lines[#lines].value = math.min(1, bought / want)
@@ -101,8 +100,8 @@ local function Lines(id)
 
 	-- What it's worth: each way of using what you've bought.
 	if bought > 0 then
-		Add("What it's worth", nil, nil, "header", Tip("What it's worth", "The profit on what you've bought, "
-			.. "each way you could use it: per item, and for all of it. Hover a line for how it's worked out."))
+		Add("What it's worth", nil, nil, "header", Tip("What it's worth",
+			"Profit on what you've bought, per item and in total."))
 		Add(nil, "each", "all " .. bought, "cols", nil, "return")
 		local options = {}
 		if sell then
@@ -131,7 +130,7 @@ local function Lines(id)
 
 	-- Next buy, at "Up to".
 	Add("Next buy", nil, max and ("up to " .. ns.Money(max)) or nil, "header",
-		Tip("Next buy", "What one bought at your \"Up to\" price makes each way."))
+		Tip("Next buy", "Profit per item at your \"Up to\" price."))
 	if not max then
 		Add("Set \"Up to\" to see", nil, nil, "note")
 	else
@@ -333,8 +332,7 @@ local function Create()
 	tab:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:SetText("Purchase tracker", 1, 1, 1)
-		GameTooltip:AddLine("What you've bought this session, what it cost, and what it's worth resold or "
-			.. "crafted. Click to " .. (ns.db.buyInfo and "hide" or "show") .. " it.", nil, nil, nil, true)
+		GameTooltip:AddLine("Click to show or hide.", nil, nil, nil, true)
 		GameTooltip:Show()
 	end)
 	tab:SetScript("OnLeave", function() GameTooltip:Hide() end)

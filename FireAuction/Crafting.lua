@@ -191,7 +191,7 @@ local function AddBreakdown(tooltip, r)
 	tooltip:AddDoubleLine("Reagent cost", ns.Money(r.cost), 1, 1, 1, 1, 1, 1)
 	if r.profit then tooltip:AddDoubleLine("Profit", Signed(r.profit), 1, 0.82, 0) end
 	if r.missing > 0 then
-		tooltip:AddLine("Reagents without a price aren't counted: scan the auction house, or visit a vendor that sells them.",
+		tooltip:AddLine("Reagents without a price aren't counted.",
 			0.6, 0.6, 0.6, true)
 	end
 	if r.sellSource == "auction" and not r.current then

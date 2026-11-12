@@ -56,11 +56,9 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Scans the auction house and keeps a price history for every item. Item tooltips show the "
-		.. "market price (what most of it sells around, not a few cheap ones) and how it moved; the price window (/fah, a key binding, or Prices at the auction "
-		.. "house) lets you search items and see their price over time. Prices are kept per realm, separately for your "
-		.. "faction's auction house and the neutral one (Booty Bay, Gadgetzan, Everlook).")
-	y = y - 50
+	about:SetText("Scans the auction house and keeps a price history. Prices show in item tooltips and the price "
+		.. "window (/fah). Your faction's and the neutral auction house are kept separately.")
+	y = y - 36
 
 	local function Header(text)
 		y = y - 8
@@ -166,16 +164,14 @@ local function Build()
 
 	Header("Scanning")
 	Checkbox("autoScan", "Scan when I open the auction house",
-		"Scans by itself each time you open the auction house, when the game allows one (about every 15 minutes). "
-			.. "Otherwise use the Scan button above the auction house window.")
+		"Scans when you open the auction house, if the game allows one (about every 15 minutes).")
 
 	Header("Prices")
 	Checkbox("minimapButton", "Show the minimap button",
-		"A coin on the edge of the minimap: click it for the price window, right-click for these options. Drag it to move it.",
+		"Click for the price window, right-click for options. Drag to move.",
 		function() ns.MinimapButton.Update() end)
 	Checkbox("tooltip", "Show auction prices in item tooltips",
-		"The market price from your latest scan - what most of it sells around - and how much it moved over the "
-			.. "trend period. The lowest listed shows under it when that was noticeably cheaper.")
+		"Market price and trend from your latest scan, plus the lowest listing when it's noticeably cheaper.")
 	Slider("historyDays", "Keep prices for",
 		"How many days of prices to keep. Older days are removed at the next scan.", 7, 90, 1, Days,
 		function() ns.Window.Refresh() end)
@@ -226,33 +222,28 @@ local function Build()
 
 	Header("Bags")
 	Checkbox("markValuable", "Mark valuable items in my bags",
-		"Puts a gold coin on items in your bags whose market price at the auction house (latest scan) is at "
-			.. "least the amount below, per item. Soulbound items are never marked.",
+		"A gold coin on bag items worth at least this much each. Soulbound items are skipped.",
 		function() ns.BagIcons.Refresh() end)
 	MoneyInput("markPrice", "Worth at least", "The auction price per item that gets the gold coin.",
 		function() ns.BagIcons.Refresh() end)
 
 	Header("Selling")
 	Checkbox("announceSales", "Announce when one of my auctions sells",
-		"A big message in the middle of the screen and a coin sound, wherever you are, with what sold and for how "
-			.. "much. What's waiting in the mailbox is always listed on the minimap button's tooltip (and /fah sales).")
+		"A big on-screen message and coin sound when something sells. Gold waiting in the mail shows on the "
+			.. "minimap button's tooltip.")
 
 	Header("Crafting")
 	Checkbox("craftProfit", "Show crafting profit in profession windows",
-		"Under the selected recipe: what the crafted item sells for at auction (after the 5% cut, or to a vendor if "
-			.. "that pays more) minus what its reagents cost (the cheaper of auction and vendor price). Hover it for "
-			.. "the breakdown; hovering a recipe in the list shows it too. Vendor prices are learned from merchants you visit.",
+		"Sell price (after the 5% cut) minus reagent costs, under the selected recipe. Hover for the breakdown.",
 		function() ns.Crafting.Refresh() end)
 	Checkbox("craftWorth", "Show crafting profit for reagents in item tooltips",
-		"\"Crafting profit (Bolt of Silk Cloth)\" on a reagent: what you make on each one you buy at today's lowest "
-			.. "buyout and craft into something (the best of your recipes that use it), after the auction house cut "
-			.. "and the other reagents. Red is a loss. "
-			.. "Your recipes are saved when you open a profession window, for all your characters.")
+		"Profit per reagent bought at the lowest price and crafted with your best recipe. Recipes are saved when "
+			.. "you open a profession window.")
 
 	y = y - 6
 	Button("Open price window", "Search your saved prices and see an item's price over time (/fah).",
 		function() ns.Window.Show() end)
-	Button("Forget prices", "Delete every saved price for this realm: your faction's auction house and the neutral one.", function()
+	Button("Forget prices", "Delete all saved prices for this realm.", function()
 		StaticPopup_Show("FIREAUCTION_FORGET", (GetRealmName() or "?") .. " (" .. (UnitFactionGroup("player") or "?") .. " and neutral)")
 	end)
 	EndButtons()

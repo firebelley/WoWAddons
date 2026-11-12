@@ -671,7 +671,7 @@ local function Setup()
 	end)
 
 	if GetCVar("nameplateShowEnemies") == "0" then
-		ns.Print("enemy nameplates are off, so no enemies will be listed. Press V (or turn them on in Options > Nameplates).")
+		ns.Print("enemy nameplates are off - press V to turn them on.")
 	end
 end
 

@@ -22,11 +22,9 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Click the dice (shown while you're in a group) to start a roll, or type /froll <what> - "
-		.. "shift-click an item to roll for it. Everyone with FireRoll gets a window with Roll and Pass, and "
-		.. "it shows the winner as soon as the whole group has rolled or passed (or after a minute). "
-		.. "Ties roll off by themselves. Players without FireRoll can join in by typing /roll.")
-	y = y - 58
+	about:SetText("Click the dice or type /froll <what> to start a roll (shift-click an item to roll for it). "
+		.. "Players without FireRoll can /roll. Ties re-roll automatically.")
+	y = y - 36
 
 	local function Checkbox(key, label, tooltip, onChange)
 		local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
@@ -54,8 +52,7 @@ local function Build()
 	Checkbox("button", "Show the dice button while in a group",
 		"Drag it to move it. You can always start a roll with /froll instead.", ns.UI.UpdateButton)
 	Checkbox("chat", "Tell players without FireRoll in group chat",
-		"When you start a roll and someone in the group doesn't have FireRoll, a line in group chat "
-		.. "asks them to /roll, and another says who won. Nothing is posted when everyone has it.")
+		"Asks them to /roll in group chat and announces the winner. Only when someone lacks FireRoll.")
 	y = y - 10
 
 	local function PanelButton(text, width, onClick)

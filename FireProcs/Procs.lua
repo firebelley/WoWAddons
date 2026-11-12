@@ -43,7 +43,7 @@ function ns.Proc(name, icon, kind, setting)
 	-- drown out the real procs. Buffs and abilities are naturally limited.
 	if kind == "event" and TooFrequent(name, now) then
 		db.muted[name] = "auto"
-		ns.Print(("%s happens too often to be worth announcing, so it's muted now. Type /fprocs unmute %s to undo."):format(name, name))
+		ns.Print(("%s procs too often - muted. /fprocs unmute %s to undo."):format(name, name))
 		return false
 	end
 

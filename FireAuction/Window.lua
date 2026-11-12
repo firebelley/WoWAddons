@@ -720,7 +720,7 @@ local function Build()
 			GameTooltip:AddLine("Pinned to the top of the list. Click to unpin.", nil, nil, nil, true)
 		else
 			GameTooltip:SetText("Favorite", 1, 1, 1)
-			GameTooltip:AddLine("Click to pin this item to the top of the list. You can also right-click items in the list.",
+			GameTooltip:AddLine("Pin to the top of the list.",
 				nil, nil, nil, true)
 		end
 		GameTooltip:Show()

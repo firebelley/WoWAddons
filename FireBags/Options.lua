@@ -215,14 +215,12 @@ local function Build()
 
 	Header("Counts")
 	Checkbox("tooltipCounts", "Bag and bank counts in item tooltips",
-		"\"Bags: 12   Bank: 40\" on item tooltips. The bank count comes from your last visit to a banker.")
+		"\"Bags: 12   Bank: 40\" on item tooltips (bank as of your last visit).")
 	Checkbox("craftCounts", "Count your bank in profession windows",
-		"Recipes show how many more you could make with your bank, in blue: [1+3]. Reagents show how many "
-			.. "you have in the bank. You still need to take them out of the bank to craft. Reopen the profession window after changing this.")
+		"Extra crafts from your bank, in blue: [1+3]. Reopen the profession window to apply.")
 	Checkbox("craftVendor", "Show what buying vendor reagents would add",
-		"Recipes show how many more you could make if you bought the reagents vendors sell (thread, dye, vials...), "
-			.. "in gold: [1+3+2]. Hover a recipe to see what to buy. FireBags learns what vendors sell when you visit them. "
-			.. "Reopen the profession window after changing this.")
+		"Extra crafts if you bought vendor reagents (thread, dye...), in gold: [1+3+2]. Hover a recipe for what "
+			.. "to buy. Reopen the profession window to apply.")
 
 	panel:SetScript("OnShow", function()
 		for _, fn in ipairs(refreshers) do ns.SafeCall(fn) end

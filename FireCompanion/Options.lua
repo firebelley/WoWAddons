@@ -31,8 +31,8 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Summons a companion when you log in, unless one is already out. "
-		.. "If you dismiss it yourself it stays away until you log in again. Settings are per character.")
+	about:SetText("Summons a companion on login. If you dismiss it, it stays away until next login. "
+		.. "Settings are per character.")
 	y = y - 30
 
 	local function Checkbox(key, label, tooltip)
