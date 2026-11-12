@@ -380,47 +380,59 @@ local function ReagentIndex()
 	return reagentIndex
 end
 
--- What one of itemID is worth crafted into something (break-even price):
--- { price = copper, output = itemID } for the best recipe, or nil (no saved
--- recipe uses it, prices are missing, or crafting it never pays).
-function Crafting.CraftWorth(itemID)
-	local list = ns.db and ReagentIndex()[itemID]
-	if not list then return nil end
-	local best
+-- Every saved recipe that uses itemID, best first:
+-- { { output = itemID, made = how many one craft makes, qty = how many of
+--     itemID one craft takes,
+--     sell, source, current = what one craft brings in after the cut
+--       (Crafting.SellValue; sell is nil without a price),
+--     unit = the crafted item's price each, before the cut,
+--     other = the other reagents' cost per craft (nil if one has no price),
+--     worth = what one of itemID is worth this way, break-even (nil without
+--       the prices) }, ... }
+function Crafting.Uses(itemID)
+	local uses = {}
+	local list = ns.db and itemID and ReagentIndex()[itemID]
+	if not list then return uses end
 	for _, recipeID in ipairs(list) do
 		local recipe = ns.db.recipes[recipeID]
-		local sell = recipe and recipe.o ~= itemID and Crafting.SellValue(recipe.o, recipe.m)
-		if sell then
-			local other, qty, priced = 0, 0, true
+		if recipe and recipe.o ~= itemID then
+			local u = { output = recipe.o, made = recipe.m, qty = 0, other = 0 }
+			u.sell, u.source, u.current = Crafting.SellValue(recipe.o, recipe.m)
+			if u.sell then
+				local rec = ns.Data.Get(recipe.o)
+				u.unit = u.source == "vendor" and u.sell / recipe.m or (rec and rec.p)
+			end
 			for _, slot in ipairs(recipe.r) do
-				local uses = false
+				local mine = false
 				for i = 2, #slot do
-					if slot[i] == itemID then uses = true end
+					if slot[i] == itemID then mine = true end
 				end
-				if uses then
-					qty = qty + slot[1]
-				else
+				if mine then
+					u.qty = u.qty + slot[1]
+				elseif u.other then
 					local cheapest
 					for i = 2, #slot do
 						local unit = ReagentCost(slot[i])
 						if unit and (not cheapest or unit < cheapest) then cheapest = unit end
 					end
-					if not cheapest then
-						priced = false
-						break
-					end
-					other = other + cheapest * slot[1]
+					u.other = cheapest and u.other + cheapest * slot[1] or nil
 				end
 			end
-			if priced and qty > 0 then
-				local price = math.floor((sell - other) / qty)
-				if price > 0 and (not best or price > best.price) then
-					best = { price = price, output = recipe.o }
-				end
-			end
+			if u.sell and u.other and u.qty > 0 then u.worth = math.floor((u.sell - u.other) / u.qty) end
+			if u.qty > 0 then uses[#uses + 1] = u end
 		end
 	end
-	return best
+	table.sort(uses, function(a, b) return (a.worth or -math.huge) > (b.worth or -math.huge) end)
+	return uses
+end
+
+-- What one of itemID is worth crafted into something (break-even price):
+-- { price = copper, output = itemID } for the best recipe, or nil (no saved
+-- recipe uses it, prices are missing, or crafting it never pays).
+function Crafting.CraftWorth(itemID)
+	local best = Crafting.Uses(itemID)[1]
+	if best and best.worth and best.worth > 0 then return { price = best.worth, output = best.output } end
+	return nil
 end
 
 -- Item tooltips, right under the auction price:

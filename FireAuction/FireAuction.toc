@@ -13,6 +13,8 @@ Window.lua
 MinimapButton.lua
 BagIcons.lua
 Crafting.lua
+QuickBuy.lua
+BuyInfo.lua
 Sales.lua
 Sync.lua
 Options.lua

@@ -12,6 +12,7 @@ local DEFAULTS = {
 	craftProfit = true,   -- profit line in profession windows (Crafting.lua)
 	craftWorth = true,    -- "Worth as <crafted item>" on reagent tooltips, from your saved recipes (Crafting.lua)
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
+	buyInfo = false,      -- the tracker beside the auction house's buy page, opened by its side tab (BuyInfo.lua)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
 }
@@ -122,6 +123,7 @@ ns.On("ADDON_LOADED", function(name)
 	db.favorites = db.favorites or {} -- [itemID] = true: pinned to the top of the price window
 	db.recipes = db.recipes or {} -- [recipeID] = { o = output itemID, m = made per craft, r = { { qty, itemID, ... }, ... } }
 	db.craftMaxPrice, db.targetProfit = nil, nil -- replaced by craftWorth
+	db.quickBuy = db.quickBuy or {} -- [itemID] = { want = how many, max = copper each } (QuickBuy.lua)
 	ns.db = db
 end)
 
