@@ -398,10 +398,12 @@ function QuickBuy.Session(id)
 end
 
 -- What you'd relist at: the cheapest listing left after what Quick buy would
--- buy, or the usual price (and true) without listings.
-function QuickBuy.SellPrice(id)
+-- buy (selling: the cheapest listing), or the usual price (and true) without
+-- listings.
+function QuickBuy.SellPrice(id, selling)
 	local s = Settings(id)
-	local sell = ListedSellPrice(id, s.max, Remaining(id))
+	local sell
+	if selling then sell = ListedSellPrice(id, nil, 0) else sell = ListedSellPrice(id, s.max, Remaining(id)) end
 	if sell then return sell, false end
 	sell = UsualPrice(id)
 	if sell and sell > 0 then return sell, true end

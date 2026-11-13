@@ -1,6 +1,7 @@
 -- A panel on the right of the auction house while you're on a commodity's
--- buy page (Silk Cloth...), next to Quick buy. Hidden by default; a tab on
--- the window's edge opens it (remembered).
+-- buy page (Silk Cloth...), next to Quick buy - or selling something you've
+-- bought this session, to see what to list it at. Hidden by default; a tab
+-- on the window's edge opens it (remembered).
 --
 --   This session      how many you've bought (toward Want), what it cost, and
 --                     the price to relist at to break even.
@@ -45,11 +46,20 @@ local function Tip(...)
 end
 
 -- Where the resell price comes from, for tooltips.
-local function SellSource(approx)
+local function SellSource(approx, selling, typed)
+	if typed then return "Your Unit Price on the sell page." end
 	if approx then
 		return "No listings loaded: " .. ns.Data.TrendDays() .. "-day average market price."
 	end
-	return "Cheapest listing left after Quick buy."
+	return selling and "Cheapest listing now." or "Cheapest listing left after Quick buy."
+end
+
+-- The Unit Price typed on the sell page, or nil if none.
+local function TypedPrice()
+	local sf = AuctionHouseFrame and AuctionHouseFrame.CommoditiesSellFrame
+	if not (sf and sf.GetUnitPrice) then return nil end
+	local ok, price = pcall(sf.GetUnitPrice, sf)
+	return ok and type(price) == "number" and price > 0 and price or nil
 end
 
 -- A recipe row's tooltip lines (the recipe's name is the title): "Sells for
@@ -64,8 +74,9 @@ local function CraftSource(u, itemName)
 end
 
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
--- being "header", "note", "cols", "bar" or nil.
-local function Lines(id)
+-- being "header", "note", "cols", "bar" or nil. selling: on the sell page (no
+-- Next buy).
+local function Lines(id, selling)
 	local QB = ns.QuickBuy
 	local cut = 1 - QB.AH_CUT
 	local lines = {}
@@ -73,10 +84,15 @@ local function Lines(id)
 
 	local itemName = Name(id)
 	local bought, spent, want, max, log = QB.Session(id)
-	local sell, approx = QB.SellPrice(id)
-	local net = sell and math.floor(sell * cut)
+	-- Selling: at the price you've typed in, else the cheapest listing.
+	local typed = selling and TypedPrice()
+	local sell, approx
+	if typed then sell, approx = typed, false else sell, approx = QB.SellPrice(id, selling) end
+	-- Not rounded: the cut is taken from the whole sale, not from each item.
+	local net = sell and sell * cut
 	local avg = bought > 0 and spent / bought or nil
 	local sellText = sell and ((approx and "~" or "") .. ns.Money(sell))
+	local sellLabel = sell and ((typed and "List at " or "Resell at ") .. sellText)
 	local uses = {}
 	for _, u in ipairs(ns.Crafting and ns.Crafting.Uses and ns.Crafting.Uses(id) or {}) do
 		if u.worth and #uses < 3 then uses[#uses + 1] = u end
@@ -105,9 +121,10 @@ local function Lines(id)
 		Add(nil, "each", "all " .. bought, "cols", nil, "return")
 		local options = {}
 		if sell then
-			options[#options + 1] = { name = "Resell at " .. sellText, each = net - avg,
-				tip = Tip("Resell at " .. sellText, SellSource(approx),
-					("After the 5%% cut you get %s each; you paid %s on average."):format(ns.Money(net), ns.Money(avg))) }
+			options[#options + 1] = { name = sellLabel, each = net - avg,
+				tip = Tip(sellLabel, SellSource(approx, selling, typed),
+					("After the 5%% cut you get %s for all %d; you paid %s."):format(
+						ns.Money(math.floor(net * bought)), bought, ns.Money(spent))) }
 		end
 		for _, u in ipairs(uses) do
 			local source, worth = CraftSource(u, itemName)
@@ -129,26 +146,28 @@ local function Lines(id)
 	end
 
 	-- Next buy, at "Up to".
-	Add("Next buy", nil, max and ("up to " .. ns.Money(max)) or nil, "header",
-		Tip("Next buy", "Profit per item at your \"Up to\" price."))
-	if not max then
-		Add("Set \"Up to\" to see", nil, nil, "note")
-	else
-		if sell then
-			Add("Resell at " .. sellText, Signed(net - max), nil, nil,
-				Tip("Resell at " .. sellText, SellSource(approx),
-					("After the 5%% cut you get %s each."):format(ns.Money(net))), ns.Percent((net - max) / max * 100))
+	if not selling then
+		Add("Next buy", nil, max and ("up to " .. ns.Money(max)) or nil, "header",
+			Tip("Next buy", "Profit per item at your \"Up to\" price."))
+		if not max then
+			Add("Set \"Up to\" to see", nil, nil, "note")
+		else
+			if sell then
+				Add("Resell at " .. sellText, Signed(net - max), nil, nil,
+					Tip("Resell at " .. sellText, SellSource(approx),
+						("After the 5%% cut you get %s each."):format(ns.Money(net))), ns.Percent((net - max) / max * 100))
+			end
+			for _, u in ipairs(uses) do
+				local source, worth = CraftSource(u, itemName)
+				Add(Name(u.output), Signed(u.worth - max), nil, nil, Tip(Name(u.output), source, worth),
+					ns.Percent((u.worth - max) / max * 100))
+			end
+			if not sell and #uses == 0 then Add("No price to go by yet - scan first", nil, nil, "note") end
 		end
-		for _, u in ipairs(uses) do
-			local source, worth = CraftSource(u, itemName)
-			Add(Name(u.output), Signed(u.worth - max), nil, nil, Tip(Name(u.output), source, worth),
-				ns.Percent((u.worth - max) / max * 100))
+		if #uses == 0 then
+			Add("No saved recipe uses it (open your profession", nil, nil, "note")
+			Add("window to save them)", nil, nil, "note")
 		end
-		if not sell and #uses == 0 then Add("No price to go by yet - scan first", nil, nil, "note") end
-	end
-	if #uses == 0 then
-		Add("No saved recipe uses it (open your profession", nil, nil, "note")
-		Add("window to save them)", nil, nil, "note")
 	end
 
 	-- Recent purchases
@@ -193,19 +212,34 @@ local function Row(i)
 	return row
 end
 
-local function Update()
+-- The commodity on the sell page, if you've bought some of it this session.
+local function SellingItem()
+	local sf = AuctionHouseFrame and AuctionHouseFrame.CommoditiesSellFrame
+	if not (sf and sf:IsVisible() and sf.GetItem) then return nil end
+	local ok, id = pcall(function()
+		local loc = sf:GetItem()
+		return loc and loc.IsValid and loc:IsValid() and C_Item.GetItemID(loc)
+	end)
+	if ok and id and ns.QuickBuy.Session(id) > 0 then return id end
+	return nil
+end
+
+-- What to show: the item on the buy page, or the one you're selling (and true).
+local function Current()
 	local id = ns.QuickBuy and ns.QuickBuy.Item()
-	if not id then
-		frame:SetAlpha(0)
-		return
-	end
-	frame:SetAlpha(1)
+	if id then return id, false end
+	id = ns.QuickBuy and SellingItem()
+	if id then return id, true end
+	return nil
+end
+
+local function Update(id, selling)
 	title:SetText(Name(id))
 	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
 	frame.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
 
 	local y = -PAD - 26
-	local lines = Lines(id)
+	local lines = Lines(id, selling)
 	bar:Hide()
 	for i, line in ipairs(lines) do
 		local row = Row(i)
@@ -259,14 +293,12 @@ local function Update()
 end
 
 local function Create()
-	local buyFrame = AuctionHouseFrame and AuctionHouseFrame.CommoditiesBuyFrame
-	if not buyFrame then return end
+	if not AuctionHouseFrame then return end
 	rows = {}
-	-- On the buy page, so it comes and goes with it; pinned outside the
-	-- auction house window's right edge, beside its tab (below). Hidden until
-	-- you open it.
-	local ok, f = pcall(CreateFrame, "Frame", "FireAuctionBuyInfo", buyFrame, "BackdropTemplate")
-	if not ok then f = CreateFrame("Frame", "FireAuctionBuyInfo", buyFrame) end
+	-- Pinned outside the auction house window's right edge, beside its tab
+	-- (below); both only while there's something to show (see Current).
+	local ok, f = pcall(CreateFrame, "Frame", "FireAuctionBuyInfo", AuctionHouseFrame, "BackdropTemplate")
+	if not ok then f = CreateFrame("Frame", "FireAuctionBuyInfo", AuctionHouseFrame) end
 	frame = f
 	f:SetWidth(WIDTH)
 	f:SetHeight(100)
@@ -301,18 +333,11 @@ local function Create()
 	bg:SetColorTexture(1, 1, 1, 0.1)
 	bar:Hide()
 
-	f:SetScript("OnUpdate", function(_, dt)
-		elapsed = elapsed + dt
-		if elapsed < 0.25 then return end
-		elapsed = 0
-		ns.SafeCall(Update)
-	end)
-	f:SetScript("OnShow", function() elapsed = 1 end)
-	f:SetShown(ns.db.buyInfo)
+	f:Hide()
 
 	-- The side tab that opens and closes it (like the spellbook's tabs), on
-	-- the auction house window's right edge while you're on a buy page.
-	local tab = CreateFrame("CheckButton", nil, buyFrame)
+	-- the auction house window's right edge.
+	local tab = CreateFrame("CheckButton", nil, AuctionHouseFrame)
 	tab:SetSize(32, 32)
 	tab:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, -36)
 	local back = tab:CreateTexture(nil, "BACKGROUND")
@@ -326,7 +351,7 @@ local function Create()
 	tab:SetScript("OnClick", function(self)
 		ns.db.buyInfo = not ns.db.buyInfo
 		self:SetChecked(ns.db.buyInfo)
-		f:SetShown(ns.db.buyInfo)
+		elapsed = 1
 		if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 	end)
 	tab:SetScript("OnEnter", function(self)
@@ -336,6 +361,20 @@ local function Create()
 		GameTooltip:Show()
 	end)
 	tab:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	tab:Hide()
+
+	-- Shows and updates both, a few times a second while the auction house is open.
+	local driver = CreateFrame("Frame", nil, AuctionHouseFrame)
+	driver:SetScript("OnUpdate", function(_, dt)
+		elapsed = elapsed + dt
+		if elapsed < 0.25 then return end
+		elapsed = 0
+		local id, selling = Current()
+		tab:SetShown(id ~= nil)
+		f:SetShown(id ~= nil and ns.db.buyInfo)
+		if id and ns.db.buyInfo then ns.SafeCall(Update, id, selling) end
+	end)
+	driver:SetScript("OnShow", function() elapsed = 1 end)
 end
 
 ns.On("AUCTION_HOUSE_SHOW", function()

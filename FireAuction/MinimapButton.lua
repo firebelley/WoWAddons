@@ -71,11 +71,23 @@ local function Create()
 		if ns.Sales then
 			local _, sold, unknown = ns.SafeCall(ns.Sales.AddLines, GameTooltip, 10)
 			local _, listed = ns.SafeCall(ns.Sales.AddListings, GameTooltip, 10)
-			-- Both: what you'd have once everything listed sells too.
-			if type(sold) == "number" and type(listed) == "number" then
+			-- Your gold: now, once the sales' mail is collected, and if everything listed sells too.
+			sold = type(sold) == "number" and sold or nil
+			listed = type(listed) == "number" and listed or nil
+			local money = GetMoney and GetMoney()
+			if money and (sold or listed) then
+				local atLeast = unknown and "at least " or ""
 				GameTooltip:AddLine(" ")
-				GameTooltip:AddDoubleLine("Sold + listed", (unknown and "at least " or "") .. ns.Money(sold + listed),
-					1, 0.82, 0, 1, 1, 1)
+				GameTooltip:AddDoubleLine("Gold now", ns.Money(money), 1, 0.82, 0, 1, 1, 1)
+				local total = money
+				if sold then
+					total = total + sold
+					GameTooltip:AddDoubleLine("With sales", atLeast .. ns.Money(total), 1, 0.82, 0, 1, 1, 1)
+				end
+				if listed then
+					GameTooltip:AddDoubleLine("If listings sell", (sold and atLeast or "") .. ns.Money(total + listed),
+						1, 0.82, 0, 1, 1, 1)
+				end
 			end
 		end
 		GameTooltip:AddLine(" ")

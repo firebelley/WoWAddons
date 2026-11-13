@@ -18,7 +18,9 @@ local Sales = {}
 ns.Sales = Sales
 
 local AH_CUT = 0.05
-local DELIVERY_GRACE = 2 * 3600 -- a sale with no mail (or "sale pending" notice) this long is dropped
+-- A sale's mail is sent an hour after it sells; one with no mail (or "sale
+-- pending" notice) at the mailbox this long after has been collected.
+local DELIVERY_GRACE = 75 * 60
 local SOLD = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionSold or 4
 local EXPIRED = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionExpired or 5
 local AUCTIONEER = Enum and Enum.PlayerInteractionType and Enum.PlayerInteractionType.Auctioneer
@@ -46,13 +48,27 @@ local function Char()
 		end
 		c.unitPrices = true
 	end
+	if not c.partialSales then
+		-- A sale from a stack used to count the whole stack as sold; only the
+		-- mail says how many were. Until it comes: the price of one, count unknown.
+		for _, s in ipairs(c.sales) do
+			if not s.exact and (s.qty or 1) > 1 then
+				if s.gross then s.unit = math.floor(s.gross / s.qty + 0.5) end
+				s.qty, s.gross, s.net, s.part = nil, nil, nil, true
+			end
+		end
+		c.partialSales = true
+	end
 	return c
 end
 
 -- The auction house gives a listing's price per item; this is the whole
 -- listing's (buyout, or the bid when there's no buyout). nil if unknown.
+local function UnitPrice(a)
+	return (a.buyout and a.buyout > 0 and a.buyout) or a.bid
+end
 local function ListingPrice(a)
-	local unit = (a.buyout and a.buyout > 0 and a.buyout) or a.bid
+	local unit = UnitPrice(a)
 	return unit and unit * (a.qty or 1)
 end
 
@@ -67,16 +83,64 @@ local STATUS_SOLD = Enum and Enum.AuctionStatus and Enum.AuctionStatus.Sold or 1
 -- When the game only gives a band for the time left: [band] = { at least, at most } seconds.
 local BANDS = { [0] = { 0, 1800 }, [1] = { 1800, 7200 }, [2] = { 7200, 43200 }, [3] = { 43200, 172800 } }
 
+-- Sold auctions wait in your list until their mail is sent, each with how many
+-- sold and what they sold for in all (before the cut; a listing still for sale
+-- gives the price of one instead). That fills in sales whose count wasn't known (part of a
+-- stack), and adds ones FireAuction didn't see. Each row is used once.
+local function ReadSold(c, rows, now, house)
+	for _, r in ipairs(rows) do
+		local used = false
+		for _, s in ipairs(c.sales) do
+			if s.soldKey == r.key then used = true break end
+		end
+		if not used then
+			-- The sale it belongs to: one with the count unknown at that price,
+			-- then the same count, then any with the count unknown.
+			local match
+			for pass = 1, 3 do
+				for _, s in ipairs(c.sales) do
+					if not s.soldKey and not s.inMail and s.name == r.name
+						and ((pass == 1 and s.part and s.unit and r.total and s.unit * r.qty == r.total)
+							or (pass == 2 and s.qty == r.qty)
+							or (pass == 3 and s.part)) then
+						match = s
+						break
+					end
+				end
+				if match then break end
+			end
+			local s = match or { name = r.name, t = now, fromRow = true }
+			if not match then c.sales[#c.sales + 1] = s end
+			s.link, s.id = s.link or r.link, s.id or r.id
+			s.qty, s.part, s.soldKey, s.house = r.qty, nil, r.key, house
+			if r.total and r.total > 0 then
+				s.unit = math.floor(r.total / r.qty + 0.5)
+				s.gross = r.total
+				s.net = math.floor(r.total * (1 - AH_CUT))
+			end
+			ns.Debug(("sold row: %s x%d %s"):format(r.name, r.qty, match and "(filled in a sale)" or "(new sale)"))
+		end
+	end
+end
+
 local function ReadOwned()
 	local c = Char()
 	if not (c and AH and AH.GetNumOwnedAuctions and AH.GetOwnedAuctionInfo) then return end
 	local house = ns.house or "faction"
 	local now = time()
-	local fresh = {}
+	local fresh, sold = {}, {}
 	for i = 1, AH.GetNumOwnedAuctions() or 0 do
 		local ok, a = pcall(AH.GetOwnedAuctionInfo, i)
-		-- Sold ones wait here for their mail; they're not for sale any more.
-		if ok and a and a.auctionID and a.status ~= STATUS_SOLD then
+		if ok and a and a.auctionID and a.status == STATUS_SOLD then
+			local id = a.itemKey and a.itemKey.itemID
+			local link = a.itemLink
+			local qty = a.quantity or 1
+			sold[#sold + 1] = {
+				key = a.auctionID .. ":" .. qty, qty = qty, id = id, link = link,
+				name = (link and link:match("%[(.-)%]")) or ItemName(id),
+				total = (a.buyoutAmount and a.buyoutAmount > 0 and a.buyoutAmount) or a.bidAmount,
+			}
+		elseif ok and a and a.auctionID then
 			local id = a.itemKey and a.itemKey.itemID
 			local link = a.itemLink
 			local entry = {
@@ -103,6 +167,18 @@ local function ReadOwned()
 		end
 	end
 	for k, v in pairs(fresh) do c.owned[k] = v end
+	ReadSold(c, sold, now, house)
+	-- A sale from here with no Sold row left: its mail has been sent.
+	if full then
+		local rows = {}
+		for _, r in ipairs(sold) do rows[r.key] = true end
+		for _, s in ipairs(c.sales) do
+			if (s.house == house or (not s.house and s.soldKey)) and not s.inMail and not s.delivered and now - (s.t or now) > 60
+				and not (s.soldKey and rows[s.soldKey]) then
+				s.delivered = true
+			end
+		end
+	end
 	local n = 0
 	for _ in pairs(c.owned) do n = n + 1 end
 	ns.Debug(("your auctions: %d listed"):format(n))
@@ -122,7 +198,44 @@ ns.On("AUCTION_HOUSE_SHOW", function() QueryOwned(2) end)
 ns.On("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(kind)
 	if AUCTIONEER and kind == AUCTIONEER then QueryOwned(2) end
 end)
-ns.On("AUCTION_HOUSE_AUCTION_CREATED", function() QueryOwned(1) end)
+-- What you just posted, so a listing is remembered even if you close the
+-- auction house before it's listed for you again.
+local DURATION = { 12 * 3600, 24 * 3600, 48 * 3600 }
+local lastPost
+local function Posted(item, duration, quantity, unit)
+	lastPost = nil
+	local ok, id, link = pcall(function()
+		return C_Item.GetItemID(item), C_Item.GetItemLink(item)
+	end)
+	if not (ok and id and quantity and unit) then return end
+	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = DURATION[duration], at = time() }
+end
+if AH and hooksecurefunc then
+	if AH.PostCommodity then
+		hooksecurefunc(AH, "PostCommodity", function(item, duration, quantity, unitPrice)
+			Posted(item, duration, quantity, unitPrice)
+		end)
+	end
+	if AH.PostItem then
+		hooksecurefunc(AH, "PostItem", function(item, duration, quantity, bid, buyout)
+			Posted(item, duration, quantity, (buyout and buyout > 0 and buyout) or bid)
+		end)
+	end
+end
+
+ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
+	local c, p = Char(), lastPost
+	lastPost = nil
+	if c and auctionID and p and not c.owned[auctionID] and time() - p.at < 60 then
+		local now = time()
+		c.owned[auctionID] = {
+			name = (p.link and p.link:match("%[(.-)%]")) or ItemName(p.id), link = p.link, id = p.id,
+			qty = p.qty, buyout = p.buyout, house = ns.house or "faction", seen = now,
+			ends = p.length and now + p.length,
+		}
+	end
+	QueryOwned(1)
+end)
 ns.On("AUCTION_CANCELED", function() QueryOwned(1) end)
 
 -- One of your listings by item name (for the chat message, which has no ID).
@@ -186,6 +299,7 @@ end
 local function ListingText(a)
 	local text = a.link or a.name or "?"
 	if (a.qty or 1) > 1 then text = text .. " x" .. a.qty end
+	if a.partSold then text = text .. " |cff999999(some sold)|r" end
 	if a.house == "neutral" then text = text .. " |cff999999(" .. ns.HouseName("neutral") .. ")|r" end
 	return text
 end
@@ -208,13 +322,15 @@ function Sales.AddListings(tooltip, max)
 	if n == 0 then return nil end
 	local now = time()
 	local net = math.floor(total * (1 - AH_CUT))
+	local partSold = false
+	for _, a in ipairs(list) do if a.partSold then partSold = true end end
 	tooltip:AddLine(" ")
 	tooltip:AddDoubleLine(("Listed (%d)"):format(n), "time left", 1, 0.82, 0, 0.6, 0.6, 0.6)
 	for i = 1, math.min(n, max or 10) do
 		tooltip:AddDoubleLine("  " .. ListingText(list[i]), ListingRight(list[i], now), 1, 1, 1, 1, 1, 1)
 	end
 	if n > (max or 10) then tooltip:AddLine(("  ...and %d more (/fah auctions)"):format(n - (max or 10)), 0.7, 0.7, 0.7) end
-	tooltip:AddDoubleLine("Total", ns.Money(net), 1, 0.82, 0, 1, 1, 1)
+	tooltip:AddDoubleLine("Total", (partSold and "up to " or "") .. ns.Money(net), 1, 0.82, 0, 1, 1, 1)
 	return net
 end
 
@@ -250,10 +366,23 @@ function Sales.Owed()
 	return total, #list, unknown, list
 end
 
+-- s.part: part of a stack sold, and only the mail will say how many ("x?").
+-- A group (several sales) shows what's known: "x350+".
 local function SaleText(s)
 	local text = s.link or s.name or "?"
-	if (s.qty or 1) > 1 then text = text .. " x" .. s.qty end
+	if s.part then
+		text = text .. ((s.qty or 0) > 0 and (" x" .. s.qty .. "+") or " x?")
+	elseif (s.qty or 1) > 1 then
+		text = text .. " x" .. s.qty
+	end
 	return text
+end
+
+-- What a sale's money column says: exact, estimated, or the price of one.
+local function SaleMoney(s)
+	if s.net then return (s.exact and "" or "~") .. ns.Money(s.net) end
+	if s.unit then return ns.Money(s.unit) .. " each" end
+	return "?"
 end
 
 -- Lines for a tooltip (or chat): each sale, then the total.
@@ -269,11 +398,16 @@ local function Grouped(list)
 			groups[#groups + 1] = g
 		end
 		g.link = g.link or s.link
-		g.qty = g.qty + (s.qty or 1)
+		if s.part then
+			g.part = true
+			g.unit = g.unit or s.unit
+		else
+			g.qty = g.qty + (s.qty or 1)
+		end
 		g.sales = g.sales + 1
 		if s.net then g.net = g.net + s.net else g.known = false end
 		if not s.exact then g.exact = false end
-		if s.inMail then g.mailed = g.mailed + 1 end
+		if s.inMail or s.delivered then g.mailed = g.mailed + 1 end
 	end
 	return groups
 end
@@ -293,6 +427,8 @@ function Sales.AddLines(tooltip, max)
 			right = (g.exact and "" or "~") .. ns.Money(g.net)
 		elseif g.net > 0 then
 			right = "at least " .. ns.Money(g.net)
+		elseif g.unit then
+			right = ns.Money(g.unit) .. " each"
 		else
 			right = "?"
 		end
@@ -317,7 +453,7 @@ end
 
 local function Announce(s, test)
 	if not (ns.db.announceSales or test) then return end
-	local price = s.gross and ns.Money(s.gross) or "an unknown price"
+	local price = s.gross and ns.Money(s.gross) or s.unit and (ns.Money(s.unit) .. " each") or "an unknown price"
 	local name = s.name or "?"
 	local q = s.id and C_Item and C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(s.id)
 	local c = q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
@@ -339,16 +475,40 @@ local function Announce(s, test)
 		unknown and "at least " or "", ns.Money(total)))
 end
 
-local function Sold(name, auction)
+-- A stack can sell a few at a time, and neither the notice nor the chat
+-- message says how many: the sale gets the price of one (the mail fills in
+-- the rest), and the listing is kept for the next part.
+local function Sold(name, auctionID, auction)
 	local c = Char()
 	if not c then return end
 	local s = { name = name, t = time() }
+	local unit = auction and UnitPrice(auction)
+	local stack = auction and (auction.qty or 1) > 1
+	if auction then s.name = auction.name or name end
+	-- Its Sold row may have been read first (the listing is gone by then):
+	-- that's this sale, not another.
+	for _, r in ipairs(c.sales) do
+		if r.fromRow and not r.noticed and r.name == s.name and s.t - (r.t or 0) < 600
+			and (not auction or (stack and r.unit == unit) or (not stack and r.qty == 1)) then
+			r.noticed = true
+			if stack then auction.partSold = true elseif auctionID then c.owned[auctionID] = nil end
+			Announce(r)
+			return
+		end
+	end
 	if auction then
-		s.name, s.link, s.id, s.qty = auction.name or name, auction.link, auction.id, auction.qty
-		local gross = ListingPrice(auction)
-		if gross and gross > 0 then
-			s.gross = gross
-			s.net = math.floor(gross * (1 - AH_CUT))
+		s.link, s.id, s.house = auction.link, auction.id, auction.house
+		if stack then
+			s.part = true
+			if unit and unit > 0 then s.unit = unit end
+			auction.partSold = true
+		else
+			if auctionID then c.owned[auctionID] = nil end
+			s.qty = 1
+			if unit and unit > 0 then
+				s.gross = unit
+				s.net = math.floor(unit * (1 - AH_CUT))
+			end
 		end
 	end
 	c.sales[#c.sales + 1] = s
@@ -368,12 +528,11 @@ ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(kind, text, auctionI
 	end
 	if kind ~= SOLD then return end
 	local a = auctionID and c.owned[auctionID]
-	if auctionID then c.owned[auctionID] = nil end
 	local name = (a and a.name) or text
 	noticed[name] = (noticed[name] or 0) + 1
 	if text and text ~= name then noticed[text] = (noticed[text] or 0) + 1 end
 	ns.Debug(("sold notice: %s (auction %s, %s)"):format(tostring(text), tostring(auctionID), a and "price known" or "price unknown"))
-	Sold(name, a)
+	Sold(name, a and auctionID, a)
 end)
 
 local soldPattern
@@ -393,9 +552,8 @@ ns.On("CHAT_MSG_SYSTEM", function(msg)
 		local c = Char()
 		if not c then return end
 		local auctionID, a = OwnedByName(c, name)
-		if auctionID then c.owned[auctionID] = nil end
 		ns.Debug("sold message: " .. name .. (a and " (price known)" or " (price unknown)"))
-		ns.SafeCall(Sold, name, a)
+		ns.SafeCall(Sold, name, auctionID, a)
 	end)
 end)
 
@@ -404,12 +562,21 @@ end)
 ---------------------------------------------------------------------------
 local atMailbox = false
 
--- The first unused entry for this sale: same item, same amount if known.
+-- The first unused entry for this sale: same item, and the same amount (or,
+-- for part of a stack, the same price each) when known.
 local function Take(list, s)
 	local fallback
 	for _, m in ipairs(list) do
 		if not m.used and m.name == s.name then
-			if not (m.qty and s.qty) or m.qty == s.qty then
+			local same
+			if s.qty and m.qty then
+				same = m.qty == s.qty
+			elseif s.part and s.unit and m.gross and (m.qty or 0) > 0 then
+				same = m.gross == s.unit * m.qty
+			else
+				same = true
+			end
+			if same then
 				m.used = true
 				return m
 			end
@@ -420,17 +587,50 @@ local function Take(list, s)
 	return fallback
 end
 
+-- A mail subject pattern from a global like "Auction successful: %s": the
+-- item, and its count if it ends in " (20)".
+local function SubjectPattern(global, fallback)
+	local text = type(global) == "string" and global or fallback
+	return "^" .. text:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)") .. "$"
+end
+local SOLD_SUBJECT = SubjectPattern(AUCTION_SOLD_MAIL_SUBJECT, "Auction successful: %s")
+local PENDING_SUBJECT = SubjectPattern(AUCTION_INVOICE_MAIL_SUBJECT, "Sale Pending: %s")
+local function SubjectItem(subject, pattern)
+	local item = type(subject) == "string" and subject:match(pattern)
+	if not item then return nil end
+	local name, count = item:match("^(.-) %((%d+)%)$")
+	if name then return name, tonumber(count) end
+	return item, nil
+end
+
+-- The sale mails: the invoice when the game gives one (only once a mail has
+-- been opened, it seems), else the subject ("Auction successful: Silk Cloth
+-- (20)") and the money attached.
 local function ReadInbox()
 	local c = Char()
-	if not (c and GetInboxNumItems and GetInboxInvoiceInfo) then return end
+	if not (c and GetInboxNumItems and GetInboxHeaderInfo) then return end
 	local shown, total = GetInboxNumItems()
 	shown = shown or 0
 	local complete = (total or shown) <= shown -- every mail is shown (no more than 50)
 	local mails, pending = {}, {}
 	for i = 1, shown do
-		local kind, itemName, _, bid, _, _, _, _, _, _, count = GetInboxInvoiceInfo(i)
+		local _, _, _, subject, money = GetInboxHeaderInfo(i)
+		local kind, itemName, bid, count
+		if GetInboxInvoiceInfo then
+			local ok, k, n, _, b, _, _, _, _, _, _, q = pcall(GetInboxInvoiceInfo, i)
+			if ok then kind, itemName, bid, count = k, n, b, q end
+		end
+		if not itemName then
+			local name, q = SubjectItem(subject, SOLD_SUBJECT)
+			if name then
+				kind, itemName, count = "seller", name, q
+			else
+				name, q = SubjectItem(subject, PENDING_SUBJECT)
+				if name then kind, itemName, count = "seller_temp_invoice", name, q end
+			end
+		end
+		ns.Debug(("mail %d: %s - %s, %s"):format(i, tostring(subject), tostring(kind), tostring(money)))
 		if kind == "seller" and itemName then
-			local money = select(5, GetInboxHeaderInfo(i))
 			if money and money > 0 then
 				mails[#mails + 1] = { name = itemName, money = money, gross = bid, qty = count }
 			end
@@ -445,9 +645,10 @@ local function ReadInbox()
 		if m then
 			s.net, s.exact, s.inMail = m.money, true, true
 			if m.gross and m.gross > 0 then s.gross = m.gross end
+			if m.qty and m.qty > 0 then s.qty, s.part = m.qty, nil end
 			keep[#keep + 1] = s
-		elseif s.inMail then
-			-- It was here, and now it's gone: you took the money.
+		elseif s.inMail or s.delivered then
+			-- It was here (or was sent), and now it's gone: you took the money.
 			if not complete then keep[#keep + 1] = s end
 		elseif Take(pending, s) or now - (s.t or 0) < DELIVERY_GRACE or not complete then
 			keep[#keep + 1] = s -- not delivered yet
@@ -501,7 +702,7 @@ function Sales.Print()
 	ns.Print(("%d sale%s to collect from the mailbox, %s%s:"):format(n, n == 1 and "" or "s",
 		unknown and "at least " or "", ns.Money(total)))
 	for _, s in ipairs(list) do
-		print(("  %s - %s%s%s"):format(SaleText(s), s.net and ((s.exact and "" or "~") .. ns.Money(s.net)) or "?",
-			s.inMail and "" or " (on its way)", " |cff999999" .. ns.TimeAgo(s.t) .. "|r"))
+		print(("  %s - %s%s%s"):format(SaleText(s), SaleMoney(s),
+			(s.inMail or s.delivered) and "" or " (on its way)", " |cff999999" .. ns.TimeAgo(s.t) .. "|r"))
 	end
 end
