@@ -191,6 +191,25 @@ missingRow:SetPoint("TOP", row, "BOTTOM", 0, -AURA_GAP)
 
 local missingButtons = {}
 
+-- Right-click dismisses an icon; left clicks go through to the world. The game
+-- blocks setting up click pass-through in combat, so an icon made mid-fight
+-- (a buff dropping is when they're made) gets its clicks once the fight ends.
+local clicksPending = {}
+local function EnableClicks(b)
+	if InCombatLockdown and InCombatLockdown() then
+		clicksPending[b] = true
+		return
+	end
+	b:EnableMouse(true)
+	if b.SetPassThroughButtons then pcall(b.SetPassThroughButtons, b, "LeftButton") end
+end
+ns.On("PLAYER_REGEN_ENABLED", function()
+	for b in pairs(clicksPending) do
+		clicksPending[b] = nil
+		EnableClicks(b)
+	end
+end)
+
 local function CreateMissingButton()
 	local b = CreateFrame("Frame", nil, missingRow)
 	b:SetSize(AURA_SIZE, AURA_SIZE)
@@ -211,9 +230,7 @@ local function CreateMissingButton()
 	a:SetDuration(0.8)
 	b:SetScript("OnShow", function() ag:Play() end)
 	b:SetScript("OnHide", function() ag:Stop() end)
-	-- Right-click dismisses it; left clicks go through to the world.
-	b:EnableMouse(true)
-	if b.SetPassThroughButtons then pcall(b.SetPassThroughButtons, b, "LeftButton") end
+	EnableClicks(b)
 	b:SetScript("OnMouseUp", function(self, button)
 		if button == "RightButton" and self.name then
 			GameTooltip:Hide()

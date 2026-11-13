@@ -229,11 +229,13 @@ local function Learn(a, kind)
 	if e then
 		e.icon = a.icon or e.icon
 		e.duration = a.duration or e.duration -- to time it when recast in combat
+		e.spellId = a.spellId or e.spellId     -- to ask whether it's hidden in combat
 		if kind == "tracking" then e.tracking = true end
 		if kind == "enchant" then e.enchant = true end
 		return
 	end
-	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, combat = kind == "combat" or nil,
+	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, spellId = a.spellId,
+		combat = kind == "combat" or nil,
 		tracking = kind == "tracking" or nil, enchant = kind == "enchant" or nil }
 	if a.quiet then return end
 	if kind == "tracking" then
@@ -365,17 +367,44 @@ local function Lost(name, info, old)
 	Remind(name, true)
 end
 
+-- In combat: is a hidden buff still up, going by its IDs? true, false, or nil
+-- when the game won't say. ids: every buff ID on you now, or nil if unknown.
+-- A buff recast mid-fight can have several possible IDs; ones that are gone
+-- are dropped, and it's up while any is left.
+local function StillUp(info, ids)
+	local set = info.instances
+	if not set then
+		if not info.instance then return nil end
+		set = { [info.instance] = true }
+	end
+	if not next(set) then return nil end
+	local any = false
+	for id in pairs(set) do
+		local exists
+		if ids then
+			exists = ids[id] and true or false
+		else
+			exists = API.AuraInstanceExists("player", id)
+		end
+		if exists == nil then return nil end
+		if exists then any = true else set[id] = nil end
+	end
+	return any
+end
+
 -- source: what triggered this look, for debug output.
 function SelfBuffs.Update(source)
 	if not ns.db then return end
 	updateSource = source
 	local restricted = API.AurasRestricted()
 	local now = {}
+	local read = {} -- [name] = true for buffs readable right now
 	API.ForEachAura("player", "HELPFUL", function(a)
 		local ok, kind = IsCandidate(a)
 		if ok then
 			Learn(a, kind)
-			local info = { instance = a.instance, expires = a.expires, icon = a.icon }
+			read[a.name] = true
+			local info = { instance = a.instance, expires = a.expires, icon = a.icon, spellId = a.spellId }
 			-- Still listed a moment after its end time: it's gone, the list is stale.
 			local left = TimeLeft(info)
 			if not (left and left < -1) then now[a.name] = info end
@@ -408,43 +437,59 @@ function SelfBuffs.Update(source)
 		traceIDs = false
 	end
 	if restricted then
-		-- Hidden buffs: still there unless their ID says otherwise (the full ID
-		-- list, or asking for that one ID) - and not at their end time. The
-		-- game's update for a buff running out can come a moment before the end
-		-- time we have for it (especially one estimated from a cast), hence the
-		-- margin.
+		-- Buffs not in the readable list: gone if the game shows that buff even
+		-- in combat; otherwise hidden, so still there unless their IDs say
+		-- otherwise - and not at their end time. The game's update for a buff
+		-- running out can come a moment before the end time we have for it
+		-- (especially one estimated from a cast), hence the margin.
 		for name, info in pairs(present) do
-			local left = TimeLeft(info)
-			local there = not (info.tracking or info.enchant) and not (left ~= nil and left <= END_MARGIN)
-			if there and info.instance then
-				if ids then
-					there = ids[info.instance] and true or false
-				else
-					local exists = API.AuraInstanceExists("player", info.instance)
-					if exists ~= nil then there = exists end
+			if not now[name] then
+				local left = TimeLeft(info)
+				local there = not (info.tracking or info.enchant) and not (left ~= nil and left <= END_MARGIN)
+				if there and API.SpellAuraHidden(info.spellId) == false then
+					there = false
+				elseif there then
+					local up = StillUp(info, ids)
+					if up ~= nil then
+						there = up
+					elseif ns.tracing and not info.unsure then
+						info.unsure = true
+						ns.Trace(name .. ": can't tell in combat if it's still up, so it counts until it runs out")
+					end
 				end
+				if there then now[name] = info end
 			end
-			if not now[name] and there then now[name] = info end
 		end
 		-- A hidden buff you just cast (or recast): it's up for its full duration.
-		-- Its new ID, if one clearly appeared with it, lets us watch it closely.
+		-- IDs that appear right after the cast are watched: it's up while any of
+		-- them is (another buff can appear at the same moment, like Flurry).
 		local new = {}
 		if ids and lastIDs then
 			for id in pairs(ids) do
-				if not lastIDs[id] then new[#new + 1] = id end
+				if not lastIDs[id] then new[#new + 1] = { id = id, name = API.AuraNameByInstance("player", id) } end
 			end
 		end
 		for name, e in pairs(ns.db.selfBuffs) do
-			local info = now[name]
-			if not (e.tracking or e.enchant) and Spells.WasRecentlyCast(name)
-				and not (info and info.recastAt and GetTime() - info.recastAt < 3) then
-				local t = GetTime()
-				now[name] = {
-					instance = (#new == 1 and new[1]) or (info and info.instance) or nil,
-					expires = (e.duration or 0) > 0 and t + e.duration or 0,
-					icon = e.icon, recastAt = t,
-				}
-				ns.Trace(("%s cast in combat: counted as up for %ss"):format(name, tostring(e.duration)))
+			if not (e.tracking or e.enchant or read[name]) and Spells.WasRecentlyCast(name) then
+				local info, t = now[name], GetTime()
+				if not (info and info.recastAt and t - info.recastAt < 3) then
+					local old = info
+					info = {
+						instances = {}, spellId = e.spellId, icon = e.icon, recastAt = t,
+						expires = (e.duration or 0) > 0 and t + e.duration or 0,
+					}
+					-- Refreshed: the buff may keep its ID.
+					if old and ids then
+						for id in pairs(old.instances or { [old.instance or false] = true }) do
+							if ids[id] then info.instances[id] = true end
+						end
+					end
+					now[name] = info
+					ns.Trace(("%s cast in combat: counted as up for %ss"):format(name, tostring(e.duration)))
+				end
+				for _, n in ipairs(new) do
+					if not n.name or n.name == name then info.instances[n.id] = true end
+				end
 			end
 		end
 	end
@@ -512,7 +557,10 @@ function SelfBuffs.Describe()
 	local up, gone = {}, {}
 	for name, info in pairs(present) do
 		local left = TimeLeft(info)
-		up[#up + 1] = name .. (info.instance and "" or " (no ID)")
+		local idCount = 0
+		for _ in pairs(info.instances or {}) do idCount = idCount + 1 end
+		up[#up + 1] = name .. ((info.instance or idCount == 1) and ""
+				or idCount > 1 and (" (%d possible IDs)"):format(idCount) or " (no ID)")
 			.. (left and (" %dm%02ds left"):format(math.floor(left / 60), math.floor(left % 60))
 				or ((info.expires or 0) == 0 and " (no timer)")
 				or (" (timer unreadable: ends %s, now %.0f)"):format(tostring(info.expires), GetTime()))

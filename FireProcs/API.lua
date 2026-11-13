@@ -42,6 +42,26 @@ function API.AuraIsSecret(spellID)
 	return ok and secret and true or false
 end
 
+-- Like AuraIsSecret, but nil when the game won't say (no such check here).
+function API.SpellAuraHidden(spellID)
+	local S = C_Secrets
+	if not (spellID and S and S.ShouldSpellAuraBeSecret) then return nil end
+	local ok, secret = pcall(S.ShouldSpellAuraBeSecret, spellID)
+	if not ok or API.IsSecret(secret) or secret == nil then return nil end
+	return secret and true or false
+end
+
+-- The name of one buff (by its ID), or nil if it's gone or hidden.
+function API.AuraNameByInstance(unit, id)
+	local fn = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
+	if not (fn and id) then return nil end
+	local ok, aura = pcall(fn, unit, id)
+	if not ok or type(aura) ~= "table" or API.IsSecret(aura) then return nil end
+	local name = aura.name
+	if API.IsSecret(name) or type(name) ~= "string" then return nil end
+	return name
+end
+
 -- Total power cost of a spell right now (procs like Clearcasting make it 0),
 -- or nil if unknown/hidden.
 function API.SpellCost(spellID)

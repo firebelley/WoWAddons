@@ -36,6 +36,27 @@ local function ShowTooltip(f)
 	GameTooltip:Show()
 end
 
+-- Right-click removes a pin; left clicks go through to the map (or minimap)
+-- underneath. The game blocks setting up click pass-through in combat, so a
+-- pin made mid-fight gets its clicks once the fight ends.
+local clicksPending = {}
+local function EnableClicks(f)
+	if InCombatLockdown and InCombatLockdown() then
+		clicksPending[f] = true
+		return
+	end
+	f:EnableMouse(true)
+	if f.SetPassThroughButtons then pcall(f.SetPassThroughButtons, f, "LeftButton") end
+end
+local combatEnd = CreateFrame("Frame")
+combatEnd:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatEnd:SetScript("OnEvent", function()
+	for f in pairs(clicksPending) do
+		clicksPending[f] = nil
+		EnableClicks(f)
+	end
+end)
+
 function ns.CreatePinFrame(parent, size)
 	local f = CreateFrame("Frame", nil, parent)
 	f:SetSize(size, size)
@@ -51,9 +72,7 @@ function ns.CreatePinFrame(parent, size)
 	local font = GameFontNormal:GetFont()
 	f.label:SetFont(font, math.max(9, math.floor(size * 0.45)), "OUTLINE")
 	f.label:SetPoint("BOTTOMLEFT", f, "RIGHT", -size * 0.15, -size * 0.1)
-	f:EnableMouse(true)
-	-- Left clicks go through to the map (or minimap) underneath.
-	if f.SetPassThroughButtons then pcall(f.SetPassThroughButtons, f, "LeftButton") end
+	EnableClicks(f)
 	f:SetScript("OnEnter", ShowTooltip)
 	f:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	f:SetScript("OnMouseUp", function(self, button)
