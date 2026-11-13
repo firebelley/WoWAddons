@@ -13,6 +13,7 @@ local DEFAULTS = {
 	craftWorth = true,    -- "Worth as <crafted item>" on reagent tooltips, from your saved recipes (Crafting.lua)
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
 	buyInfo = false,      -- the tracker beside the auction house's buy page, opened by its side tab (BuyInfo.lua)
+	seedWindow = false,   -- the seed listing window, opened by the second side tab (Seed.lua)
 	quickBuyCheapest = false, -- Quick buy takes only the lowest price within "Up to" per click (QuickBuy.lua)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
@@ -76,6 +77,15 @@ local SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t"
 local COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"
 
 -- "12g 34s 56c" with coin icons; small coins are left off big amounts.
+-- How long an auction lasts, in seconds, by the duration's place in the Sell
+-- page's list (1 = the shortest). Read from the game's own labels ("2 Hours"),
+-- as the lengths differ between clients; 2, 8 and 24 hours if they can't be read.
+function ns.DurationSeconds(index)
+	local text = ({ AUCTION_DURATION_ONE, AUCTION_DURATION_TWO, AUCTION_DURATION_THREE })[index]
+	local hours = type(text) == "string" and tonumber(text:match("(%d+)"))
+	return (hours or ({ 2, 8, 24 })[index] or 24) * 3600
+end
+
 function ns.Money(copper)
 	copper = math.floor((copper or 0) + 0.5)
 	local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100

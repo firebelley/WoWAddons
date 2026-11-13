@@ -14,7 +14,9 @@ MinimapButton.lua
 BagIcons.lua
 Crafting.lua
 QuickBuy.lua
+SideWindows.lua
 BuyInfo.lua
+Seed.lua
 Sales.lua
 Sync.lua
 Options.lua

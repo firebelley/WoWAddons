@@ -194,13 +194,13 @@ local function QueryOwned(delay)
 		if ns.atAH then pcall(AH.QueryOwnedAuctions, {}) end
 	end)
 end
+Sales.QueryOwned = QueryOwned
 ns.On("AUCTION_HOUSE_SHOW", function() QueryOwned(2) end)
 ns.On("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(kind)
 	if AUCTIONEER and kind == AUCTIONEER then QueryOwned(2) end
 end)
 -- What you just posted, so a listing is remembered even if you close the
 -- auction house before it's listed for you again.
-local DURATION = { 12 * 3600, 24 * 3600, 48 * 3600 }
 local lastPost
 local function Posted(item, duration, quantity, unit)
 	lastPost = nil
@@ -208,17 +208,24 @@ local function Posted(item, duration, quantity, unit)
 		return C_Item.GetItemID(item), C_Item.GetItemLink(item)
 	end)
 	if not (ok and id and quantity and unit) then return end
-	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = DURATION[duration], at = time() }
+	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = ns.DurationSeconds(duration), at = time() }
 end
 if AH and hooksecurefunc then
 	if AH.PostCommodity then
 		hooksecurefunc(AH, "PostCommodity", function(item, duration, quantity, unitPrice)
 			Posted(item, duration, quantity, unitPrice)
+			-- Read your auctions again shortly: the game doesn't always say
+			-- the auction was created (AUCTION_HOUSE_AUCTION_CREATED, below).
+			QueryOwned(2)
 		end)
+	end
+	if AH.ConfirmPostCommodity then
+		hooksecurefunc(AH, "ConfirmPostCommodity", function() QueryOwned(2) end)
 	end
 	if AH.PostItem then
 		hooksecurefunc(AH, "PostItem", function(item, duration, quantity, bid, buyout)
 			Posted(item, duration, quantity, (buyout and buyout > 0 and buyout) or bid)
+			QueryOwned(2)
 		end)
 	end
 end

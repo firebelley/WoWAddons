@@ -160,15 +160,19 @@ local function BlizzardDialogOpen()
 	return dialog and dialog:IsShown()
 end
 
-local function SetCoins(max)
-	max = max or 0
-	local g = max >= 10000 and tostring(math.floor(max / 10000)) or ""
-	local s, c = tostring(math.floor(max / 100) % 100), tostring(max % 100)
+local function SetCoinBoxes(boxes, copper)
+	local g, s, c = "", "", ""
+	if copper then
+		g = copper >= 10000 and tostring(math.floor(copper / 10000)) or ""
+		s, c = tostring(math.floor(copper / 100) % 100), tostring(copper % 100)
+	end
 	-- Only on a change, so a box you're typing in isn't rewritten.
-	if coinBoxes[1]:GetText() ~= g then coinBoxes[1]:SetText(g) end
-	if coinBoxes[2]:GetText() ~= s then coinBoxes[2]:SetText(s) end
-	if coinBoxes[3]:GetText() ~= c then coinBoxes[3]:SetText(c) end
+	if boxes[1]:GetText() ~= g then boxes[1]:SetText(g) end
+	if boxes[2]:GetText() ~= s then boxes[2]:SetText(s) end
+	if boxes[3]:GetText() ~= c then boxes[3]:SetText(c) end
 end
+
+local function SetCoins(max) SetCoinBoxes(coinBoxes, max or 0) end
 
 -- After a purchase the listings still show what was just bought until the
 -- refreshed ones come in, so the button stays greyed out until then: the
@@ -440,6 +444,16 @@ function QuickBuy.ClearAll()
 	ns.SafeCall(Update)
 	return #list
 end
+
+-- Refresh the listings now (not while a purchase is going through).
+function QuickBuy.Refresh()
+	if not pending then Refresh() end
+end
+
+-- A purchase is going through.
+function QuickBuy.Busy() return pending ~= nil end
+
+QuickBuy.BlizzardDialogOpen = BlizzardDialogOpen
 
 -- The commodity on the buy page (nil elsewhere).
 function QuickBuy.Item()

@@ -31,7 +31,7 @@ local GREY = "|cff999999"
 local CUSTOM = "|cff66bbff" -- your own resale price, wherever it's used
 local LIST_MAX = 12 -- sessions named in the Clear all popup
 
-local frame, rows, summary, bar, clearAll, tabOutline
+local frame, rows, summary, bar, clearAll
 local autoButton, customButton
 local shownID -- the item the window shows
 local elapsed = 0
@@ -340,21 +340,11 @@ local function Current()
 	return nil
 end
 
-local function SetTitle(text)
-	if frame.SetTitle then pcall(frame.SetTitle, frame, text) end
-	if type(frame.fallbackTitle) == "table" then frame.fallbackTitle:SetText(text) end
-end
-
-local function SetPortrait(texture)
-	if frame.SetPortraitToAsset then pcall(frame.SetPortraitToAsset, frame, texture) end
-	if type(frame.fallbackIcon) == "table" then frame.fallbackIcon:SetTexture(texture) end
-end
-
 local function Update(id, selling)
 	shownID = id
-	SetTitle(Name(id))
+	ns.SideWindowTitle(frame, Name(id))
 	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
-	SetPortrait(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+	ns.SideWindowIcon(frame, texture or "Interface\\Icons\\INV_Misc_QuestionMark")
 
 	local lines, summaryText, progress = Lines(id, selling)
 	summary:SetText(summaryText)
@@ -456,75 +446,12 @@ StaticPopupDialogs.FIREAUCTION_CLEAR_SESSIONS = {
 ---------------------------------------------------------------------------
 -- The window
 ---------------------------------------------------------------------------
-local function SetOpen(on)
-	ns.db.buyInfo = on and true or false
-	if tabOutline then tabOutline:SetShown(ns.db.buyInfo) end
-	elapsed = 1
-end
-
--- Where it goes: where you dragged it, or beside the auction house window.
-local function Place()
-	frame:ClearAllPoints()
-	local p = ns.db.buyInfoPoint
-	if p then
-		frame:SetPoint(p[1], UIParent, p[2], p[3], p[4])
-	else
-		frame:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 38, 0)
-	end
-end
-
 local function CreateWindow()
-	-- Blizzard's own window frame (portrait, title bar, close button), the same
-	-- as the auction house's; a plain dark box if this client lacks it.
-	local ok, f = pcall(CreateFrame, "Frame", "FireAuctionBuyInfo", AuctionHouseFrame, "PortraitFrameTemplate")
-	if not ok then
-		f = CreateFrame("Frame", "FireAuctionBuyInfo", AuctionHouseFrame, BackdropTemplateMixin and "BackdropTemplate")
-		if f.SetBackdrop then
-			f:SetBackdrop({
-				bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-				edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-				tile = true, tileSize = 16, edgeSize = 16,
-				insets = { left = 4, right = 4, top = 4, bottom = 4 },
-			})
-			f:SetBackdropColor(0.06, 0.06, 0.06, 0.95)
-		end
-		f.fallbackIcon = f:CreateTexture(nil, "ARTWORK")
-		f.fallbackIcon:SetSize(40, 40)
-		f.fallbackIcon:SetPoint("TOPLEFT", 12, -12)
-		f.fallbackTitle = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-		f.fallbackTitle:SetPoint("TOPLEFT", 62, -8)
-	end
-	frame = f
-	-- Above the auction house window (it floats over it), below popups like
-	-- the resale price dialog.
-	f:SetFrameStrata("HIGH")
-	-- The rows sit on a darker inset, like Blizzard's own windows.
-	if ok then
-		local insetOK, inset = pcall(CreateFrame, "Frame", nil, f, "InsetFrameTemplate")
-		if insetOK and inset then
-			inset:SetPoint("TOPLEFT", 4, TOP + 6)
-			inset:SetPoint("BOTTOMRIGHT", -6, 4)
-			if inset.SetFrameLevel and f.GetFrameLevel then inset:SetFrameLevel(f:GetFrameLevel() or 1) end
-		end
-	end
-	f:SetSize(WIDTH, 200)
-	f:SetToplevel(true)
-	f:SetClampedToScreen(true)
-	f:SetMovable(true)
-	f:EnableMouse(true)
-	f:RegisterForDrag("LeftButton")
-	f:SetScript("OnDragStart", function(self) self:StartMoving() end)
-	f:SetScript("OnDragStop", function(self)
-		self:StopMovingOrSizing()
-		self:SetUserPlaced(false) -- the position is saved here
-		local point, _, relPoint, x, y = self:GetPoint()
-		ns.db.buyInfoPoint = { point, relPoint, x, y }
-	end)
-	-- The close button turns it off, like its tab.
-	if type(f.CloseButton) == "table" then
-		f.CloseButton:SetScript("OnClick", function() SetOpen(false) end)
-	end
-	Place()
+	-- Beside the auction house window, at its top, until you drag it.
+	frame = ns.SideWindow("FireAuctionBuyInfo", WIDTH, TOP + 6, "buyInfoPoint", function(f)
+		f:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 38, 0)
+	end, "buyInfo")
+	local f = frame
 
 	-- Beside the portrait, under the title: how many you've bought, and
 	-- toward Want.
@@ -589,37 +516,10 @@ local function Create()
 	clearAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	clearAll:Hide()
 
-	-- The side tab that opens and closes it (like the spellbook's tabs), on
-	-- the auction house window's right edge. The icon is always shown; a gold
-	-- outline marks it on.
-	local tab = CreateFrame("Button", nil, AuctionHouseFrame)
-	tab:SetSize(32, 32)
-	tab:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, -36)
-	local back = tab:CreateTexture(nil, "BACKGROUND")
-	back:SetSize(64, 64)
-	back:SetPoint("TOPLEFT", -3, 11)
-	back:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
-	local icon = tab:CreateTexture(nil, "ARTWORK")
-	icon:SetAllPoints()
-	icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01")
-	tabOutline = tab:CreateTexture(nil, "OVERLAY")
-	tabOutline:SetAllPoints()
-	tabOutline:SetTexture("Interface\\Buttons\\CheckButtonHilight")
-	tabOutline:SetBlendMode("ADD")
-	tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	tabOutline:SetShown(ns.db.buyInfo and true or false)
-	tab:SetScript("OnClick", function()
-		SetOpen(not ns.db.buyInfo)
-		if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB) end
-	end)
-	tab:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:SetText("Purchase tracker", 1, 1, 1)
-		GameTooltip:AddLine("Click to show or hide.", nil, nil, nil, true)
-		GameTooltip:Show()
-	end)
-	tab:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	tab:Hide()
+	-- Its tab on the auction house window's edge (the first).
+	local tab = ns.SideTab(1, "Interface\\Icons\\INV_Misc_Coin_01", "Purchase tracker", "buyInfo",
+		function() elapsed = 1 end)
+	f.tab = tab
 
 	-- Shows and updates everything, a few times a second while the auction house is open.
 	local driver = CreateFrame("Frame", nil, AuctionHouseFrame)
