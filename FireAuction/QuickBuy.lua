@@ -219,7 +219,11 @@ local function Update()
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
 		else
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
-			if not Held() then
+			-- Greyed out while the auction house is still busy with an earlier
+			-- request (like Blizzard's Post button): a purchase started then has
+			-- to wait in line, stuck on "Checking the price..." for seconds.
+			local ready = C_AuctionHouse.IsThrottledMessageSystemReady
+			if not Held() and not (ready and not ready()) then
 				plan = { quantity = count, total = total }
 				enabled = true
 			end
@@ -281,6 +285,7 @@ ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", Refreshed)
 ns.On("COMMODITY_SEARCH_RESULTS_RECEIVED", function() Refreshed(nil) end)
 
 ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", function()
+	if pending then return end -- a purchase (handled further down)
 	-- Most likely ours, if we just sent one.
 	if refreshSentAt and GetTime() - refreshSentAt < 2 and not refreshRetried then
 		refreshSentAt, refreshWaiting = nil, true
@@ -343,6 +348,15 @@ ns.On("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
 	pending.stage, pending.at, pending.total = "buying", GetTime(), totalPrice
 	C_AuctionHouse.ConfirmCommoditiesPurchase(pending.itemID, pending.quantity)
 	Update()
+end)
+
+-- The purchase we just started was dropped: no quote will come, so don't
+-- wait out the timeout.
+ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", function()
+	if pending and pending.stage == "quote" and GetTime() - pending.at < 2
+		and not (refreshSentAt and refreshSentAt > pending.at) then
+		Finish("|cffff5050Not bought:|r no answer from the auction house")
+	end
 end)
 
 ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
