@@ -183,7 +183,7 @@ local function ClearGraph()
 	for i = 1, #lines do lines[i]:Hide() end
 	for i = 1, #dots do dots[i]:Hide() end
 	nLines, nDots = 0, 0
-	graph.points = nil
+	graph.points, graph.trend, graph.hovered = nil, nil, nil
 	graph.marker:Hide()
 end
 
@@ -253,6 +253,12 @@ local function DrawGraph(rec)
 		local l = Line(TREND_COLOR[1], TREND_COLOR[2], TREND_COLOR[3], 0.7, 2)
 		l:SetStartPoint("BOTTOMLEFT", graph, X(today - trendDays), Y(now - slope * trendDays))
 		l:SetEndPoint("BOTTOMLEFT", graph, X(today + trendDays), Y(projected))
+		-- For hovering the projection: each day ahead's price on the line.
+		graph.trend = {
+			today = today, last = today + trendDays, X = X, Y = Y,
+			Day = function(x) return first + x / w * (last - first) end,
+			Price = function(day) return math.max(0, now + slope * (day - today)) end,
+		}
 	end
 
 	-- The prices.
@@ -270,7 +276,8 @@ local function DrawGraph(rec)
 	graph.points = points
 end
 
--- Hovering the graph shows the nearest day's price.
+-- Hovering the graph shows the nearest day's price; past today, the trend
+-- line's projected price for the day under the mouse.
 local function GraphHover(self)
 	local points = self.points
 	if not points then return end
@@ -279,6 +286,26 @@ local function GraphHover(self)
 	local best
 	for _, p in ipairs(points) do
 		if not best or math.abs(p.x - x) < math.abs(best.x - x) then best = p end
+	end
+	local t = self.trend
+	if t then
+		local day = math.min(t.last, math.floor(t.Day(x) + 0.5))
+		if day > t.today and (not best or math.abs(t.X(day) - x) < math.abs(best.x - x)) then
+			local key = "projected " .. day
+			if key == self.hovered then return end
+			self.hovered = key
+			local price = t.Price(day)
+			self.marker:ClearAllPoints()
+			self.marker:SetPoint("CENTER", self, "BOTTOMLEFT", t.X(day), t.Y(price))
+			self.marker:Show()
+			local ahead = day - t.today
+			GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+			GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(day)), 1, 1, 1)
+			GameTooltip:AddLine(("Projected: %s"):format(ns.Money(price)), TREND_COLOR[1], TREND_COLOR[2], TREND_COLOR[3])
+			GameTooltip:AddLine(ahead == 1 and "Tomorrow" or ("In %d days"):format(ahead), 0.6, 0.6, 0.6)
+			GameTooltip:Show()
+			return
+		end
 	end
 	if best and best ~= self.hovered then
 		self.hovered = best
