@@ -10,7 +10,7 @@ local button
 
 local function Place()
 	local angle = math.rad(ns.db.minimapAngle or 200)
-	local radius = Minimap:GetWidth() / 2 + 10
+	local radius = Minimap:GetWidth() / 2 + 5 -- the same distance as other addons' minimap buttons
 	button:ClearAllPoints()
 	button:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
 end
