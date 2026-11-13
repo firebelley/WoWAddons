@@ -209,13 +209,16 @@ local function BuildMain()
 end
 
 ---------------------------------------------------------------------------
--- List pages: a scrolling list with one checkbox per entry.
---   items() returns { { key, label, checked }, ... }
---   onToggle(key, checked) is called when one is clicked.
+-- List pages: a scrolling list with one checkbox per entry - or, with
+-- columns ({ "In combat", "Out of combat" }), one per column.
+--   items() returns { { key, label, checked }, ... } (with columns: checks =
+--   { checked, ... } instead of checked)
+--   onToggle(key, checked, column) is called when one is clicked.
 ---------------------------------------------------------------------------
 local ROW_HEIGHT = 26
+local COLUMN_WIDTH = 90
 
-local function BuildList(name, helpText, emptyText, items, onToggle)
+local function BuildList(name, helpText, emptyText, items, onToggle, columns)
 	local panel = CreateFrame("Frame")
 	panel:Hide()
 
@@ -229,9 +232,17 @@ local function BuildList(name, helpText, emptyText, items, onToggle)
 	help:SetJustifyH("LEFT")
 	help:SetText(helpText)
 
+	local top = -12
+	for i, text in ipairs(columns or {}) do
+		local h = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		h:SetPoint("TOP", help, "BOTTOMLEFT", (i - 1) * COLUMN_WIDTH + 12, -12)
+		h:SetText(text)
+		top = -30
+	end
+
 	local ok, scroll = pcall(CreateFrame, "ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
 	if not ok then scroll = CreateFrame("ScrollFrame", nil, panel) end
-	scroll:SetPoint("TOPLEFT", help, "BOTTOMLEFT", 0, -12)
+	scroll:SetPoint("TOPLEFT", help, "BOTTOMLEFT", 0, top)
 	scroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -30, 12)
 	scroll:EnableMouseWheel(true)
 	scroll:SetScript("OnMouseWheel", function(self, delta)
@@ -251,14 +262,19 @@ local function BuildList(name, helpText, emptyText, items, onToggle)
 	local function Row(i)
 		local row = rows[i]
 		if row then return row end
-		row = CreateFrame("CheckButton", nil, child, "UICheckButtonTemplate")
-		row:SetSize(24, 24)
-		row:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
-		row.label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-		row.label:SetPoint("LEFT", row, "RIGHT", 4, 0)
-		row:SetScript("OnClick", function(self)
-			ns.SafeCall(onToggle, self.key, self:GetChecked() and true or false)
-		end)
+		row = { boxes = {} }
+		for c = 1, math.max(#(columns or {}), 1) do
+			local box = CreateFrame("CheckButton", nil, child, "UICheckButtonTemplate")
+			box:SetSize(24, 24)
+			box:SetPoint("TOPLEFT", (c - 1) * COLUMN_WIDTH, -(i - 1) * ROW_HEIGHT)
+			box:SetScript("OnClick", function(self)
+				ns.SafeCall(onToggle, row.key, self:GetChecked() and true or false, c)
+			end)
+			row.boxes[c] = box
+		end
+		local last = row.boxes[#row.boxes]
+		row.label = last:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		row.label:SetPoint("LEFT", last, "RIGHT", 4, 0)
 		rows[i] = row
 		return row
 	end
@@ -272,11 +288,15 @@ local function BuildList(name, helpText, emptyText, items, onToggle)
 		for i, item in ipairs(list) do
 			local row = Row(i)
 			row.key = item.key
-			row:SetChecked(item.checked)
+			for c, box in ipairs(row.boxes) do
+				box:SetChecked(item.checks and item.checks[c] or (not item.checks and item.checked))
+				box:Show()
+			end
 			row.label:SetText(item.label)
-			row:Show()
 		end
-		for i = #list + 1, #rows do rows[i]:Hide() end
+		for i = #list + 1, #rows do
+			for _, box in ipairs(rows[i].boxes) do box:Hide() end
+		end
 	end
 	panel:SetScript("OnShow", function() ns.SafeCall(Refresh) end)
 
@@ -318,15 +338,13 @@ end
 -- "Buffs" page: one checkbox per buff reminder.
 local function BuildBuffs()
 	return BuildList("Buffs",
-		"Buffs you're reminded about, added the first time you cast them. Long buffs, tracking and weapon "
-			.. "enchants are reminded when they're gone. Short ones like seals only when they drop in a fight. "
-			.. "Untick to stop reminders.",
+		"Buffs you're reminded about, added the first time you cast them. Tick when to be reminded that one's "
+			.. "gone: in a fight, out of one, or both. Short buffs like seals start as in combat only.",
 		"None yet - cast one of your buffs and it shows up here.",
 		function()
 			local list = {}
 			for name, e in pairs(ns.db.selfBuffs) do
 				local label = (e.icon and ("|T" .. e.icon .. ":16|t ") or "") .. name
-				if e.combat then label = label .. "  |cff888888(only when it drops in combat)|r" end
 				local group = ns.SelfBuffs.GroupOf(name)
 				local alts = {}
 				for other in pairs(ns.db.selfBuffs) do
@@ -336,14 +354,16 @@ local function BuildBuffs()
 					table.sort(alts)
 					label = label .. "  |cff888888(or " .. table.concat(alts, ", ") .. ")|r"
 				end
-				list[#list + 1] = { key = name, label = label, checked = e.on ~= false }
+				list[#list + 1] = { key = name, label = label,
+					checks = { ns.SelfBuffs.Wants(name, true), ns.SelfBuffs.Wants(name, false) } }
 			end
 			return list
 		end,
-		function(name, on)
-			ns.db.selfBuffs[name].on = on
+		function(name, on, column)
+			ns.SelfBuffs.SetWants(name, column == 1, on)
 			ns.SelfBuffs.Refresh()
-		end)
+		end,
+		{ "In combat", "Out of combat" })
 end
 
 ---------------------------------------------------------------------------

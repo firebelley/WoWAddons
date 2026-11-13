@@ -17,9 +17,9 @@
 -- it runs out - not when you swap that weapon out or right-click it off.
 --
 -- Short buffs you keep up yourself (seals, Slice and Dice): under a minute,
--- from a spell with no cooldown of its own. These are combat-only: when one
--- drops during a fight, an alert and an icon until you recast it or the fight
--- ends; nothing out of combat. Short buffs
+-- from a spell with no cooldown of its own. These are combat-only by default:
+-- when one drops during a fight, an alert and an icon until you recast it or
+-- the fight ends; nothing out of combat. Short buffs
 -- from spells with a cooldown (Sprint, Evasion, Shield Wall) are left alone -
 -- they're meant to run out.
 --
@@ -29,6 +29,10 @@
 -- its ID, and its end time is known (estimated from the cast when recast
 -- mid-fight), so losing it mid-fight (expired, dispelled, charges used up)
 -- is caught. Anything the game wouldn't tell us is caught when combat ends.
+--
+-- Each buff has two switches on the Buffs page: remind in fights, and out of
+-- them (one that drops mid-fight with only the second on is reminded once the
+-- fight ends).
 --
 -- Not reminded: recasting it (refresh), swapping it for an alternative (Water
 -- Shield for Lightning Shield - these get linked so either one counts),
@@ -158,9 +162,27 @@ end
 
 local function Entry(name) return ns.db.selfBuffs[name] end
 
-local function Enabled(name)
+-- Whether to remind about a buff in a fight (inFight) or out of one - each
+-- buff's two checkboxes on the Buffs page. Unset: both, except short buffs
+-- kept up in fights (seals), which are in combat only. ("on = false" is how a
+-- buff turned off before there were two checkboxes was saved: both off.)
+local function Wants(name, inFight)
 	local e = Entry(name)
-	return e and e.on ~= false and ns.db.remindBuffs ~= false
+	if not e or e.on == false or ns.db.remindBuffs == false then return false end
+	if inFight then return e.inCombat ~= false end
+	if e.outOfCombat ~= nil then return e.outOfCombat end
+	return not e.combat
+end
+
+local function Enabled(name) return Wants(name, true) or Wants(name, false) end
+
+-- For the Buffs page.
+function SelfBuffs.Wants(name, inFight) return Wants(name, inFight) end
+function SelfBuffs.SetWants(name, inFight, on)
+	local e = Entry(name)
+	if not e then return end
+	if e.on == false then e.inCombat, e.outOfCombat, e.on = false, false, nil end
+	if inFight then e.inCombat = on else e.outOfCombat = on end
 end
 
 -- Alternatives (the shaman shields...) share a group; either one counts.
@@ -254,26 +276,28 @@ local function Show()
 	local list = {}
 	local limit = (ns.db.remindIconMinutes or 0) * 60
 	local soonest -- seconds until the next icon's time is up
-	-- Combat-only buffs (seals): their icon goes when the fight ends.
-	if not UnitAffectingCombat("player") then
+	local fight = UnitAffectingCombat("player")
+	-- In-combat-only buffs: forgotten when the fight ends.
+	if not fight then
 		for group, name in pairs(missing) do
-			if Entry(name) and Entry(name).combat then missing[group], missingSince[group] = nil, nil end
+			if not Wants(name, false) then missing[group], missingSince[group] = nil, nil end
 		end
 	end
 	if ns.db.remindIcon ~= false then
 		for group, name in pairs(missing) do
 			if dismissed[group] then
 				-- right-clicked away: stays missing (no new reminder), just not shown
-			elseif Enabled(name) then
+			elseif not Enabled(name) then
+				missing[group] = nil
+			elseif Wants(name, fight) then
 				missingSince[group] = missingSince[group] or GetTime()
 				local left = limit > 0 and (missingSince[group] + limit - GetTime()) or nil
 				if not left or left > 0 then
 					list[#list + 1] = { name = name, icon = Entry(name).icon }
 					if left and (not soonest or left < soonest) then soonest = left end
 				end
-			else
-				missing[group] = nil
 			end
+			-- (otherwise: out of combat only, and in a fight - shown once it ends)
 		end
 	end
 	if hideTimer then hideTimer:Cancel() hideTimer = nil end
@@ -287,38 +311,47 @@ local function Show()
 	ns.Display.SetMissing(list)
 end
 
--- name is gone and should be recast.
+local afterFight = {} -- [group] = name: dropped in a fight, to announce once it ends (out of combat only)
+
+local function Announce(name)
+	local now = GetTime()
+	if ns.db.remindAnnounce ~= false and now - (announcedAt[name] or -100) >= ANNOUNCE_THROTTLE then
+		announcedAt[name] = now
+		ns.Display.Alert(name .. " is gone", Entry(name).icon)
+	end
+end
+
+-- name is gone and should be recast. announce: say so (not for what's
+-- missing after logging in - that's just an icon).
 local function Remind(name, announce)
 	if not Enabled(name) then return ns.Trace(name .. " is gone, but its reminder is turned off") end
-	if GroupPresent(GroupOf(name)) then return ns.Trace(name .. " is gone, but an alternative to it is up") end
-	if Entry(name).combat then
-		-- Combat-only: an alert when it drops mid-fight, nothing else.
-		if not (announce and UnitAffectingCombat("player")) then
-			return ns.Trace(name .. " is gone, but it's only reminded when it drops during a fight")
-		end
-		if Spells.WasRecentlyCast(JUDGEMENT) then
-			return ns.Trace(name .. " is gone: used up by Judgement, not reminding")
-		end
-		local now = GetTime()
-		if ns.db.remindAnnounce ~= false and now - (announcedAt[name] or -100) >= ANNOUNCE_THROTTLE then
-			announcedAt[name] = now
-			ns.Display.Alert(name .. " is gone", Entry(name).icon)
-		end
-		-- ...and its icon until you recast it or the fight ends (see Show).
-		missing[GroupOf(name)] = name
-		missingSince[GroupOf(name)] = now
-		return ns.Trace(name .. " dropped during a fight: alerting")
+	local group = GroupOf(name)
+	if GroupPresent(group) then return ns.Trace(name .. " is gone, but an alternative to it is up") end
+	if Entry(name).combat and Spells.WasRecentlyCast(JUDGEMENT) then
+		return ns.Trace(name .. " is gone: used up by Judgement, not reminding")
 	end
-	missing[GroupOf(name)] = name
-	missingSince[GroupOf(name)] = GetTime()
-	if announce and ns.db.remindAnnounce ~= false then
-		local now = GetTime()
-		if now - (announcedAt[name] or -100) >= ANNOUNCE_THROTTLE then
-			announcedAt[name] = now
-			ns.Display.Alert(name .. " is gone", Entry(name).icon)
-		end
+	local fight = UnitAffectingCombat("player") and true or false
+	if not Wants(name, fight) then
+		if not fight then return ns.Trace(name .. " is gone, but it's only reminded in fights") end
+		-- Out of combat only: noted now, announced once the fight ends.
+		missing[group], missingSince[group] = name, GetTime()
+		if announce then afterFight[group] = name end
+		return ns.Trace(name .. " dropped during a fight: reminding once it ends")
 	end
+	missing[group], missingSince[group] = name, GetTime()
+	if announce then Announce(name) end
 	ns.Trace(("%s is gone: reminding (noticed by the %s)"):format(name, updateSource or "game"))
+end
+
+-- The fight is over: announce what dropped in it that's only reminded out of combat.
+local function AnnounceAfterFight()
+	for group, name in pairs(afterFight) do
+		if missing[group] == name and not dismissed[group] and not GroupPresent(group) and Wants(name, false) then
+			Announce(name)
+			ns.Trace(name .. " dropped during the fight: reminding now")
+		end
+	end
+	wipe(afterFight)
 end
 
 -- Called after present has been updated; old: the tracked buffs before.
@@ -534,7 +567,7 @@ local function CheckAtLogin()
 		local g = GroupOf(name)
 		-- Only your own spells: settings copied from another character can list theirs.
 		local yours = Spells.active[name] or (Entry(name).tracking and trackingKnown[name]) or Entry(name).enchant
-		if Enabled(name) and yours and not GroupPresent(g) and not groups[g] then
+		if Wants(name, false) and yours and not GroupPresent(g) and not groups[g] then
 			groups[g] = true
 			Remind(name, false)
 		end
@@ -570,7 +603,9 @@ function SelfBuffs.Describe()
 	table.sort(gone)
 	local known = {}
 	for name, e in pairs(ns.db.selfBuffs) do
-		known[#known + 1] = name .. (e.combat and " (in combat)" or "") .. (e.on == false and " (off)" or "")
+		local fights, outside = Wants(name, true), Wants(name, false)
+		known[#known + 1] = name .. (fights and outside and "" or fights and " (in combat)"
+			or outside and " (out of combat)" or " (off)")
 	end
 	table.sort(known)
 	return ("watching: %s; up: %s; missing: %s; buff IDs readable: %s"):format(
@@ -602,7 +637,10 @@ ns.OnUnit("UNIT_INVENTORY_CHANGED", "player", function() SelfBuffs.Update("equip
 -- after, so anything lost in the fight is caught even if no buff changes.
 ns.On("PLAYER_REGEN_ENABLED", function()
 	SelfBuffs.Update("end of combat")
-	C_Timer.After(1, function() ns.SafeCall(SelfBuffs.Update, "end of combat") end)
+	C_Timer.After(1, function()
+		ns.SafeCall(SelfBuffs.Update, "end of combat")
+		ns.SafeCall(AnnounceAfterFight)
+	end)
 	C_Timer.After(3, function() ns.SafeCall(SelfBuffs.Update, "end of combat") end)
 end)
 
