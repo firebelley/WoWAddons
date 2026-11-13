@@ -22,9 +22,8 @@ local frame, summary, have, amountBox, priceBoxes, hint, listButton, seedLine, c
 local shownID          -- the item the window shows
 local typedPrice = {}  -- [itemID] = the price you typed (this session)
 local typedAmount = {} -- [itemID] = the amount you typed (this session)
-local post             -- { itemID, qty, price, loc, at, confirming } a seed on its way
-local seeds = {}       -- { { auctionID, itemID, qty, price, at = time() } } seeds you've listed, newest last
-local why              -- why List is greyed out, for its tooltip
+local post             -- { itemID, qty, price, deposit, loc, at, confirming } a seed on its way
+local why             -- why List is greyed out, for its tooltip
 local message          -- last result, under the buttons
 local elapsed = 0
 
@@ -82,25 +81,73 @@ end
 ---------------------------------------------------------------------------
 -- Your seeds
 ---------------------------------------------------------------------------
+-- Seeds you've listed that may still be up, newest last (saved, so a sale
+-- after a reload still counts): { { auctionID, itemID, qty, price, deposit,
+-- cancelCost, at = time() } }. auctionID comes later when the game doesn't say.
+local function Seeds()
+	ns.db.seeds = ns.db.seeds or {}
+	return ns.db.seeds
+end
+
+-- What a seed cost or brought in goes into its item's purchase session (one
+-- started before it was listed - not one you've cleared since), so the
+-- purchase tracker can take it off the profit:
+--   sold: the items are gone and you got the price after the cut (and the
+--     deposit back);
+--   cancelled or expired: the deposit is lost, and cancelling may cost more.
+local function Settle(seed, outcome, extra)
+	local s = ns.db.quickBuy[seed.itemID]
+	if not s then
+		s = {}
+		ns.db.quickBuy[seed.itemID] = s
+	end
+	if s.cleared and seed.at < s.cleared then return end
+	local st = s.seed or { sold = 0, income = 0, lost = 0 }
+	s.seed = st
+	if outcome == "sold" then
+		st.sold = st.sold + seed.qty
+		st.income = st.income + math.floor(seed.price * seed.qty * (1 - ns.QuickBuy.AH_CUT))
+	else
+		st.lost = st.lost + (seed.deposit or 0) + (extra or 0)
+	end
+	ns.Debug(("seed %s: %d %s at %s"):format(outcome, seed.qty, ItemName(seed.itemID), ns.Money(seed.price)))
+end
+
+-- Seeds whose time is up (and a little more, for the game's word) expired.
+local EXPIRE_GRACE = 120
+local function Sweep()
+	local list, length = Seeds(), ns.DurationSeconds(DURATION)
+	for i = #list, 1, -1 do
+		local seed = list[i]
+		if time() - seed.at > length + EXPIRE_GRACE then
+			table.remove(list, i)
+			Settle(seed, "expired")
+		end
+	end
+end
+
 -- Your latest seed of the item that may still be up (they last the shortest time).
 local function LiveSeed(id)
-	local length = ns.DurationSeconds(DURATION)
-	for i = #seeds, 1, -1 do
-		local seed = seeds[i]
-		if time() - seed.at > length then
-			table.remove(seeds, i)
-		elseif seed.itemID == id then
-			return seed
-		end
+	Sweep()
+	local list = Seeds()
+	for i = #list, 1, -1 do
+		if list[i].itemID == id and time() - list[i].at <= ns.DurationSeconds(DURATION) then return list[i] end
 	end
 	return nil
 end
 
 local function ForgetSeed(auctionID)
-	for i = #seeds, 1, -1 do
-		if seeds[i].auctionID == auctionID then return table.remove(seeds, i) end
+	local list = Seeds()
+	for i = #list, 1, -1 do
+		if list[i].auctionID == auctionID then return table.remove(list, i) end
 	end
 	return nil
+end
+
+local function AddSeed(p, auctionID)
+	local list = Seeds()
+	list[#list + 1] = { auctionID = auctionID, itemID = p.itemID, qty = p.qty, price = p.price, deposit = p.deposit,
+		at = time() }
 end
 
 local function RefreshSoon()
@@ -120,7 +167,9 @@ local function List()
 	local price, qty, loc = Price(id), Amount(id), FindInBags(id)
 	if not (price and loc) then return end
 	local _, count = FindInBags(id)
-	post = { itemID = id, qty = qty, price = price, loc = loc, at = GetTime(), had = count }
+	local ok, deposit = pcall(C_AuctionHouse.CalculateCommodityDeposit, id, DURATION, qty)
+	post = { itemID = id, qty = qty, price = price, deposit = ok and deposit or nil, loc = loc, at = GetTime(),
+		had = count }
 	message = nil
 	-- (It returns whether the game wants the price confirmed - see
 	-- AUCTION_HOUSE_POST_WARNING - not whether it worked: the listing is
@@ -136,6 +185,8 @@ local function Cancel()
 	local seed = shownID and LiveSeed(shownID)
 	if not (seed and seed.auctionID) then return end
 	message = nil
+	local ok, cost = pcall(C_AuctionHouse.GetCancelCost, seed.auctionID)
+	seed.cancelCost = ok and tonumber(cost) or nil
 	pcall(C_AuctionHouse.CancelAuction, seed.auctionID)
 	elapsed = 1
 end
@@ -187,7 +238,7 @@ ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	local p = post
 	if not (p and auctionID) then return end
 	post = nil
-	seeds[#seeds + 1] = { auctionID = auctionID, itemID = p.itemID, qty = p.qty, price = p.price, at = time() }
+	AddSeed(p, auctionID)
 	message = ("Listed %d at %s"):format(p.qty, ns.Money(p.price))
 	RefreshSoon()
 	elapsed = 1
@@ -206,7 +257,7 @@ ns.On("BAG_UPDATE_DELAYED", function()
 		if post ~= p then return end -- the game said so after all
 		post = nil
 		-- Its ID (for Cancel) comes from your auctions list, read again shortly (Sales.lua).
-		seeds[#seeds + 1] = { itemID = p.itemID, qty = p.qty, price = p.price, at = time() }
+		AddSeed(p)
 		message = ("Listed %d at %s"):format(p.qty, ns.Money(p.price))
 		RefreshSoon()
 		if ns.Sales and ns.Sales.QueryOwned then ns.Sales.QueryOwned(1) end
@@ -220,10 +271,10 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 	local AH = C_AuctionHouse
 	if not (AH.GetNumOwnedAuctions and AH.GetOwnedAuctionInfo) then return end
 	local taken = {}
-	for _, seed in ipairs(seeds) do
+	for _, seed in ipairs(Seeds()) do
 		if seed.auctionID then taken[seed.auctionID] = true end
 	end
-	for _, seed in ipairs(seeds) do
+	for _, seed in ipairs(Seeds()) do
 		if not seed.auctionID then
 			local best
 			for i = 1, AH.GetNumOwnedAuctions() or 0 do
@@ -243,16 +294,54 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 end)
 
 ns.On("AUCTION_CANCELED", function(auctionID)
-	if not ForgetSeed(auctionID) then return end
+	local seed = ForgetSeed(auctionID)
+	if not seed then return end
+	Settle(seed, "cancelled", seed.cancelCost)
 	message = "Seed cancelled"
 	RefreshSoon()
 	elapsed = 1
 end)
 
 -- Sold or expired: no longer yours to cancel.
-ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(_, _, auctionID)
-	if auctionID then ForgetSeed(auctionID) end
+local SOLD = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionSold or 4
+local EXPIRED = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionExpired or 5
+ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(kind, _, auctionID)
+	if not (auctionID and (kind == SOLD or kind == EXPIRED)) then return end
+	local seed = ForgetSeed(auctionID)
+	if seed then Settle(seed, kind == SOLD and "sold" or "expired") end
 end)
+
+-- A sale the notice above didn't place (Sales.lua: the chat message, or a
+-- notice for an auction not known yet): the seed with that ID, or without
+-- one, your newest seed of that item whose ID isn't known yet either.
+ns.Seed = {}
+function ns.Seed.Sold(name, auctionID)
+	local list = Seeds()
+	for i = #list, 1, -1 do
+		local seed = list[i]
+		if (auctionID and seed.auctionID == auctionID)
+			or (not auctionID and not seed.auctionID and ItemName(seed.itemID) == name) then
+			table.remove(list, i)
+			Settle(seed, "sold")
+			elapsed = 1
+			return
+		end
+	end
+end
+
+-- What seeding did in the item's purchase session: how many sold, what they
+-- brought in (after the cut), what was lost (deposits, cancel costs), and how
+-- many are up now.
+function ns.Seed.Stats(id)
+	Sweep()
+	local s = ns.db.quickBuy[id]
+	local st = s and s.seed
+	local up = 0
+	for _, seed in ipairs(Seeds()) do
+		if seed.itemID == id and not (s and s.cleared and seed.at < s.cleared) then up = up + seed.qty end
+	end
+	return st and st.sold or 0, st and st.income or 0, st and st.lost or 0, up
+end
 
 ---------------------------------------------------------------------------
 -- The window
@@ -430,6 +519,7 @@ local function Create()
 	listButton:SetPoint("TOPRIGHT", -PAD, y)
 	listButton:SetMotionScriptsWhileDisabled(true)
 	listButton:SetScript("OnClick", function() ns.SafeCall(List) end)
+	ns.ClickSound(listButton)
 	Tooltip(listButton, "List", function()
 		local id = shownID
 		local qty, price = Amount(id), Price(id)
@@ -452,6 +542,7 @@ local function Create()
 	cancelButton:SetText(CANCEL or "Cancel")
 	cancelButton:SetMotionScriptsWhileDisabled(true)
 	cancelButton:SetScript("OnClick", function() ns.SafeCall(Cancel) end)
+	ns.ClickSound(cancelButton)
 	Tooltip(cancelButton, "Cancel seed", function()
 		local seed = shownID and LiveSeed(shownID)
 		if not seed then return "No seed of yours is up for this item." end

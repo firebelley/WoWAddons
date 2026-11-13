@@ -55,6 +55,7 @@ local function Create()
 			ns.Window.Toggle()
 		end
 	end)
+	ns.ClickSound(button)
 	button:SetScript("OnDragStart", function(self)
 		self:LockHighlight()
 		self:SetScript("OnUpdate", FollowCursor)

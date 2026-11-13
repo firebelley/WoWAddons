@@ -191,6 +191,8 @@ local function QueryOwned(delay)
 	queryPending = true
 	C_Timer.After(delay, function()
 		queryPending = false
+		-- Not while a quick buy goes through: it could crowd out the purchase.
+		if ns.QuickBuy and ns.QuickBuy.Busy and ns.QuickBuy.Busy() then return QueryOwned(1) end
 		if ns.atAH then pcall(AH.QueryOwnedAuctions, {}) end
 	end)
 end
@@ -486,6 +488,8 @@ end
 -- message says how many: the sale gets the price of one (the mail fills in
 -- the rest), and the listing is kept for the next part.
 local function Sold(name, auctionID, auction)
+	-- A seed (Seed.lua) counts toward its purchase session.
+	if ns.Seed and ns.Seed.Sold then ns.SafeCall(ns.Seed.Sold, (auction and auction.name) or name, auctionID) end
 	local c = Char()
 	if not c then return end
 	local s = { name = name, t = time() }

@@ -97,6 +97,7 @@ function ns.SideWindow(name, width, insetTop, pointKey, defaultPoint, key)
 			if f.tab then f.tab.Refresh() end
 			f:Hide()
 		end)
+		ns.ClickSound(f.CloseButton)
 	end
 	f:ClearAllPoints()
 	local p = ns.db[pointKey]

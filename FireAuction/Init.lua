@@ -49,6 +49,20 @@ function ns.SafeCall(fn, ...)
 	return xpcall(function() return fn(unpack(args, 1, n)) end, ns.ReportError)
 end
 
+-- The standard click sound for our own buttons (Blizzard's play it in their
+-- own click handlers); checkboxes get the on / off ones. sound: a SOUNDKIT
+-- name to play instead.
+function ns.ClickSound(widget, sound)
+	widget:HookScript("OnClick", function(self)
+		if not (PlaySound and SOUNDKIT) then return end
+		local kit = SOUNDKIT[sound or "IG_MAINMENU_OPTION"]
+		if not sound and self.GetChecked and self:GetObjectType() == "CheckButton" then
+			kit = self:GetChecked() and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF
+		end
+		if kit then PlaySound(kit) end
+	end)
+end
+
 ---------------------------------------------------------------------------
 -- Events: ns.On(event, fn). Events this client doesn't have are ignored.
 ---------------------------------------------------------------------------

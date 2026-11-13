@@ -84,6 +84,7 @@ local function Build()
 			b:SetPoint("TOPLEFT", 20, y)
 		end
 		b:SetScript("OnClick", function() ns.SafeCall(onClick) end)
+		ns.ClickSound(b)
 		Tooltip(b, text, tooltip)
 		lastButton = b
 	end
@@ -104,6 +105,7 @@ local function Build()
 			ns.db[key] = self:GetChecked() and true or false
 			if onChange then ns.SafeCall(onChange) end
 		end)
+		ns.ClickSound(cb)
 		Tooltip(cb, label, tooltip)
 		refreshers[#refreshers + 1] = function() cb:SetChecked(ns.db[key] and true or false) end
 		y = y - 28

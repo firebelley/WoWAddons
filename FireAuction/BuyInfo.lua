@@ -101,6 +101,12 @@ local function Lines(id, selling)
 	-- Not rounded: the cut is taken from the whole sale, not from each item.
 	local net = sell and sell * cut
 	local avg = bought > 0 and spent / bought or nil
+	-- Seeding (Seed.lua): seeds that sold are gone from what's left to resell
+	-- and brought in their price; cancelled or expired ones lost their deposit.
+	local seedSold, seedIncome, seedLost, seedUp = 0, 0, 0, 0
+	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp = ns.Seed.Stats(id) end
+	local left = math.max(0, bought - seedSold)
+	local seeded = seedSold > 0 or seedLost > 0
 	-- What the rows that go by it are called.
 	local resell = typed and "List at your price" or target and ("Resell " .. CUSTOM .. "(custom)|r") or "Resell"
 	local uses = {}
@@ -117,9 +123,14 @@ local function Lines(id, selling)
 		Add("Average cost", nil, ns.Money(math.floor(avg + 0.5)) .. " each", nil, Tip("Average cost",
 			("What you've paid per item: %s for %d."):format(ns.Money(spent), bought)))
 		Add("Spent", nil, ns.Money(spent))
-		Add("Break-even relist", nil, ns.Money(QB.RelistPrice(spent, bought)) .. " each", nil,
-			Tip("Break-even relist", ("The lowest price to list all %d at and still make a profit after the 5%% cut.")
-				:format(bought)))
+		local cover = spent + seedLost - seedIncome
+		if left > 0 then
+			Add("Break-even relist", nil, cover > 0 and (ns.Money(QB.RelistPrice(cover, left)) .. " each")
+				or (GREY .. "any price|r"), nil, Tip("Break-even relist",
+				(seeded and "The lowest price to list the %d left at and still make a profit after the 5%% cut, "
+					.. "seeds counted." or "The lowest price to list all %d at and still make a profit after the 5%% cut.")
+					:format(left)))
+		end
 	end
 
 	-- Resale price: automatic or your own (the row's two buttons), or the sell page's.
@@ -143,17 +154,20 @@ local function Lines(id, selling)
 	if bought > 0 then
 		Add("What it's worth", nil, nil, "header", Tip("What it's worth",
 			"Profit on what you've bought, per item and in total."))
-		Add(nil, "each", "all " .. bought, "cols", nil, "return")
+		-- Each way of using what's left (seeds that sold are gone), at what it
+		-- cost you on average.
+		Add(nil, "each", "all " .. left, "cols", nil, "return")
 		local options = {}
 		if sell then
 			options[#options + 1] = { name = resell, each = net - avg,
 				tip = Tip("Resell at " .. ns.Money(sell),
-					("After the 5%% cut you get %s for all %d; you paid %s."):format(
-						ns.Money(math.floor(net * bought)), bought, ns.Money(spent))) }
+					(left == bought and "After the 5%% cut you get %s for all %d; you paid %s."
+						or "After the 5%% cut you get %s for the %d left; they cost you %s."):format(
+						ns.Money(math.floor(net * left)), left, ns.Money(math.floor(avg * left + 0.5)))) }
 		end
 		for _, u in ipairs(uses) do
 			local source, worth = CraftSource(u, itemName)
-			local short = bought < u.qty and (GREY .. ("%d more for one craft|r"):format(u.qty - bought)) or nil
+			local short = left < u.qty and (GREY .. ("%d more for one craft|r"):format(u.qty - left)) or nil
 			options[#options + 1] = { name = Name(u.output), each = u.worth - avg, note = short,
 				tip = Tip(Name(u.output), source, worth, ("You paid %s on average."):format(ns.Money(avg))) }
 		end
@@ -164,10 +178,36 @@ local function Lines(id, selling)
 		for _, o in ipairs(options) do
 			local name = o.name
 			if o == best and #options > 1 then name = name .. "  " .. GREY .. "best|r" end
-			Add(name, Signed(o.each), Signed(o.each * bought), nil, o.tip, ns.Percent(o.each / avg * 100))
+			Add(name, Signed(o.each), Signed(o.each * left), nil, o.tip, ns.Percent(o.each / avg * 100))
 			if o.note then Add("   " .. o.note, nil, nil, "note") end
 		end
 		if #options == 0 then Add("No price to go by yet", nil, nil, "note") end
+
+		-- Seeds: what the ones that sold brought in against what they cost you,
+		-- and deposits lost on the rest - then the profit with that counted.
+		if seeded then
+			local seedCost = avg * seedSold
+			local result = seedIncome - seedCost - seedLost
+			local each = seedSold > 0 and (seedIncome / seedSold - avg) or nil
+			local tip = {}
+			if seedSold > 0 then
+				tip[#tip + 1] = ("%d sold for %s after the 5%% cut; they cost you %s (%s each)."):format(seedSold,
+					ns.Money(seedIncome), ns.Money(math.floor(seedCost + 0.5)), ns.Money(math.floor(avg + 0.5)))
+			end
+			if seedLost > 0 then
+				tip[#tip + 1] = ("Deposits lost on cancelled or expired seeds: %s."):format(ns.Money(seedLost))
+			end
+			Add(("Seeds (%d sold)"):format(seedSold), each and Signed(each), Signed(result), nil,
+				Tip("Seeds", unpack(tip)), each and ns.Percent(each / avg * 100))
+			if best then
+				local total = best.each * left + result
+				Add("Profit after seeds", nil, Signed(total), nil, Tip("Profit after seeds",
+					("%s for the %d left, plus your seeds."):format(best.name, left)), ns.Percent(total / spent * 100))
+			end
+		end
+		if seedUp > 0 then
+			Add(("   %d in seeds still up - counted when they sell or end"):format(seedUp), nil, nil, "note")
+		end
 	end
 
 	-- Next buy, at "Up to".
@@ -270,6 +310,7 @@ local function ModeButton(texture, onClick, tip)
 	b.icon:SetTexture(texture)
 	b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 	b:SetScript("OnClick", function() ns.SafeCall(onClick) end)
+	ns.ClickSound(b)
 	b:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		tip(self)
@@ -507,6 +548,7 @@ local function Create()
 	clearAll:SetScript("OnClick", function()
 		if #ns.QuickBuy.Sessions() > 0 then StaticPopup_Show("FIREAUCTION_CLEAR_SESSIONS", SessionList()) end
 	end)
+	ns.ClickSound(clearAll)
 	clearAll:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Clear all sessions", 1, 1, 1)

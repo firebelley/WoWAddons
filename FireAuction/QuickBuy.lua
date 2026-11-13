@@ -19,16 +19,21 @@ local _, ns = ...
 local QuickBuy = {}
 ns.QuickBuy = QuickBuy
 
-local QUOTE_TIMEOUT = 10 -- seconds to wait for the game's price quote / purchase
+local QUOTE_WAIT = 5     -- seconds to wait for the game's price quote
+local QUOTE_TIMEOUT = 10 -- seconds to wait for the purchase itself, once confirmed
+local RECONFIRMS = 3     -- times a purchase is confirmed again when its price changes (still within "Up to")
+local RESENDS = 3        -- times a confirmation the game dropped is sent again
 local AH_CUT = 0.05
 
-local panel, button, clear, status, wantBox, coinBoxes
+local panel, button, clear, refresh, status, wantBox, coinBoxes
 local itemID          -- the commodity on screen
 local plan            -- { quantity, total } the button would buy right now
 local pending         -- { itemID, quantity, total, stage = "quote"/"buying", at }
 local summarized = {} -- [itemID] = how many were bought at the last summary
 local boughtNow = {}  -- [itemID] = { count, total } bought since the auction house opened
 local outside         -- { itemID, quantity, total } a purchase through Blizzard's Buy popup
+local gaveUp          -- { itemID, quantity, total, at } a confirmed purchase given up on (it may still go through)
+local LATE = 15       -- seconds such a purchase can still come through and be counted
 local LOG_SIZE = 20   -- purchases kept in the session log
 local message         -- last result, shown under the button until the next change
 -- Lost to someone else: the cheap ones went before the quote, or between the
@@ -66,6 +71,8 @@ end
 local function ClearSession(id)
 	local s = Settings(id)
 	s.bought, s.spent, s.log = nil, nil, nil
+	-- Seeding results too (Seed.lua); seeds listed before now no longer count.
+	s.seed, s.cleared = nil, time()
 	summarized[id] = nil
 	boughtNow[id] = nil
 end
@@ -238,6 +245,8 @@ local function Update()
 	button:SetText(text)
 	button:SetEnabled(enabled)
 	clear:SetEnabled(not pending and (s.bought or 0) > 0)
+	refresh:SetEnabled(not pending)
+	refresh.arrow:SetDesaturated(pending ~= nil)
 
 	local line = message
 	local count = s.bought or 0
@@ -322,8 +331,13 @@ end
 -- Blizzard's Buy popup does whenever it closes - an open one can hold back
 -- the refresh, leaving the list stuck on "Searching..."), then refresh a
 -- moment later, once the game has finished with it.
-local function Finish(text)
+local function Finish(text, why)
+	if why then ns.Debug("quick buy: not bought - " .. why) end
 	if pending then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
+	-- Confirmed but given up on: if it goes through after all, it's still counted.
+	if pending and pending.stage == "buying" and not pending.done then
+		gaveUp = { itemID = pending.itemID, quantity = pending.quantity, total = pending.total, at = GetTime() }
+	end
 	pending = nil
 	message = text
 	holdSince, holdSawEmpty = GetTime(), false
@@ -339,21 +353,76 @@ end
 
 local function Buy()
 	if pending or not plan or not itemID then return end
-	pending = { itemID = itemID, quantity = plan.quantity, total = plan.total, stage = "quote", at = GetTime() }
+	-- limit: the most it may cost in all - "Up to" for each, on average. If
+	-- someone buys some of the cheapest first, the price quoted for the rest
+	-- is higher than shown, but still bought while it averages within that.
+	local max = Settings(itemID).max or 0
+	pending = { itemID = itemID, quantity = plan.quantity, total = plan.total, limit = max * plan.quantity,
+		stage = "quote", at = GetTime() }
 	message = nil
 	C_AuctionHouse.StartCommoditiesPurchase(itemID, plan.quantity)
 	Update()
 end
 
+-- Confirm the purchase. The game may queue it (the auction house still busy)
+-- and then drop it for another request: it's sent again (see below).
+local function Confirm()
+	pending.at, pending.confirmSent, pending.confirmWhenReady = GetTime(), false, false
+	C_AuctionHouse.ConfirmCommoditiesPurchase(pending.itemID, pending.quantity)
+end
+
 ns.On("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
 	if not pending and outside then outside.total = totalPrice end
-	if not (pending and pending.stage == "quote") then return end
-	if totalPrice > pending.total then
-		return Finish(TAKEN) -- closes it without buying
+	if not pending then return end
+	local ok = totalPrice <= pending.limit and totalPrice <= GetMoney()
+	if pending.stage == "buying" then
+		-- A new quote after confirming: the price changed in between (someone
+		-- bought some first), and the game waits to be told again. Still the
+		-- same purchase: confirmed again (a few times at most) while it's
+		-- still within "Up to", otherwise given up on.
+		pending.total = totalPrice
+		if not ok then
+			return Finish(TAKEN, ("price changed after confirming: %s for %d, limit %s"):format(ns.Money(totalPrice),
+				pending.quantity, ns.Money(pending.limit)))
+		end
+		pending.reconfirms = (pending.reconfirms or 0) + 1
+		if pending.reconfirms > RECONFIRMS then
+			return Finish(TAKEN, "price kept changing after confirming")
+		end
+		ns.Debug(("quick buy: price changed after confirming, confirming again at %s"):format(ns.Money(totalPrice)))
+		Confirm()
+		return Update()
 	end
-	pending.stage, pending.at, pending.total = "buying", GetTime(), totalPrice
-	C_AuctionHouse.ConfirmCommoditiesPurchase(pending.itemID, pending.quantity)
+	if not ok then
+		return Finish(TAKEN, ("quoted %s for %d, limit %s"):format(ns.Money(totalPrice), pending.quantity,
+			ns.Money(pending.limit))) -- closes it without buying
+	end
+	pending.stage, pending.total = "buying", totalPrice
+	Confirm()
 	Update()
+end)
+
+-- The confirmation went out to the auction house.
+ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", function()
+	if pending and pending.stage == "buying" then pending.confirmSent = true end
+end)
+
+-- The confirmation was dropped before it went out (the game dropped it from
+-- its queue for another request): the price you were quoted still stands, so
+-- send it again as soon as the auction house is ready - still the same
+-- purchase, from the same click.
+ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", function()
+	if not (pending and pending.stage == "buying" and not pending.confirmSent) then return end
+	pending.resends = (pending.resends or 0) + 1
+	if pending.resends > RESENDS then
+		return Finish("|cffff5050Not bought:|r no answer from the auction house", "the confirmation kept being dropped")
+	end
+	ns.Debug("quick buy: confirmation dropped, sending it again when the auction house is ready")
+	pending.at, pending.confirmWhenReady = GetTime(), true
+end)
+
+ns.On("AUCTION_HOUSE_THROTTLED_SYSTEM_READY", function()
+	if pending and pending.confirmWhenReady then Confirm() end
 end)
 
 -- The purchase we just started was dropped: no quote will come, so don't
@@ -361,13 +430,13 @@ end)
 ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", function()
 	if pending and pending.stage == "quote" and GetTime() - pending.at < 2
 		and not (refreshSentAt and refreshSentAt > pending.at) then
-		Finish("|cffff5050Not bought:|r no answer from the auction house")
+		Finish("|cffff5050Not bought:|r no answer from the auction house", "the price check was dropped")
 	end
 end)
 
 ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
 	if not pending then return end
-	Finish(TAKEN)
+	Finish(TAKEN, "the game says the price is unavailable")
 end)
 
 ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
@@ -377,7 +446,18 @@ ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
 		outside = nil
 		return Update()
 	end
+	if not pending and gaveUp then
+		-- One given up on went through after all.
+		local g = gaveUp
+		gaveUp = nil
+		if GetTime() - g.at > LATE then return end
+		Record(g.itemID, g.quantity, g.total)
+		ns.Print(("bought %d %s for %s after all"):format(g.quantity, ItemName(g.itemID), ns.Money(g.total)))
+		message = nil
+		return Update()
+	end
 	if not (pending and pending.stage == "buying") then return end
+	pending.done = true
 	local id, quantity, total = pending.itemID, pending.quantity, pending.total
 	Record(id, quantity, total)
 	if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.LOOT_WINDOW_COIN_SOUND) end
@@ -391,16 +471,17 @@ end)
 
 ns.On("COMMODITY_PURCHASE_FAILED", function()
 	if not pending then
-		outside = nil
+		outside, gaveUp = nil, nil
 		return
 	end
-	Finish(TAKEN)
+	Finish(TAKEN, "the game says the purchase failed")
 end)
 
 -- Purchases through Blizzard's Buy popup: what it starts (and confirms) and
 -- the price the game quotes for it. (Quick buy's own are `pending`.)
 if C_AuctionHouse and C_AuctionHouse.StartCommoditiesPurchase then
 	hooksecurefunc(C_AuctionHouse, "StartCommoditiesPurchase", function(id, quantity)
+		gaveUp = nil -- a new purchase: a success from here on is that one's
 		if not pending then outside = { itemID = id, quantity = quantity } end
 	end)
 	hooksecurefunc(C_AuctionHouse, "ConfirmCommoditiesPurchase", function(id, quantity)
@@ -552,9 +633,9 @@ local function Create()
 	if not display then return end
 
 	panel = CreateFrame("Frame", "FireAuctionQuickBuy", buyFrame)
-	panel:SetPoint("BOTTOMLEFT", display, "BOTTOMLEFT", 16, 14)
-	panel:SetPoint("BOTTOMRIGHT", display, "BOTTOMRIGHT", -16, 14)
-	panel:SetHeight(96)
+	panel:SetPoint("BOTTOMLEFT", display, "BOTTOMLEFT", 16, 8)
+	panel:SetPoint("BOTTOMRIGHT", display, "BOTTOMRIGHT", -16, 8)
+	panel:SetHeight(108)
 
 	local title = Label(panel, "Quick buy")
 	title:SetPoint("TOPLEFT", 0, 0)
@@ -590,6 +671,7 @@ local function Create()
 		message = nil
 		ns.SafeCall(Update)
 	end)
+	ns.ClickSound(cheap)
 	cheap:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Cheapest listing only", 1, 1, 1)
@@ -601,7 +683,7 @@ local function Create()
 
 	local tips = {
 		[wantBox] = { "Want", "How many to buy in total. Leave empty for no limit." },
-		[coinBoxes[1]] = { "Up to", "The most to pay for one." },
+		[coinBoxes[1]] = { "Up to", "The most to pay per item, on average." },
 	}
 	tips[coinBoxes[2]], tips[coinBoxes[3]] = tips[coinBoxes[1]], tips[coinBoxes[1]]
 	for box, tip in pairs(tips) do
@@ -616,27 +698,35 @@ local function Create()
 
 	-- Refresh the listings (the same as the list's own refresh button), right
 	-- next to Buy so you can go back and forth without moving the mouse far.
-	local refresh = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	refresh:SetSize(28, 24)
+	-- Greyed out while a purchase goes through: a refresh then can crowd out
+	-- the purchase's price check, leaving it waiting for an answer.
+	refresh = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	refresh:SetSize(40, 34)
 	refresh:SetPoint("TOPRIGHT", 0, -50)
+	refresh:SetMotionScriptsWhileDisabled(true)
 	local arrow = refresh:CreateTexture(nil, "ARTWORK")
-	arrow:SetSize(14, 14)
+	arrow:SetSize(20, 20)
 	arrow:SetPoint("CENTER")
 	arrow:SetTexture("Interface\\Buttons\\UI-RefreshButton")
+	refresh.arrow = arrow
 	refresh:SetScript("OnClick", function()
+		if pending then return end
 		message = nil
 		Refresh()
 	end)
+	-- The auction house's own refresh button's sound.
+	ns.ClickSound(refresh, "IG_MAINMENU_OPTION_CHECKBOX_ON")
 	refresh:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Refresh", 1, 1, 1)
+		if pending then GameTooltip:AddLine("Wait for the purchase to finish.", 1, 0.3, 0.3, true) end
 		GameTooltip:Show()
 	end)
 	refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	-- Clear: start the count (and what it cost) over, after a last summary.
 	clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	clear:SetSize(50, 24)
+	clear:SetSize(50, 34)
 	clear:SetPoint("TOPLEFT", 0, -50)
 	clear:SetText("Clear")
 	clear:SetMotionScriptsWhileDisabled(true)
@@ -647,6 +737,7 @@ local function Create()
 		message = nil
 		ns.SafeCall(Update)
 	end)
+	ns.ClickSound(clear)
 	clear:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Clear", 1, 1, 1)
@@ -656,16 +747,17 @@ local function Create()
 	clear:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	button = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	button:SetHeight(24)
+	button:SetHeight(34)
 	button:SetPoint("TOPLEFT", clear, "TOPRIGHT", 4, 0)
 	button:SetPoint("TOPRIGHT", refresh, "TOPLEFT", -4, 0)
 	button:SetScript("OnClick", function() ns.SafeCall(Buy) end)
+	ns.ClickSound(button)
 	button:SetMotionScriptsWhileDisabled(true)
 	button:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Quick buy", 1, 1, 1)
-		GameTooltip:AddLine("Buys at or under your price, cheapest first, with no confirmation. Nothing is bought "
-			.. "if the price went up.", nil, nil, nil, true)
+		GameTooltip:AddLine("Buys the cheapest first, with no confirmation. If some sell first, the rest are bought "
+			.. "only if the average stays within \"Up to\".", nil, nil, nil, true)
 		if BlizzardDialogOpen() then GameTooltip:AddLine("Close the Buy dialog first.", 1, 0.3, 0.3, true) end
 		GameTooltip:Show()
 	end)
@@ -681,8 +773,11 @@ local function Create()
 	local elapsed = 0
 	panel:SetScript("OnUpdate", function(_, dt)
 		elapsed = elapsed + dt
-		if pending and GetTime() - pending.at > QUOTE_TIMEOUT then
-			Finish("|cffff5050Not bought:|r no answer from the auction house")
+		-- A dropped confirmation, in case the game doesn't say when it's ready.
+		local ready = C_AuctionHouse.IsThrottledMessageSystemReady
+		if pending and pending.confirmWhenReady and (not ready or ready()) then Confirm() end
+		if pending and GetTime() - pending.at > (pending.stage == "quote" and QUOTE_WAIT or QUOTE_TIMEOUT) then
+			Finish("|cffff5050Not bought:|r no answer from the auction house", "no answer while " .. pending.stage)
 		end
 		if elapsed >= 0.25 then
 			elapsed = 0
@@ -706,6 +801,6 @@ ns.On("AUCTION_HOUSE_CLOSED", function()
 	for id in pairs(boughtNow) do ns.SafeCall(Summary, id) end
 	wipe(boughtNow)
 	holdSince = nil
-	outside = nil
+	outside, gaveUp = nil, nil
 	refreshWaiting, refreshSentAt = false, nil
 end)
