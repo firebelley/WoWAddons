@@ -132,14 +132,16 @@ local function UpdateRows()
 			row:Hide()
 		end
 	end
+	local realm = ns.Realm(View())
+	local t, synced = ns.LastScan(realm)
+	local scanned = t > 0 and (" - " .. (synced and "synced " or "scanned ") .. ns.TimeAgo(t)) or ""
 	if #results == 0 then
-		local realm = ns.Realm(View())
 		local empty = not realm or next(realm.items) == nil
-		countText:SetText(empty and "No prices yet - scan at the auction house." or "No matches.")
+		countText:SetText(empty and "No prices yet - scan at the auction house." or ("No matches." .. scanned))
 	elseif #results > ROWS then
-		countText:SetText(("%d-%d of %d items (scroll for more)"):format(offset + 1, math.min(offset + ROWS, #results), #results))
+		countText:SetText(("%d-%d of %d items%s"):format(offset + 1, math.min(offset + ROWS, #results), #results, scanned))
 	else
-		countText:SetText(("%d items"):format(#results))
+		countText:SetText(("%d items%s"):format(#results, scanned))
 	end
 end
 

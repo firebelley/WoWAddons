@@ -209,7 +209,7 @@ end
 local function Today() return ns.Data.Today() end
 
 -- The newest complete scan we have, ours or a guild member's.
-local function Full(realm) return math.max(realm.lastScan or 0, realm.syncedFull or 0) end
+local function Full(realm) return (ns.LastScan(realm)) end
 
 local function WindowDays() return math.min(ns.db.historyDays or 30, MAX_DAYS) end
 
@@ -489,7 +489,7 @@ local function EndIncoming(key, st, reason)
 		C_Timer.After(20, function() Sync.Hello() end)
 	end
 	local realm = ns.Realm(st.house)
-	if realm and st.added + st.updated + st.filled + st.gone > 0 then
+	if realm and (st.added + st.updated + st.filled + st.gone > 0 or st.newerScan) then
 		ns.Data.Prune(st.house)
 		DataChanged()
 	end
@@ -619,7 +619,10 @@ local function OnEnd(r, from)
 					st.gone = st.gone + 1
 				end
 			end
-			realm.syncedFull = math.max(realm.syncedFull or 0, st.T)
+			if st.T > (realm.syncedFull or 0) then
+				realm.syncedFull = st.T
+				st.newerScan = true -- the "last scan" shown changes, even if no price did
+			end
 		end
 	end
 	EndIncoming(key, st, not whole and ("missed %d of %d messages"):format(messages - st.messages, messages) or nil)

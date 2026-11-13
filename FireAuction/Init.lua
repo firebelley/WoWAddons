@@ -109,6 +109,21 @@ function ns.TimeAgo(t)
 	return d .. (d == 1 and " day ago" or " days ago")
 end
 
+-- The newest full scan we have: our own, or one a guild member synced.
+-- Returns its time (0 = none) and whether it came from a sync.
+function ns.LastScan(realm)
+	if not realm then return 0, false end
+	local own, synced = realm.lastScan or 0, realm.syncedFull or 0
+	return math.max(own, synced), synced > own
+end
+
+-- "Last scan 5 minutes ago (synced)", or nil if there's none.
+function ns.LastScanText(realm)
+	local t, synced = ns.LastScan(realm)
+	if t <= 0 then return nil end
+	return "Last scan " .. ns.TimeAgo(t) .. (synced and " (synced)" or "")
+end
+
 ---------------------------------------------------------------------------
 -- Saved settings
 ---------------------------------------------------------------------------

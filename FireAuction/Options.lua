@@ -303,8 +303,8 @@ SlashCmdList.FIREAUCTION = function(input)
 			local realm = ns.Realm(house)
 			local n = 0
 			if realm then for _ in pairs(realm.items) do n = n + 1 end end
-			print(("  %s prices: %d items, last scan %s"):format(ns.HouseName(house), n,
-				realm and realm.lastScan > 0 and ns.TimeAgo(realm.lastScan) or "never"))
+			print(("  %s prices: %d items, %s"):format(ns.HouseName(house), n,
+				ns.LastScanText(realm) or "never scanned"))
 		end
 		print("  " .. ns.Scan.HouseDebug())
 		print("  " .. ns.Sync.Status())

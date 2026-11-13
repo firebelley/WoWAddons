@@ -247,12 +247,7 @@ local function CreateBar()
 		elseif Scan.state == "reading" then
 			text = ("Reading auctions... %d%%"):format(math.floor(reader.index / math.max(1, reader.total) * 100))
 		else
-			local realm = ns.Realm()
-			if realm and (realm.lastScan or 0) > 0 then
-				text = "Last scan " .. ns.TimeAgo(realm.lastScan)
-			else
-				text = "Not scanned yet"
-			end
+			text = ns.LastScanText(ns.Realm()) or "Not scanned yet"
 			if ns.house == "neutral" then text = "|cffffd100Neutral:|r " .. text end
 			local left = Scan.CooldownLeft()
 			if left > 0 then

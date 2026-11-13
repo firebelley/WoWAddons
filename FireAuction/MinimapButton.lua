@@ -67,12 +67,7 @@ local function Create()
 	button:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
 		GameTooltip:SetText("FireAuction", 1, 1, 1)
-		local realm = ns.Realm()
-		if realm and (realm.lastScan or 0) > 0 then
-			GameTooltip:AddLine("Last scan " .. ns.TimeAgo(realm.lastScan), 0.7, 0.7, 0.7)
-		else
-			GameTooltip:AddLine("Not scanned yet - open the auction house.", 0.7, 0.7, 0.7)
-		end
+		GameTooltip:AddLine(ns.LastScanText(ns.Realm()) or "Not scanned yet - open the auction house.", 0.7, 0.7, 0.7)
 		if ns.Sales then
 			local _, sold, unknown = ns.SafeCall(ns.Sales.AddLines, GameTooltip, 10)
 			local _, listed = ns.SafeCall(ns.Sales.AddListings, GameTooltip, 10)
