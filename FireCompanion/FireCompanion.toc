@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: FireCompanion
 ## Notes: Summons your companion pet when you log in. Pick which one under Options > AddOns.
+## IconTexture: Interface\Icons\INV_Box_PetCarrier_01
 ## Author: Firebelley
 ## Version: 0.1.0
 ## SavedVariablesPerCharacter: FireCompanionCharDB

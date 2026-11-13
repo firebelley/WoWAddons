@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: FireRoll
 ## Notes: Group rolls for chests and anything else: click the dice, everyone rolls, and FireRoll shows who won once the whole group has rolled.
+## IconTexture: Interface\Icons\INV_Misc_Dice_01
 ## Author: Firebelley
 ## Version: 0.1.0
 ## SavedVariables: FireRollDB

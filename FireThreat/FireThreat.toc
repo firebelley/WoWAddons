@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: FireThreat
 ## Notes: The enemies you're fighting, coloured by threat: for tanks, what's loose; for everyone else, what's on you or about to be.
+## IconTexture: Interface\Icons\Ability_Warrior_DefensiveStance
 ## Author: Firebelley
 ## Version: 0.1.0
 ## SavedVariables: FireThreatDB

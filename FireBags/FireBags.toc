@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: FireBags
 ## Notes: All bags in one movable window, with special bags in their own sections, sorting, new item glow, and a bank you can browse from anywhere.
+## IconTexture: Interface\Icons\INV_Misc_Bag_08
 ## Author: Firebelley
 ## Version: 0.2.0
 ## SavedVariables: FireBagsDB

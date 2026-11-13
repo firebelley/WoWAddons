@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: FireAuction
 ## Notes: Scans the auction house, keeps a price history, shows prices and trends in item tooltips, and a price window you can open anywhere.
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
 ## Author: Firebelley
 ## Version: 0.2.0
 ## SavedVariables: FireAuctionDB

@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: FireReagents
 ## Notes: Item tooltips list the recipes you know that use the item, for each of your professions.
+## IconTexture: Interface\Icons\INV_Scroll_03
 ## Author: Firebelley
 ## Version: 0.1.0
 ## SavedVariablesPerCharacter: FireReagentsCharDB
