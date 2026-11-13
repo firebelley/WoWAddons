@@ -223,11 +223,13 @@ local function Update()
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
 		else
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
-			-- Greyed out while the auction house is still busy with an earlier
-			-- request (like Blizzard's Post button): a purchase started then has
-			-- to wait in line, stuck on "Checking the price..." for seconds.
-			local ready = C_AuctionHouse.IsThrottledMessageSystemReady
-			if not Held() and not (ready and not ready()) then
+			-- Usable as soon as there's something to buy, even while the auction
+			-- house is still busy with an earlier request: the game holds the
+			-- purchase and sends it the moment it can (one it drops instead is
+			-- given up on right away - AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED).
+			-- Only greyed out right after a purchase, until the listings are
+			-- refreshed: until then they still show what you just bought.
+			if not Held() then
 				plan = { quantity = count, total = total }
 				enabled = true
 			end
