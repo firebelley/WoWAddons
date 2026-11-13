@@ -23,8 +23,9 @@ local PCT = 40     -- width of the "return" column
 local RECENT = 4   -- purchases listed under Recent
 local GREY = "|cff999999"
 
-local frame, rows, title, bar
+local frame, rows, title, bar, clearAll
 local elapsed = 0
+local LIST_MAX = 12 -- sessions named in the Clear all popup
 
 local function Name(id)
 	return (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)) or ns.Data.Name(id, ns.Data.Get(id))
@@ -108,7 +109,9 @@ local function Lines(id, selling)
 	if bought == 0 then
 		Add("Nothing bought yet", nil, nil, "note")
 	else
-		Add("Spent", nil, ns.Money(spent) .. GREY .. "  (" .. ns.Money(avg) .. " each)|r")
+		Add("Average cost", nil, ns.Money(math.floor(avg + 0.5)) .. " each", nil, Tip("Average cost",
+			("What you've paid per item: %s for %d."):format(ns.Money(spent), bought)))
+		Add("Spent", nil, ns.Money(spent))
 		Add("Break-even relist", nil, ns.Money(QB.RelistPrice(spent, bought)) .. " each", nil,
 			Tip("Break-even relist", ("The lowest price to list all %d at and still make a profit after the 5%% cut.")
 				:format(bought)))
@@ -292,6 +295,35 @@ local function Update(id, selling)
 	frame:SetHeight(-y + PAD - 2)
 end
 
+-- "Silk Cloth: 26 for 2g 2s" for each session, for the Clear all popup.
+local function SessionList()
+	local lines = {}
+	local list = ns.QuickBuy.Sessions()
+	for i, s in ipairs(list) do
+		if i > LIST_MAX then
+			lines[#lines + 1] = ("and %d more"):format(#list - LIST_MAX)
+			break
+		end
+		lines[#lines + 1] = ("%s: %d for %s"):format(Name(s.id), s.bought, ns.Money(s.spent))
+	end
+	return table.concat(lines, "\n")
+end
+
+StaticPopupDialogs.FIREAUCTION_CLEAR_SESSIONS = {
+	text = "Clear all purchase sessions?\n\n%s",
+	button1 = YES,
+	button2 = NO,
+	OnAccept = function()
+		local n = ns.QuickBuy.ClearAll()
+		ns.Print(n == 1 and "cleared 1 session." or ("cleared %d sessions."):format(n))
+		elapsed = 1
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
 local function Create()
 	if not AuctionHouseFrame then return end
 	rows = {}
@@ -333,24 +365,55 @@ local function Create()
 	bg:SetColorTexture(1, 1, 1, 0.1)
 	bar:Hide()
 
+	-- Clear all sessions: on the Auctions tab only, along the bottom just
+	-- right of your gold (which sits in the bottom-left corner) - while any
+	-- session is open.
+	local auctions = AuctionHouseFrame.AuctionsFrame or AuctionHouseFrame
+	clearAll = CreateFrame("Button", nil, auctions, "UIPanelButtonTemplate")
+	clearAll:SetSize(140, 22)
+	local money = AuctionHouseFrame.MoneyFrameBorder
+	if money then
+		clearAll:SetPoint("LEFT", money, "RIGHT", 8, 0)
+	else
+		clearAll:SetPoint("BOTTOMLEFT", auctions, "BOTTOMLEFT", 3, -22)
+	end
+	clearAll:SetText("Clear all sessions")
+	clearAll:SetScript("OnClick", function()
+		if #ns.QuickBuy.Sessions() > 0 then StaticPopup_Show("FIREAUCTION_CLEAR_SESSIONS", SessionList()) end
+	end)
+	clearAll:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Clear all sessions", 1, 1, 1)
+		GameTooltip:AddLine("Start every item's session over. Asks first.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	clearAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	clearAll:Hide()
+
 	f:Hide()
 
 	-- The side tab that opens and closes it (like the spellbook's tabs), on
 	-- the auction house window's right edge.
-	local tab = CreateFrame("CheckButton", nil, AuctionHouseFrame)
+	-- The icon is always shown; a gold outline marks it on.
+	local tab = CreateFrame("Button", nil, AuctionHouseFrame)
 	tab:SetSize(32, 32)
 	tab:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, -36)
 	local back = tab:CreateTexture(nil, "BACKGROUND")
 	back:SetSize(64, 64)
 	back:SetPoint("TOPLEFT", -3, 11)
 	back:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
-	tab:SetNormalTexture("Interface\\Icons\\INV_Misc_Coin_01")
+	local icon = tab:CreateTexture(nil, "ARTWORK")
+	icon:SetAllPoints()
+	icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01")
+	local outline = tab:CreateTexture(nil, "OVERLAY")
+	outline:SetAllPoints()
+	outline:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+	outline:SetBlendMode("ADD")
 	tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	tab:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD")
-	tab:SetChecked(ns.db.buyInfo)
-	tab:SetScript("OnClick", function(self)
+	outline:SetShown(ns.db.buyInfo and true or false)
+	tab:SetScript("OnClick", function()
 		ns.db.buyInfo = not ns.db.buyInfo
-		self:SetChecked(ns.db.buyInfo)
+		outline:SetShown(ns.db.buyInfo)
 		elapsed = 1
 		if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 	end)
@@ -370,6 +433,7 @@ local function Create()
 		if elapsed < 0.25 then return end
 		elapsed = 0
 		local id, selling = Current()
+		clearAll:SetShown(ns.QuickBuy and #ns.QuickBuy.Sessions() > 0)
 		tab:SetShown(id ~= nil)
 		f:SetShown(id ~= nil and ns.db.buyInfo)
 		if id and ns.db.buyInfo then ns.SafeCall(Update, id, selling) end

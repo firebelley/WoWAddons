@@ -27,7 +27,7 @@ local itemID          -- the commodity on screen
 local plan            -- { quantity, total } the button would buy right now
 local pending         -- { itemID, quantity, total, stage = "quote"/"buying", at }
 local summarized = {} -- [itemID] = how many were bought at the last summary
-local boughtNow = {}  -- [itemID] = true: bought some since the auction house opened
+local boughtNow = {}  -- [itemID] = { count, total } bought since the auction house opened
 local outside         -- { itemID, quantity, total } a purchase through Blizzard's Buy popup
 local LOG_SIZE = 20   -- purchases kept in the session log
 local message         -- last result, shown under the button until the next change
@@ -58,13 +58,16 @@ local function Record(id, quantity, total)
 	s.log = s.log or {}
 	table.insert(s.log, 1, { quantity, total, time() })
 	while #s.log > LOG_SIZE do table.remove(s.log) end
-	boughtNow[id] = true
+	local visit = boughtNow[id] or { count = 0, total = 0 }
+	visit.count, visit.total = visit.count + quantity, visit.total + total
+	boughtNow[id] = visit
 end
 
 local function ClearSession(id)
 	local s = Settings(id)
 	s.bought, s.spent, s.log = nil, nil, nil
 	summarized[id] = nil
+	boughtNow[id] = nil
 end
 
 local function ItemName(id)
@@ -131,16 +134,25 @@ local function Available(id, maxPrice, quantity)
 	return count, total
 end
 
--- "Silk Cloth: bought 100 for 1g 75s (1s 75c each). Relist above 1s 84c
--- each to make a profit." Once per batch of purchases.
+-- "Silk Cloth: bought 100 for 1g 75s (1s 75c each). Break-even: 1s 84c each."
+-- Once per batch of purchases. When the session holds more than this visit's
+-- purchases: "bought 4 for 32s (8s each) - 26 this session, break-even 8s 19c
+-- each." (break-even is for the whole session).
 local function Summary(id)
 	local s = Settings(id)
 	local count = s.bought or 0
 	if count <= 0 or summarized[id] == count then return end
 	summarized[id] = count
 	local total = s.spent or 0
-	ns.Print(("|cffffd100%s:|r bought %d for %s (%s each). Break-even: %s each."):format(ItemName(id), count, ns.Money(total), ns.Money(math.floor(total / count + 0.5)),
-		ns.Money(RelistPrice(total, count))))
+	local visit = boughtNow[id]
+	local name, breakEven = ItemName(id), ns.Money(RelistPrice(total, count))
+	if visit and visit.count > 0 and visit.count < count then
+		ns.Print(("|cffffd100%s:|r bought %d for %s (%s each) - %d this session, break-even %s each."):format(name,
+			visit.count, ns.Money(visit.total), ns.Money(math.floor(visit.total / visit.count + 0.5)), count, breakEven))
+	else
+		ns.Print(("|cffffd100%s:|r bought %d for %s (%s each). Break-even: %s each."):format(name, count,
+			ns.Money(total), ns.Money(math.floor(total / count + 0.5)), breakEven))
+	end
 end
 
 local function BlizzardDialogOpen()
@@ -384,6 +396,26 @@ end
 ---------------------------------------------------------------------------
 QuickBuy.RelistPrice = RelistPrice
 QuickBuy.AH_CUT = AH_CUT
+
+-- Every item with a session, by name: { { id, bought, spent }, ... }
+function QuickBuy.Sessions()
+	local list = {}
+	for id, s in pairs(ns.db.quickBuy) do
+		if (s.bought or 0) > 0 then list[#list + 1] = { id = id, bought = s.bought, spent = s.spent or 0 } end
+	end
+	table.sort(list, function(x, y) return ItemName(x.id) < ItemName(y.id) end)
+	return list
+end
+
+-- Clear every session (not while a purchase is going through). Returns how many.
+function QuickBuy.ClearAll()
+	if pending then return 0 end
+	local list = QuickBuy.Sessions()
+	for _, s in ipairs(list) do ClearSession(s.id) end
+	message = nil
+	ns.SafeCall(Update)
+	return #list
+end
 
 -- The commodity on the buy page (nil elsewhere).
 function QuickBuy.Item()
