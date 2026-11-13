@@ -411,6 +411,16 @@ end
 QuickBuy.RelistPrice = RelistPrice
 QuickBuy.AH_CUT = AH_CUT
 
+-- Your own resale price for an item (copper), or nil: the "Target" you set in
+-- the panel on the right (BuyInfo.lua). Kept through Clear, like Want and Up to.
+function QuickBuy.Target(id)
+	local s = ns.db.quickBuy[id]
+	return s and s.target
+end
+function QuickBuy.SetTarget(id, price)
+	Settings(id).target = price and price > 0 and math.floor(price) or nil
+end
+
 -- Every item with a session, by name: { { id, bought, spent }, ... }
 function QuickBuy.Sessions()
 	local list = {}

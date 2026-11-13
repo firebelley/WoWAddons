@@ -1,10 +1,14 @@
--- A panel on the right of the auction house while you're on a commodity's
--- buy page (Silk Cloth...), next to Quick buy - or selling something you've
--- bought this session, to see what to list it at. Hidden by default; a tab
--- on the window's edge opens it (remembered).
+-- The purchase tracker: a window beside the auction house while you're on a
+-- commodity's buy page (Silk Cloth...), next to Quick buy - or selling
+-- something you've bought this session, to see what to list it at. Hidden by
+-- default; a tab on the auction house window's edge opens it (remembered).
+-- Drag it anywhere (remembered too).
 --
---   This session      how many you've bought (toward Want), what it cost, and
---                     the price to relist at to break even.
+--   (portrait)        the item, and how many you've bought (toward Want).
+--   This session      what it cost on average and in all, and the price to
+--                     relist at to break even.
+--   Resale price      the price the "Resell" rows go by: automatic (the
+--                     cheapest listing) or your own, set with its two buttons.
 --   What it's worth   what you've bought makes each way - resold, or crafted
 --                     with one of your saved recipes - each and for all of
 --                     it, the best way marked.
@@ -15,17 +19,22 @@
 -- worked out.
 local _, ns = ...
 
-local WIDTH = 320
-local PAD = 12
+local WIDTH = 330
+local PAD = 14
+local TOP = -66    -- where the rows start, under the portrait
 local ROW = 15
 local COL = 64     -- width of a number column ("all")
 local PCT = 40     -- width of the "return" column
+local BUTTONS = 44 -- room for the Resale price row's two buttons
 local RECENT = 4   -- purchases listed under Recent
 local GREY = "|cff999999"
-
-local frame, rows, title, bar, clearAll
-local elapsed = 0
+local CUSTOM = "|cff66bbff" -- your own resale price, wherever it's used
 local LIST_MAX = 12 -- sessions named in the Clear all popup
+
+local frame, rows, summary, bar, clearAll, tabOutline
+local autoButton, customButton
+local shownID -- the item the window shows
+local elapsed = 0
 
 local function Name(id)
 	return (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)) or ns.Data.Name(id, ns.Data.Get(id))
@@ -46,13 +55,10 @@ local function Tip(...)
 	end
 end
 
--- Where the resell price comes from, for tooltips.
-local function SellSource(approx, selling, typed)
-	if typed then return "Your Unit Price on the sell page." end
-	if approx then
-		return "No listings loaded: " .. ns.Data.TrendDays() .. "-day average market price."
-	end
-	return selling and "Cheapest listing now." or "Cheapest listing left after Quick buy."
+-- The automatic resale price, where it comes from.
+local function AutoSource(approx, selling)
+	if approx then return "No listings loaded: " .. ns.Data.TrendDays() .. "-day average market price." end
+	return selling and "The cheapest listing now." or "The cheapest listing left after Quick buy."
 end
 
 -- The Unit Price typed on the sell page, or nil if none.
@@ -75,8 +81,8 @@ local function CraftSource(u, itemName)
 end
 
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
--- being "header", "note", "cols", "bar" or nil. selling: on the sell page (no
--- Next buy).
+-- being "header", "price", "note", "cols", "bar" or nil. selling: on the sell
+-- page (no Next buy). Also returns the summary under the item's name.
 local function Lines(id, selling)
 	local QB = ns.QuickBuy
 	local cut = 1 - QB.AH_CUT
@@ -85,36 +91,52 @@ local function Lines(id, selling)
 
 	local itemName = Name(id)
 	local bought, spent, want, max, log = QB.Session(id)
-	-- Selling: at the price you've typed in, else the cheapest listing.
+	-- The resale price: on the sell page, the Unit Price you've typed there;
+	-- otherwise your own price if you've set one, else the cheapest listing.
 	local typed = selling and TypedPrice()
-	local sell, approx
-	if typed then sell, approx = typed, false else sell, approx = QB.SellPrice(id, selling) end
+	local target = not typed and QB.Target(id) or nil
+	local live, liveApprox = QB.SellPrice(id, selling)
+	local sell, approx = live, liveApprox
+	if typed then sell, approx = typed, false elseif target then sell, approx = target, false end
 	-- Not rounded: the cut is taken from the whole sale, not from each item.
 	local net = sell and sell * cut
 	local avg = bought > 0 and spent / bought or nil
-	local sellText = sell and ((approx and "~" or "") .. ns.Money(sell))
-	local sellLabel = sell and ((typed and "List at " or "Resell at ") .. sellText)
+	-- What the rows that go by it are called.
+	local resell = typed and "List at your price" or target and ("Resell " .. CUSTOM .. "(custom)|r") or "Resell"
 	local uses = {}
 	for _, u in ipairs(ns.Crafting and ns.Crafting.Uses and ns.Crafting.Uses(id) or {}) do
 		if u.worth and #uses < 3 then uses[#uses + 1] = u end
 	end
 
+	local summaryText = bought == 0 and (want and ("Nothing bought yet - want %d"):format(want) or "Nothing bought yet")
+		or want and ("Bought %d of %d"):format(bought, want) or ("Bought %d"):format(bought)
+
 	-- This session
-	Add("This session", nil, want and ("%d / %d"):format(bought, want) or (bought > 0 and tostring(bought) or nil),
-		"header", Tip("This session", "Everything bought since you last pressed Clear."))
-	if want then
-		Add(nil, nil, nil, "bar")
-		lines[#lines].value = math.min(1, bought / want)
-	end
-	if bought == 0 then
-		Add("Nothing bought yet", nil, nil, "note")
-	else
+	if bought > 0 then
+		Add("This session", nil, nil, "header", Tip("This session", "Everything bought since you last pressed Clear."))
 		Add("Average cost", nil, ns.Money(math.floor(avg + 0.5)) .. " each", nil, Tip("Average cost",
 			("What you've paid per item: %s for %d."):format(ns.Money(spent), bought)))
 		Add("Spent", nil, ns.Money(spent))
 		Add("Break-even relist", nil, ns.Money(QB.RelistPrice(spent, bought)) .. " each", nil,
 			Tip("Break-even relist", ("The lowest price to list all %d at and still make a profit after the 5%% cut.")
 				:format(bought)))
+	end
+
+	-- Resale price: automatic or your own (the row's two buttons), or the sell page's.
+	if typed then
+		Add("Resale price", GREY .. "sell page|r", ns.Money(typed), "price",
+			Tip("Resale price", "Your Unit Price on the sell page."))
+		lines[#lines].mode = "typed"
+	elseif target then
+		Add("Resale price", CUSTOM .. "custom|r", CUSTOM .. ns.Money(target) .. "|r", "price",
+			Tip("Resale price", "Your own price.", live and ("Automatic would be %s%s: %s"):format(liveApprox and "~" or "",
+				ns.Money(live), AutoSource(liveApprox, selling):lower()) or "No listings loaded."))
+		lines[#lines].mode = "custom"
+	else
+		Add("Resale price", nil, sell and ((approx and "~" or "") .. ns.Money(sell)) or (GREY .. "none yet|r"), "price",
+			Tip("Resale price", sell and AutoSource(approx, selling) or "No listings or scans to go by yet.",
+				"Set your own with the pencil."))
+		lines[#lines].mode = "auto"
 	end
 
 	-- What it's worth: each way of using what you've bought.
@@ -124,8 +146,8 @@ local function Lines(id, selling)
 		Add(nil, "each", "all " .. bought, "cols", nil, "return")
 		local options = {}
 		if sell then
-			options[#options + 1] = { name = sellLabel, each = net - avg,
-				tip = Tip(sellLabel, SellSource(approx, selling, typed),
+			options[#options + 1] = { name = resell, each = net - avg,
+				tip = Tip("Resell at " .. ns.Money(sell),
 					("After the 5%% cut you get %s for all %d; you paid %s."):format(
 						ns.Money(math.floor(net * bought)), bought, ns.Money(spent))) }
 		end
@@ -145,7 +167,7 @@ local function Lines(id, selling)
 			Add(name, Signed(o.each), Signed(o.each * bought), nil, o.tip, ns.Percent(o.each / avg * 100))
 			if o.note then Add("   " .. o.note, nil, nil, "note") end
 		end
-		if #options == 0 then Add("No price to go by yet - scan first", nil, nil, "note") end
+		if #options == 0 then Add("No price to go by yet", nil, nil, "note") end
 	end
 
 	-- Next buy, at "Up to".
@@ -156,16 +178,16 @@ local function Lines(id, selling)
 			Add("Set \"Up to\" to see", nil, nil, "note")
 		else
 			if sell then
-				Add("Resell at " .. sellText, Signed(net - max), nil, nil,
-					Tip("Resell at " .. sellText, SellSource(approx),
-						("After the 5%% cut you get %s each."):format(ns.Money(net))), ns.Percent((net - max) / max * 100))
+				Add(resell, Signed(net - max), nil, nil,
+					Tip("Resell at " .. ns.Money(sell), ("After the 5%% cut you get %s each."):format(ns.Money(net))),
+					ns.Percent((net - max) / max * 100))
 			end
 			for _, u in ipairs(uses) do
 				local source, worth = CraftSource(u, itemName)
 				Add(Name(u.output), Signed(u.worth - max), nil, nil, Tip(Name(u.output), source, worth),
 					ns.Percent((u.worth - max) / max * 100))
 			end
-			if not sell and #uses == 0 then Add("No price to go by yet - scan first", nil, nil, "note") end
+			if not sell and #uses == 0 then Add("No price to go by yet", nil, nil, "note") end
 		end
 		if #uses == 0 then
 			Add("No saved recipe uses it (open your profession", nil, nil, "note")
@@ -182,9 +204,91 @@ local function Lines(id, selling)
 				GREY .. (date and date("%H:%M", entry[3]) or "") .. "|r")
 		end
 	end
-	return lines
+	return lines, summaryText, want and math.min(1, bought / want) or nil
 end
 
+---------------------------------------------------------------------------
+-- Your own resale price: a dialog with Blizzard's gold/silver/copper boxes.
+---------------------------------------------------------------------------
+local function MoneyInput(dialog)
+	return dialog and (dialog.MoneyInputFrame or dialog.moneyInputFrame)
+end
+
+local function SaveTarget(dialog, id)
+	local input = MoneyInput(dialog)
+	if not (input and id and MoneyInputFrame_GetCopper) then return end
+	ns.QuickBuy.SetTarget(id, MoneyInputFrame_GetCopper(input))
+	elapsed = 1 -- redraw now
+end
+
+StaticPopupDialogs.FIREAUCTION_RESALE_PRICE = {
+	text = "Your resale price for %s, each:",
+	button1 = SAVE or "Save",
+	button2 = CANCEL or "Cancel",
+	hasMoneyInputFrame = 1,
+	OnShow = function(dialog, id)
+		local input = MoneyInput(dialog)
+		if input and MoneyInputFrame_SetCopper then
+			local price = ns.QuickBuy.Target(id) or ns.QuickBuy.SellPrice(id) or 0
+			MoneyInputFrame_SetCopper(input, math.floor(price + 0.5))
+		end
+	end,
+	OnAccept = function(dialog, id) SaveTarget(dialog, id) end,
+	EditBoxOnEnterPressed = function(editBox, id)
+		local dialog = editBox
+		while dialog and dialog.which ~= "FIREAUCTION_RESALE_PRICE" do dialog = dialog:GetParent() end
+		SaveTarget(dialog, id)
+		if dialog then dialog:Hide() end
+	end,
+	OnHide = function(dialog)
+		local input = MoneyInput(dialog)
+		if input and MoneyInputFrame_ResetMoney then MoneyInputFrame_ResetMoney(input) end
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
+local function EditTarget()
+	if shownID then StaticPopup_Show("FIREAUCTION_RESALE_PRICE", Name(shownID), nil, shownID) end
+end
+
+local function UseAutomatic()
+	if shownID then ns.QuickBuy.SetTarget(shownID, nil) end
+	elapsed = 1
+end
+
+-- The Resale price row's two buttons: Automatic and Custom (the pencil). The
+-- one in use is in full colour; the other is greyed out.
+local function ModeButton(texture, onClick, tip)
+	local b = CreateFrame("Button", nil, frame)
+	b:SetSize(18, 18)
+	b:SetFrameLevel((frame:GetFrameLevel() or 1) + 5) -- above the rows, which are made later
+	b.icon = b:CreateTexture(nil, "ARTWORK")
+	b.icon:SetAllPoints()
+	b.icon:SetTexture(texture)
+	b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	b:SetScript("OnClick", function() ns.SafeCall(onClick) end)
+	b:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		tip(self)
+		GameTooltip:Show()
+	end)
+	b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	b:Hide()
+	return b
+end
+
+local function SetLit(b, on)
+	b.active = on
+	b.icon:SetDesaturated(not on)
+	b.icon:SetAlpha(on and 1 or 0.5)
+end
+
+---------------------------------------------------------------------------
+-- Rows
+---------------------------------------------------------------------------
 local function ShowTip(self)
 	if not self.tip then return end
 	GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -236,32 +340,50 @@ local function Current()
 	return nil
 end
 
-local function Update(id, selling)
-	title:SetText(Name(id))
-	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
-	frame.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+local function SetTitle(text)
+	if frame.SetTitle then pcall(frame.SetTitle, frame, text) end
+	if type(frame.fallbackTitle) == "table" then frame.fallbackTitle:SetText(text) end
+end
 
-	local y = -PAD - 26
-	local lines = Lines(id, selling)
-	bar:Hide()
+local function SetPortrait(texture)
+	if frame.SetPortraitToAsset then pcall(frame.SetPortraitToAsset, frame, texture) end
+	if type(frame.fallbackIcon) == "table" then frame.fallbackIcon:SetTexture(texture) end
+end
+
+local function Update(id, selling)
+	shownID = id
+	SetTitle(Name(id))
+	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
+	SetPortrait(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+
+	local lines, summaryText, progress = Lines(id, selling)
+	summary:SetText(summaryText)
+	bar:SetShown(progress ~= nil)
+	if progress then bar:SetValue(progress) end
+
+	local y = TOP
+	local priceRow
 	for i, line in ipairs(lines) do
 		local row = Row(i)
 		local left, mid, right, kind, tip, pct = line[1], line[2], line[3], line[4], line[5], line[6]
-		if kind == "header" and i > 1 then y = y - 8 end
+		if (kind == "header" or kind == "price") and i > 1 then y = y - 8 end
 		row:ClearAllPoints()
 		row:SetPoint("TOPLEFT", PAD, y)
 		row:SetPoint("TOPRIGHT", -PAD, y)
-		row.left:SetFontObject(kind == "header" and "GameFontNormal" or (kind == "note" or kind == "cols")
-			and "GameFontDisableSmall" or "GameFontHighlightSmall")
+		row.left:SetFontObject((kind == "header" or kind == "price") and "GameFontNormal"
+			or (kind == "note" or kind == "cols") and "GameFontDisableSmall" or "GameFontHighlightSmall")
 		row.mid:SetFontObject(kind == "cols" and "GameFontDisableSmall" or "GameFontHighlightSmall")
-		row.right:SetFontObject(kind == "cols" and "GameFontDisableSmall" or "GameFontHighlightSmall")
+		row.right:SetFontObject(kind == "cols" and "GameFontDisableSmall" or kind == "price" and "GameFontHighlight"
+			or "GameFontHighlightSmall")
 		row.pct:SetFontObject(kind == "cols" and "GameFontDisableSmall" or "GameFontHighlightSmall")
-		-- Number columns from the right: [return] all, then each.
-		local shift = pct and PCT or 0
+		-- Number columns from the right: [return] all, then each. The Resale
+		-- price row has its two buttons there instead.
+		local shift = kind == "price" and BUTTONS or pct and PCT or 0
 		row.right:ClearAllPoints()
 		row.right:SetPoint("RIGHT", -shift, 0)
 		row.mid:ClearAllPoints()
-		row.mid:SetPoint("RIGHT", -shift - COL, 0)
+		row.mid:SetPoint("RIGHT", kind == "price" and row.right or row, kind == "price" and "LEFT" or "RIGHT",
+			kind == "price" and -6 or (-shift - COL), 0)
 		-- The name gets what the numbers leave.
 		row.left:ClearAllPoints()
 		row.left:SetPoint("LEFT")
@@ -279,22 +401,29 @@ local function Update(id, selling)
 		row.tip = tip
 		if row.EnableMouse then row:EnableMouse(tip ~= nil) end
 		row:Show()
-		if kind == "bar" then
-			row:Hide()
-			bar:ClearAllPoints()
-			bar:SetPoint("TOPLEFT", PAD, y - 1)
-			bar:SetPoint("TOPRIGHT", -PAD, y - 1)
-			bar:SetValue(line.value or 0)
-			bar:Show()
-			y = y - 12
-		else
-			y = y - ROW - (kind == "header" and 2 or 0)
-		end
+		if kind == "price" then priceRow = { row = row, mode = line.mode } end
+		y = y - ROW - ((kind == "header" or kind == "price") and 2 or 0)
 	end
 	for i = #lines + 1, #rows do rows[i]:Hide() end
-	frame:SetHeight(-y + PAD - 2)
+
+	-- The Resale price row's buttons (not while the sell page's Unit Price is in charge).
+	local buttons = priceRow and priceRow.mode ~= "typed"
+	autoButton:SetShown(buttons)
+	customButton:SetShown(buttons)
+	if buttons then
+		customButton:ClearAllPoints()
+		customButton:SetPoint("RIGHT", priceRow.row, "RIGHT", 0, 0)
+		autoButton:ClearAllPoints()
+		autoButton:SetPoint("RIGHT", customButton, "LEFT", -6, 0)
+		SetLit(autoButton, priceRow.mode == "auto")
+		SetLit(customButton, priceRow.mode == "custom")
+	end
+	frame:SetHeight(-y + PAD)
 end
 
+---------------------------------------------------------------------------
+-- Clear all sessions (Auctions tab)
+---------------------------------------------------------------------------
 -- "Silk Cloth: 26 for 2g 2s" for each session, for the Clear all popup.
 local function SessionList()
 	local lines = {}
@@ -324,39 +453,89 @@ StaticPopupDialogs.FIREAUCTION_CLEAR_SESSIONS = {
 	preferredIndex = 3,
 }
 
-local function Create()
-	if not AuctionHouseFrame then return end
-	rows = {}
-	-- Pinned outside the auction house window's right edge, beside its tab
-	-- (below); both only while there's something to show (see Current).
-	local ok, f = pcall(CreateFrame, "Frame", "FireAuctionBuyInfo", AuctionHouseFrame, "BackdropTemplate")
-	if not ok then f = CreateFrame("Frame", "FireAuctionBuyInfo", AuctionHouseFrame) end
-	frame = f
-	f:SetWidth(WIDTH)
-	f:SetHeight(100)
-	f:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 40, -24)
-	if f.SetBackdrop then
-		f:SetBackdrop({
-			bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-			edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-			tile = true, tileSize = 16, edgeSize = 16,
-			insets = { left = 4, right = 4, top = 4, bottom = 4 },
-		})
-		f:SetBackdropColor(0.06, 0.06, 0.06, 0.92)
-		f:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+---------------------------------------------------------------------------
+-- The window
+---------------------------------------------------------------------------
+local function SetOpen(on)
+	ns.db.buyInfo = on and true or false
+	if tabOutline then tabOutline:SetShown(ns.db.buyInfo) end
+	elapsed = 1
+end
+
+-- Where it goes: where you dragged it, or beside the auction house window.
+local function Place()
+	frame:ClearAllPoints()
+	local p = ns.db.buyInfoPoint
+	if p then
+		frame:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+	else
+		frame:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 38, 0)
 	end
+end
 
-	f.icon = f:CreateTexture(nil, "ARTWORK")
-	f.icon:SetSize(20, 20)
-	f.icon:SetPoint("TOPLEFT", PAD, -PAD + 2)
-	title = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-	title:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
-	title:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
-	title:SetJustifyH("LEFT")
+local function CreateWindow()
+	-- Blizzard's own window frame (portrait, title bar, close button), the same
+	-- as the auction house's; a plain dark box if this client lacks it.
+	local ok, f = pcall(CreateFrame, "Frame", "FireAuctionBuyInfo", AuctionHouseFrame, "PortraitFrameTemplate")
+	if not ok then
+		f = CreateFrame("Frame", "FireAuctionBuyInfo", AuctionHouseFrame, BackdropTemplateMixin and "BackdropTemplate")
+		if f.SetBackdrop then
+			f:SetBackdrop({
+				bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+				edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+				tile = true, tileSize = 16, edgeSize = 16,
+				insets = { left = 4, right = 4, top = 4, bottom = 4 },
+			})
+			f:SetBackdropColor(0.06, 0.06, 0.06, 0.95)
+		end
+		f.fallbackIcon = f:CreateTexture(nil, "ARTWORK")
+		f.fallbackIcon:SetSize(40, 40)
+		f.fallbackIcon:SetPoint("TOPLEFT", 12, -12)
+		f.fallbackTitle = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+		f.fallbackTitle:SetPoint("TOPLEFT", 62, -8)
+	end
+	frame = f
+	-- Above the auction house window (it floats over it), below popups like
+	-- the resale price dialog.
+	f:SetFrameStrata("HIGH")
+	-- The rows sit on a darker inset, like Blizzard's own windows.
+	if ok then
+		local insetOK, inset = pcall(CreateFrame, "Frame", nil, f, "InsetFrameTemplate")
+		if insetOK and inset then
+			inset:SetPoint("TOPLEFT", 4, TOP + 6)
+			inset:SetPoint("BOTTOMRIGHT", -6, 4)
+			if inset.SetFrameLevel and f.GetFrameLevel then inset:SetFrameLevel(f:GetFrameLevel() or 1) end
+		end
+	end
+	f:SetSize(WIDTH, 200)
+	f:SetToplevel(true)
+	f:SetClampedToScreen(true)
+	f:SetMovable(true)
+	f:EnableMouse(true)
+	f:RegisterForDrag("LeftButton")
+	f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+	f:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+		self:SetUserPlaced(false) -- the position is saved here
+		local point, _, relPoint, x, y = self:GetPoint()
+		ns.db.buyInfoPoint = { point, relPoint, x, y }
+	end)
+	-- The close button turns it off, like its tab.
+	if type(f.CloseButton) == "table" then
+		f.CloseButton:SetScript("OnClick", function() SetOpen(false) end)
+	end
+	Place()
 
-	-- Progress toward Want.
+	-- Beside the portrait, under the title: how many you've bought, and
+	-- toward Want.
+	summary = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+	summary:SetPoint("TOPLEFT", 64, -32)
+	summary:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
+	summary:SetJustifyH("LEFT")
 	bar = CreateFrame("StatusBar", nil, f)
 	bar:SetHeight(8)
+	bar:SetPoint("TOPLEFT", 64, -50)
+	bar:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
 	bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
 	bar:SetStatusBarColor(0.25, 0.75, 0.25)
 	bar:SetMinMaxValues(0, 1)
@@ -364,6 +543,26 @@ local function Create()
 	bg:SetAllPoints()
 	bg:SetColorTexture(1, 1, 1, 0.1)
 	bar:Hide()
+
+	autoButton = ModeButton("Interface\\Buttons\\UI-RefreshButton", UseAutomatic, function()
+		GameTooltip:SetText("Automatic", 1, 1, 1)
+		GameTooltip:AddLine("Go by the cheapest listing left after Quick buy.", nil, nil, nil, true)
+	end)
+	customButton = ModeButton("Interface\\Buttons\\UI-GuildButton-PublicNote-Up", EditTarget, function()
+		local target = shownID and ns.QuickBuy.Target(shownID)
+		GameTooltip:SetText("Custom", 1, 1, 1)
+		GameTooltip:AddLine(target and ("Your price: %s. Click to change it."):format(ns.Money(target))
+			or "Set your own resale price.", nil, nil, nil, true)
+	end)
+
+	f:Hide()
+end
+
+local function Create()
+	if not AuctionHouseFrame then return end
+	rows = {}
+	CreateWindow()
+	local f = frame
 
 	-- Clear all sessions: on the Auctions tab only, along the bottom just
 	-- right of your gold (which sits in the bottom-left corner) - while any
@@ -390,11 +589,9 @@ local function Create()
 	clearAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	clearAll:Hide()
 
-	f:Hide()
-
 	-- The side tab that opens and closes it (like the spellbook's tabs), on
-	-- the auction house window's right edge.
-	-- The icon is always shown; a gold outline marks it on.
+	-- the auction house window's right edge. The icon is always shown; a gold
+	-- outline marks it on.
 	local tab = CreateFrame("Button", nil, AuctionHouseFrame)
 	tab:SetSize(32, 32)
 	tab:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, -36)
@@ -405,16 +602,14 @@ local function Create()
 	local icon = tab:CreateTexture(nil, "ARTWORK")
 	icon:SetAllPoints()
 	icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01")
-	local outline = tab:CreateTexture(nil, "OVERLAY")
-	outline:SetAllPoints()
-	outline:SetTexture("Interface\\Buttons\\CheckButtonHilight")
-	outline:SetBlendMode("ADD")
+	tabOutline = tab:CreateTexture(nil, "OVERLAY")
+	tabOutline:SetAllPoints()
+	tabOutline:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+	tabOutline:SetBlendMode("ADD")
 	tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	outline:SetShown(ns.db.buyInfo and true or false)
+	tabOutline:SetShown(ns.db.buyInfo and true or false)
 	tab:SetScript("OnClick", function()
-		ns.db.buyInfo = not ns.db.buyInfo
-		outline:SetShown(ns.db.buyInfo)
-		elapsed = 1
+		SetOpen(not ns.db.buyInfo)
 		if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 	end)
 	tab:SetScript("OnEnter", function(self)
@@ -426,7 +621,7 @@ local function Create()
 	tab:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	tab:Hide()
 
-	-- Shows and updates both, a few times a second while the auction house is open.
+	-- Shows and updates everything, a few times a second while the auction house is open.
 	local driver = CreateFrame("Frame", nil, AuctionHouseFrame)
 	driver:SetScript("OnUpdate", function(_, dt)
 		elapsed = elapsed + dt
