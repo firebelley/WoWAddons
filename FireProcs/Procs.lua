@@ -9,6 +9,44 @@ local DEDUPE = 0.25      -- one proc can log several events (damage + heal)
 
 local lastShown, lastSeen, history = {}, {}, {}
 
+-- Entering some places casts a spell named after the place ("Gadgetzan",
+-- "Dun Garok"): never a proc. Place names: every area the game knows (read
+-- at login, behind the loading screen), plus every place you've been.
+local MAX_AREA = 16000
+local places = {}
+
+local function Remember(name)
+	if name and name ~= "" then places[name] = true end
+end
+local function RememberZone()
+	Remember(GetZoneText and GetZoneText())
+	Remember(GetSubZoneText and GetSubZoneText())
+	Remember(GetRealZoneText and GetRealZoneText())
+	Remember(GetMinimapZoneText and GetMinimapZoneText())
+end
+for _, event in ipairs({ "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA", "PLAYER_ENTERING_WORLD" }) do
+	ns.On(event, RememberZone)
+end
+
+ns.On("PLAYER_LOGIN", function()
+	local info = C_Map and C_Map.GetAreaInfo
+	if not info then return end
+	for id = 1, MAX_AREA do
+		local ok, area = pcall(info, id)
+		if ok and type(area) == "string" then Remember(area) end
+	end
+end)
+
+local function IsPlace(name)
+	RememberZone() -- the spell can come before the zone-change event
+	return places[name] == true
+end
+
+-- Internal effects with no real name ("LOGINEFFECT"): no lowercase letters.
+local function IsInternal(name)
+	return not name:find("%l")
+end
+
 local function TooFrequent(name, now)
 	if now - (lastSeen[name] or -100) < DEDUPE then return false end
 	lastSeen[name] = now
@@ -35,6 +73,10 @@ function ns.Proc(name, icon, kind, setting)
 	end
 	if db.muted[name] then
 		ns.Trace(name .. ": muted, not announced")
+		return false
+	end
+	if IsInternal(name) or IsPlace(name) then
+		ns.Trace(name .. ": a place or game effect, not a proc")
 		return false
 	end
 	local now = GetTime()
