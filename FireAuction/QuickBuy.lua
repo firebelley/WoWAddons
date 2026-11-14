@@ -6,8 +6,9 @@
 --
 -- Every purchase is your own click: the game only lets a purchase start from
 -- one. Nothing is bought, searched or retried by itself - it works off the
--- listings on screen, refreshed by you (a refresh button sits next to it) and
--- once after each purchase, like Blizzard's own Buy popup. The game quotes the
+-- listings on screen, refreshed by you (the same button refreshes when there's
+-- nothing to buy) and once after each purchase, like Blizzard's own Buy popup.
+-- Each click does one thing: one purchase or one refresh. The game quotes the
 -- final price before buying; if it's more than the button said (someone got
 -- the cheap ones first), the purchase is cancelled instead.
 --
@@ -25,7 +26,7 @@ local RECONFIRMS = 3     -- times a purchase is confirmed again when its price c
 local RESENDS = 3        -- times a confirmation the game dropped is sent again
 local AH_CUT = 0.05
 
-local panel, button, clear, refresh, status, wantBox, coinBoxes
+local panel, button, clear, status, wantBox, coinBoxes
 local itemID          -- the commodity on screen
 local plan            -- { quantity, total } the button would buy right now
 local pending         -- { itemID, quantity, total, stage = "quote"/"buying", at }
@@ -197,6 +198,9 @@ local HOLD_MAX = 3
 local holdSince, holdSawEmpty -- holding since (GetTime), and the listings were seen empty since
 local holdText                -- the button's text meanwhile
 local refreshSentAt           -- when the last refresh went out
+local staleSince              -- a purchase failed: the listings on screen are wrong until refreshed
+local searchSentAt            -- when any search for listings last went out (ours or the auction house's own)
+local mode                    -- what a click on the button does now: "buy" or "refresh"
 
 local function Held()
 	if not holdSince then return false end
@@ -221,7 +225,7 @@ local function Update()
 	if not (panel and panel:IsShown() and itemID) then return end
 	local s = Settings(itemID)
 	local max = s.max
-	plan = nil
+	plan, mode = nil, nil
 	local text, enabled = nil, false
 	if pending then
 		text = pending.stage == "quote" and "Checking the price..." or "Buying..."
@@ -234,8 +238,10 @@ local function Update()
 		text = holdText
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
-		if count <= 0 then
-			text = "None listed"
+		if staleSince or count <= 0 then
+			-- Nothing to buy from these listings: the button refreshes them.
+			text = staleSince and "Refresh" or "Refresh (none listed)"
+			mode, enabled = "refresh", not BlizzardDialogOpen()
 		elseif total > GetMoney() then
 			text = "Not enough money (" .. ns.Money(total) .. ")"
 		elseif BlizzardDialogOpen() then
@@ -247,14 +253,12 @@ local function Update()
 			-- purchase and sends it the moment it can (one it drops instead is
 			-- given up on right away - AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED).
 			plan = { quantity = count, total = total }
-			enabled = true
+			mode, enabled = "buy", true
 		end
 	end
 	if text then button:SetText(text) end
 	button:SetEnabled(enabled)
 	clear:SetEnabled(not pending and (s.bought or 0) > 0)
-	refresh:SetEnabled(not pending)
-	refresh.arrow:SetDesaturated(pending ~= nil)
 
 	local line = message
 	local count = s.bought or 0
@@ -281,6 +285,7 @@ local function Refresh(retry)
 	if not (frame and frame.RefreshSearchResults and AuctionHouseSearchContext and itemID) then return end
 	refreshWaiting = false
 	refreshSentAt, refreshRetried = GetTime(), retry and true or false
+	searchSentAt = refreshSentAt
 	refreshCount = refreshCount + 1
 	ns.Debug(("quick buy: refresh%s"):format(retry and " (again)" or ""))
 	pcall(frame.RefreshSearchResults, frame, AuctionHouseSearchContext.BuyCommodities,
@@ -302,6 +307,7 @@ local function Refreshed(id)
 	if id and id ~= itemID then return end
 	if refreshSentAt and consumed and refreshSentAt >= consumed.at then consumed = nil end
 	if holdSince and refreshSentAt and refreshSentAt >= holdSince then holdSince = nil end
+	if staleSince and searchSentAt and searchSentAt >= staleSince then staleSince = nil end
 	ns.SafeCall(Update)
 end
 ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", Refreshed)
@@ -349,6 +355,9 @@ local function Finish(text, why)
 	pending = nil
 	message = text
 	holdSince, holdSawEmpty = GetTime(), false
+	-- Not bought: what's on screen can't be bought, so until refreshed
+	-- listings come in, the button refreshes instead.
+	if text then staleSince = holdSince end
 	holdText = text and "Not bought" or "Buying..."
 	if C_Timer then
 		C_Timer.After(AFTER_PURCHASE, function()
@@ -384,6 +393,20 @@ local function Buy()
 	HideDone()
 	C_AuctionHouse.StartCommoditiesPurchase(itemID, plan.quantity)
 	Update()
+end
+
+-- One click, one thing: buy what's listed within "Up to", or refresh when
+-- there's nothing to buy.
+local function Click()
+	if pending or not itemID then return end
+	Update()
+	if mode == "refresh" then
+		message = nil
+		Refresh()
+		Update()
+	elseif mode == "buy" then
+		Buy()
+	end
 end
 
 -- Confirm the purchase. The game may queue it (the auction house still busy)
@@ -567,6 +590,10 @@ if C_AuctionHouse and C_AuctionHouse.StartCommoditiesPurchase then
 	hooksecurefunc(C_AuctionHouse, "CancelCommoditiesPurchase", function()
 		if not pending then outside = nil end
 	end)
+	-- The auction house's own searches and refreshes bring fresh listings too.
+	for _, fn in ipairs({ "SendSearchQuery", "RefreshCommoditySearchResults" }) do
+		if C_AuctionHouse[fn] then hooksecurefunc(C_AuctionHouse, fn, function() searchSentAt = GetTime() end) end
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -662,6 +689,7 @@ end
 -- to pay starts at what it's worth crafted (if one of your recipes uses it).
 local function ShowItem(id)
 	if pending then return end
+	if id ~= itemID then staleSince = nil end
 	itemID = id
 	message = nil
 	if not id then return end
@@ -773,35 +801,6 @@ local function Create()
 		box:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	end
 
-	-- Refresh the listings (the same as the list's own refresh button), right
-	-- next to Buy so you can go back and forth without moving the mouse far.
-	-- Greyed out while a purchase goes through: a refresh then can crowd out
-	-- the purchase's price check, leaving it waiting for an answer.
-	refresh = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	refresh:SetSize(40, 34)
-	refresh:SetPoint("TOPRIGHT", 0, -50)
-	refresh:SetMotionScriptsWhileDisabled(true)
-	local arrow = refresh:CreateTexture(nil, "ARTWORK")
-	arrow:SetSize(20, 20)
-	arrow:SetPoint("CENTER")
-	arrow:SetTexture("Interface\\Buttons\\UI-RefreshButton")
-	refresh.arrow = arrow
-	refresh:RegisterForClicks("LeftButtonDown")
-	refresh:SetScript("OnClick", function()
-		if pending then return end
-		message = nil
-		Refresh()
-	end)
-	-- The auction house's own refresh button's sound.
-	ns.ClickSound(refresh, "IG_MAINMENU_OPTION_CHECKBOX_ON")
-	refresh:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("Refresh", 1, 1, 1)
-		if pending then GameTooltip:AddLine("Wait for the purchase to finish.", 1, 0.3, 0.3, true) end
-		GameTooltip:Show()
-	end)
-	refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
 	-- Clear: start the count (and what it cost) over, after a last summary.
 	clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	clear:SetSize(50, 34)
@@ -827,17 +826,19 @@ local function Create()
 	button = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	button:SetHeight(34)
 	button:SetPoint("TOPLEFT", clear, "TOPRIGHT", 4, 0)
-	button:SetPoint("TOPRIGHT", refresh, "TOPLEFT", -4, 0)
-	-- On press, not release: the purchase goes out sooner.
-	button:RegisterForClicks("LeftButtonDown")
-	button:SetScript("OnClick", function() ns.SafeCall(Buy) end)
+	button:SetPoint("TOPRIGHT", 0, -50)
+	button:SetScript("OnClick", function() ns.SafeCall(Click) end)
 	ns.ClickSound(button)
 	button:SetMotionScriptsWhileDisabled(true)
 	button:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("Quick buy", 1, 1, 1)
-		GameTooltip:AddLine("Buys the cheapest first, with no confirmation. If some sell first, the rest are bought "
-			.. "only if the average stays within \"Up to\".", nil, nil, nil, true)
+		if mode == "refresh" then
+			GameTooltip:SetText("Refresh", 1, 1, 1)
+		else
+			GameTooltip:SetText("Quick buy", 1, 1, 1)
+			GameTooltip:AddLine("Buys the cheapest first, with no confirmation. If some sell first, the rest are bought "
+				.. "only if the average stays within \"Up to\".", nil, nil, nil, true)
+		end
 		if BlizzardDialogOpen() then GameTooltip:AddLine("Close the Buy dialog first.", 1, 0.3, 0.3, true) end
 		GameTooltip:Show()
 	end)
@@ -880,7 +881,7 @@ ns.On("AUCTION_HOUSE_CLOSED", function()
 	-- What you bought this visit and haven't had a summary for yet.
 	for id in pairs(boughtNow) do ns.SafeCall(Summary, id) end
 	wipe(boughtNow)
-	holdSince, consumed = nil, nil
+	holdSince, consumed, staleSince = nil, nil, nil
 	outside, gaveUp = nil, nil
 	refreshWaiting, refreshSentAt = false, nil
 end)
