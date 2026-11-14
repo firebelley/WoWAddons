@@ -8,11 +8,14 @@
 -- How it works
 --   * After you scan, the new prices go out to the guild ("push").
 --   * A little after you log in, you send a summary for each auction house
---     ("hello"): when your newest scan is from, and how many prices you have
---     for each day. Members whose data differs answer with theirs ("offer").
---     You ask whoever has what you're missing to send it ("go"), and send
---     what they're missing yourself.
---   * Per item the newest scan wins; history days fill in where you have none.
+--     ("hello"): when your newest scan is from, and a checksum of each day's
+--     prices. Members whose data differs answer with theirs ("offer"). You
+--     ask one of them for each day that differs ("go"), and send your own.
+--   * Per item the newest scan wins. A scan new to you also counts toward
+--     that day's price, like your own scans do.
+--   * A day's price from someone else replaces yours when it averages more
+--     scans (the same number: the higher price), so everyone ends up with
+--     the same history.
 --   * A push or reply that arrives complete also marks items as not listed
 --     when they weren't in that scan, like your own full scans do.
 --
@@ -27,22 +30,23 @@
 --   B realm house stream T base flags days   a stream begins
 --   D stream seq records...                  stream data (each message stands alone)
 --   E stream messages records                the stream is over
--- summary = newest-scan today K count*K (prices per day, the last K days)
--- record  = id-gap mask [price qty age market] dayprice...
+-- summary = newest-scan today K checksum*K (3 characters per day, the last K
+--   days; 0 for a day without prices)
+-- record  = id-gap mask [price qty age market] (dayprice scans)...
 --   (mask bit 1: the latest prices follow - lowest, how many, how old, and the
 --   market price; bit j+1: a price for the stream's day j - the day's market
---   price)
+--   price, and how many scans it averages)
 --
--- Version 2 added the market price. Versions don't mix: messages from another
--- version are ignored, and you're told once (per member) that someone needs
--- to update.
+-- Version 2 added the market price, version 3 the scans per day. Versions
+-- don't mix: messages from another version are ignored, and you're told once
+-- (per member) that someone needs to update.
 local _, ns = ...
 
 local Sync = {}
 ns.Sync = Sync
 
 local PREFIX = "FireAH"
-local VERSION = 2
+local VERSION = 3
 local MAX_LEN = 250      -- characters per message (the game allows 255)
 local MAX_DAYS = 60      -- days of history compared and shared
 local HELLO_DELAY = 12   -- seconds after logging in
@@ -103,11 +107,21 @@ end
 
 -- A price in 12 bits on a log scale: 1 copper to 2^32.
 local LOG_STEP = math.log(2 ^ 32) / 4095
-local function Price12(p)
+local function Code(p)
 	local code = (p and p > 1) and floor(math.log(p) / LOG_STEP + 0.5) or 0
-	if code > 4095 then code = 4095 end
+	return code > 4095 and 4095 or code
+end
+
+local function Decode(code) return floor(math.exp(code * LOG_STEP) + 0.5) end
+
+local function Price12(p)
+	local code = Code(p)
 	return ENC[floor(code / 64)] .. ENC[code % 64]
 end
+
+-- The price as it arrives at the other end. Comparing these, a price and its
+-- copy are equal (Quantize(Quantize(p)) == Quantize(p)).
+local function Quantize(p) return Decode(Code(p)) end
 
 -- Sorted list of days -> first, span, flags.
 local function DaysText(days)
@@ -166,8 +180,7 @@ function Reader:Bits(k)
 end
 
 function Reader:Price12()
-	local code = self:Digit() * 64 + self:Digit()
-	return floor(math.exp(code * LOG_STEP) + 0.5)
+	return Decode(self:Digit() * 64 + self:Digit())
 end
 
 function Reader:Days()
@@ -213,36 +226,49 @@ local function Full(realm) return (ns.LastScan(realm)) end
 
 local function WindowDays() return math.min(ns.db.historyDays or 30, MAX_DAYS) end
 
--- { full, today, k, counts = { [day] = prices that day } }
+-- A day's checksum: the sum of one number per item, worked out from the item,
+-- its price and how many scans that averages. 18 bits (3 characters).
+local HASH = 2 ^ 18
+local function ItemHash(id, price, scans)
+	local v = (id * 7919 + Quantize(price) * 104729 + scans * 1299709) % 1000003
+	return (v * v + id) % HASH
+end
+
+-- { full, today, k, hashes = { [day] = checksum } }
 local function Summary(house)
 	local realm = ns.Realm(house)
 	if not realm then return nil end
 	local today, k = Today(), WindowDays()
 	local from = today - k + 1
-	local counts = {}
-	for _, rec in pairs(realm.items) do
-		for day in pairs(rec.d) do
-			if day >= from and day <= today then counts[day] = (counts[day] or 0) + 1 end
+	local hashes = {}
+	for id, rec in pairs(realm.items) do
+		for day, price in pairs(rec.d) do
+			if day >= from and day <= today then
+				hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day))) % HASH
+			end
 		end
 	end
-	return { full = Full(realm), today = today, k = k, counts = counts }
+	return { full = Full(realm), today = today, k = k, hashes = hashes }
 end
 
 local function SummaryText(kind, house, sum, target)
 	local parts = { kind, ENC[VERSION], node, RealmTag(), HOUSE_CHAR[house], target or "",
 		Num(sum.full), Num(sum.today), Num(sum.k) }
 	for i = 0, sum.k - 1 do
-		parts[#parts + 1] = Num(sum.counts[sum.today - sum.k + 1 + i] or 0)
+		local h = sum.hashes[sum.today - sum.k + 1 + i] or 0
+		parts[#parts + 1] = ENC[floor(h / 4096)] .. ENC[floor(h / 64) % 64] .. ENC[h % 64]
 	end
 	return table.concat(parts)
 end
 
 local function ReadSummary(r)
-	local sum = { full = r:Num(), today = r:Num(), k = r:Num(), counts = {} }
+	local sum = { full = r:Num(), today = r:Num(), k = r:Num(), hashes = {} }
 	if sum.k > MAX_DAYS then error("too many days") end
 	for i = 0, sum.k - 1 do
-		local c = r:Num()
-		if c > 0 then sum.counts[sum.today - sum.k + 1 + i] = c end
+		local h = r:Digit() * 4096
+		h = h + r:Digit() * 64
+		h = h + r:Digit()
+		if h > 0 then sum.hashes[sum.today - sum.k + 1 + i] = h end
 	end
 	return sum
 end
@@ -259,7 +285,7 @@ end
 local function Differs(mine, theirs)
 	if mine.full ~= theirs.full then return true end
 	for _, d in ipairs(SharedDays(mine, theirs)) do
-		if (mine.counts[d] or 0) ~= (theirs.counts[d] or 0) then return true end
+		if (mine.hashes[d] or 0) ~= (theirs.hashes[d] or 0) then return true end
 	end
 	return false
 end
@@ -369,7 +395,7 @@ local function RecordText(s, rec, gap)
 		local p = rec.d[day]
 		if p then
 			flags[j + 1] = true
-			prices[#prices + 1] = Price12(p)
+			prices[#prices + 1] = Price12(p) .. Num(ns.Data.Scans(rec, day))
 		end
 	end
 	if not latest and #prices == 0 then return nil end
@@ -523,24 +549,36 @@ local function OnBegin(r, from, sender)
 	}
 end
 
+-- Theirs replaces ours: more scans, or as many and a higher price.
+local function Better(price, scans, ourPrice, ourScans)
+	if scans ~= ourScans then return scans > ourScans end
+	return price > Quantize(ourPrice)
+end
+
+-- dayPrices = { [day] = { price, scans } }
 local function Merge(st, realm, id, p, q, s, m, dayPrices)
 	local today = Today()
 	local rec = realm.items[id]
 	local new = rec == nil
 	if new then rec = { d = {} } end
+	local oldest = today - (ns.db.historyDays or 30)
 	if p then
 		st.seen[id] = true
 		if not rec.s or s > rec.s then
 			rec.p, rec.m, rec.q, rec.s, rec.l = p, m, q, s, nil
 			if not new then st.updated = st.updated + 1 end
+			-- A scan you didn't have: it counts toward its day, like yours.
+			local day = floor(s / 86400)
+			if day >= oldest and day <= today then ns.Data.AddScan(rec, day, m) end
 		end
 	end
-	local oldest = today - (ns.db.historyDays or 30)
-	for day, price in pairs(dayPrices) do
-		if not rec.d[day] and day >= oldest and st.okDay[day] then
-			rec.d[day] = price
-			if day == today and rec.td ~= today then rec.td, rec.n = today, 1 end
-			st.filled = st.filled + 1
+	for day, theirs in pairs(dayPrices) do
+		if day >= oldest and st.okDay[day] then
+			local ours = ns.Data.Scans(rec, day)
+			if ours == 0 or Better(theirs[1], theirs[2], rec.d[day], ours) then
+				ns.Data.SetDay(rec, day, theirs[1], theirs[2])
+				st.filled = st.filled + 1
+			end
 		end
 	end
 	if new then
@@ -586,7 +624,10 @@ local function OnData(r, from)
 			end
 			local dayPrices = {}
 			for j, day in ipairs(st.days) do
-				if flags[j + 1] then dayPrices[day] = r:Price12() end
+				if flags[j + 1] then
+					local price = r:Price12()
+					dayPrices[day] = { price, math.max(1, r:Num()) }
+				end
 			end
 			-- Sanity: skip anything that can't be a real price.
 			local sane = id > 0 and id < 10000000
@@ -648,8 +689,9 @@ local function Decide(offers)
 	for house, list in pairs(offers) do
 		local mine = Summary(house)
 		if mine and next(list) then
-			-- Pull: the newest scan from whoever has it, and each day from
-			-- whoever has the most prices for it.
+			-- Pull: the newest scan from whoever has it, and each day that
+			-- differs from one member who has it (whoever scanned last, so
+			-- it's mostly one stream). Push: each day that differs, ours.
 			local want = {}
 			local bestFull, bestNode = mine.full, nil
 			for n, o in pairs(list) do
@@ -658,20 +700,22 @@ local function Decide(offers)
 			if bestNode then want[bestNode] = { since = mine.full, days = {} } end
 			local pushDays, minFull = {}, mine.full
 			for d = mine.today - mine.k + 1, mine.today do
-				local have = mine.counts[d] or 0
-				local best, bestN, behind = have, nil, false
+				local have = mine.hashes[d] or 0
+				local from, push = nil, false
 				for n, o in pairs(list) do
 					if d > o.today - o.k and d <= o.today then
-						local c = o.counts[d] or 0
-						if c > best then best, bestN = c, n end
-						if c < have then behind = true end
+						local h = o.hashes[d] or 0
+						if h ~= have then
+							if have ~= 0 then push = true end
+							if h ~= 0 and (not from or o.full > list[from].full) then from = n end
+						end
 					end
 				end
-				if bestN then
-					want[bestN] = want[bestN] or { days = {} }
-					table.insert(want[bestN].days, d)
+				if from then
+					want[from] = want[from] or { days = {} }
+					table.insert(want[from].days, d)
 				end
-				if behind then pushDays[#pushDays + 1] = d end
+				if push then pushDays[#pushDays + 1] = d end
 			end
 			for n, req in pairs(want) do
 				Queue(table.concat({ "G", ENC[VERSION], node, RealmTag(), HOUSE_CHAR[house], n,

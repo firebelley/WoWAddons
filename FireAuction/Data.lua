@@ -10,8 +10,10 @@
 --   nm = name
 --   d  = { [day] = price } - one price per day: the average of that day's
 --        scans' market prices (days saved before market prices: the lowest
---        buyouts)
---   td, n = the day of the latest scan, and how many scans it had
+--        buyouts), yours and your guild's
+--   dn = { [day] = scans } - how many scans a day's price averages (only
+--        when more than one)
+--   (td, n = the latest scan's day and its scans: how dn used to be kept)
 --   l  = the latest scan's listings: "n,buyout,stack,bid;..." where n is how
 --        many identical auctions there were (bid only for bid-only ones)
 local _, ns = ...
@@ -92,13 +94,7 @@ function Data.CommitScan(prices, complete, house)
 			for key, count in pairs(p.list) do parts[#parts + 1] = count .. "," .. key end
 			rec.l = table.concat(parts, ";")
 		end
-		if rec.td == today and rec.d[today] then
-			rec.n = (rec.n or 1) + 1
-			rec.d[today] = math.floor(rec.d[today] + (market - rec.d[today]) / rec.n + 0.5)
-		else
-			rec.td, rec.n = today, 1
-			rec.d[today] = market
-		end
+		Data.AddScan(rec, today, market)
 	end
 	if complete then
 		for id, rec in pairs(realm.items) do
@@ -109,6 +105,45 @@ function Data.CommitScan(prices, complete, house)
 	Data.Prune(house)
 end
 
+-- Moves the old td/n into dn.
+local function Upgrade(rec)
+	if rec.td then
+		if rec.n and rec.n > 1 and rec.d[rec.td] then
+			rec.dn = rec.dn or {}
+			rec.dn[rec.td] = rec.n
+		end
+		rec.td, rec.n = nil, nil
+	end
+end
+
+-- How many scans the day's price averages (0 without one).
+function Data.Scans(rec, day)
+	if not rec.d[day] then return 0 end
+	Upgrade(rec)
+	return rec.dn and rec.dn[day] or 1
+end
+
+-- Sets the day's price and how many scans it averages.
+function Data.SetDay(rec, day, price, scans)
+	Upgrade(rec)
+	rec.d[day] = price
+	if scans > 1 then
+		rec.dn = rec.dn or {}
+		rec.dn[day] = scans
+	elseif rec.dn then
+		rec.dn[day] = nil
+		if not next(rec.dn) then rec.dn = nil end
+	end
+end
+
+-- One more scan's market price, into the day's average.
+function Data.AddScan(rec, day, price)
+	local n = Data.Scans(rec, day)
+	local old = rec.d[day]
+	if old then price = math.floor(old + (price - old) / (n + 1) + 0.5) end
+	Data.SetDay(rec, day, price, n + 1)
+end
+
 -- Forget days older than the history setting (and items with nothing left).
 function Data.Prune(house)
 	local realm = ns.Realm(house)
@@ -117,8 +152,14 @@ function Data.Prune(house)
 	for id, rec in pairs(realm.items) do
 		local any = false
 		for day in pairs(rec.d) do
-			if day < oldest then rec.d[day] = nil else any = true end
+			if day < oldest then
+				rec.d[day] = nil
+				if rec.dn then rec.dn[day] = nil end
+			else
+				any = true
+			end
 		end
+		if rec.dn and not next(rec.dn) then rec.dn = nil end
 		if not any then realm.items[id] = nil end
 	end
 end
