@@ -252,7 +252,16 @@ local function DrawGraph(rec)
 	if slope then
 		local l = Line(TREND_COLOR[1], TREND_COLOR[2], TREND_COLOR[3], 0.7, 2)
 		l:SetStartPoint("BOTTOMLEFT", graph, X(today - trendDays), Y(now - slope * trendDays))
-		l:SetEndPoint("BOTTOMLEFT", graph, X(today + trendDays), Y(projected))
+		if now + slope * trendDays < 0 then
+			-- It reaches nothing before the end: down to 0, then along it.
+			local zero = today - now / slope
+			l:SetEndPoint("BOTTOMLEFT", graph, X(zero), Y(0))
+			local flat = Line(TREND_COLOR[1], TREND_COLOR[2], TREND_COLOR[3], 0.7, 2)
+			flat:SetStartPoint("BOTTOMLEFT", graph, X(zero), Y(0))
+			flat:SetEndPoint("BOTTOMLEFT", graph, X(today + trendDays), Y(0))
+		else
+			l:SetEndPoint("BOTTOMLEFT", graph, X(today + trendDays), Y(projected))
+		end
 		-- For hovering the projection: each day ahead's price on the line.
 		graph.trend = {
 			today = today, last = today + trendDays, X = X, Y = Y,
