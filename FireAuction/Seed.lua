@@ -260,7 +260,7 @@ ns.On("BAG_UPDATE_DELAYED", function()
 		AddSeed(p)
 		message = ("Listed %d at %s"):format(p.qty, ns.Money(p.price))
 		RefreshSoon()
-		if ns.Sales and ns.Sales.QueryOwned then ns.Sales.QueryOwned(1) end
+		if ns.Sales and ns.Sales.QueryOwned then ns.Sales.QueryOwned(1, true) end
 		elapsed = 1
 	end)
 end)

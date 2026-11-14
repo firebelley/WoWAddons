@@ -36,6 +36,7 @@ local gaveUp          -- { itemID, quantity, total, at } a confirmed purchase gi
 local LATE = 15       -- seconds such a purchase can still come through and be counted
 local LOG_SIZE = 20   -- purchases kept in the session log
 local message         -- last result, shown under the button until the next change
+local consumed        -- { id, qty, at } just bought: still in the listings until they're refreshed
 -- Lost to someone else: the cheap ones went before the quote, or between the
 -- quote and the purchase.
 local TAKEN = "|cffff5050Not available|r (someone else bought them)"
@@ -103,16 +104,21 @@ end
 local function Walk(id, maxPrice, quantity)
 	local AH = C_AuctionHouse
 	local rows, count, level = {}, 0, nil
+	-- What you just bought is gone from the cheapest, refreshed or not.
+	local skip = consumed and consumed.id == id and consumed.qty or 0
 	for i = 1, AH.GetNumCommoditySearchResults(id) or 0 do
 		local r = AH.GetCommoditySearchResultInfo(id, i)
 		if not r then return nil end
+		local open = r.quantity - (r.numOwnerItems or 0)
+		local gone = math.max(0, math.min(skip, open))
+		skip, open = skip - gone, open - gone
 		local take = 0
 		if maxPrice and r.unitPrice <= maxPrice and count < quantity and not (level and r.unitPrice > level) then
-			take = math.max(0, math.min(r.quantity - (r.numOwnerItems or 0), quantity - count))
+			take = math.max(0, math.min(open, quantity - count))
 			if take > 0 and ns.db.quickBuyCheapest then level = level or r.unitPrice end
 		end
 		count = count + take
-		rows[#rows + 1] = { price = r.unitPrice, quantity = r.quantity, take = take }
+		if r.quantity - gone > 0 then rows[#rows + 1] = { price = r.unitPrice, quantity = r.quantity - gone, take = take } end
 	end
 	return rows
 end
@@ -290,13 +296,13 @@ local function Refresh(retry)
 	end)
 end
 
--- The refreshed listings are in: the button can be used again.
+-- New listings: after a purchase, the refreshed ones are in and the button can
+-- be used again. Either way the button follows them now, not at the next tick.
 local function Refreshed(id)
 	if id and id ~= itemID then return end
-	if holdSince and refreshSentAt and refreshSentAt >= holdSince then
-		holdSince = nil
-		ns.SafeCall(Update)
-	end
+	if refreshSentAt and consumed and refreshSentAt >= consumed.at then consumed = nil end
+	if holdSince and refreshSentAt and refreshSentAt >= holdSince then holdSince = nil end
+	ns.SafeCall(Update)
 end
 ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", Refreshed)
 ns.On("COMMODITY_SEARCH_RESULTS_RECEIVED", function() Refreshed(nil) end)
@@ -365,7 +371,9 @@ local function HideDone()
 end
 
 local function Buy()
-	if pending or not plan or not itemID then return end
+	if pending or not itemID then return end
+	Update() -- the plan from the listings as they are this moment
+	if not plan then return end
 	-- limit: the most it may cost in all - "Up to" for each, on average. If
 	-- someone buys some of the cheapest first, the price quoted for the rest
 	-- is higher than shown, but still bought while it averages within that.
@@ -526,6 +534,8 @@ ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
 	pending.done = true
 	local id, quantity, total = pending.itemID, pending.quantity, pending.total
 	Record(id, quantity, total)
+	local more = consumed and consumed.id == id and consumed.qty or 0
+	consumed = { id = id, qty = more + quantity, at = GetTime() }
 	if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.LOOT_WINDOW_COIN_SOUND) end
 	local want = Settings(id).want
 	local left = want and math.max(0, want - Settings(id).bought)
@@ -776,6 +786,7 @@ local function Create()
 	arrow:SetPoint("CENTER")
 	arrow:SetTexture("Interface\\Buttons\\UI-RefreshButton")
 	refresh.arrow = arrow
+	refresh:RegisterForClicks("LeftButtonDown")
 	refresh:SetScript("OnClick", function()
 		if pending then return end
 		message = nil
@@ -817,6 +828,8 @@ local function Create()
 	button:SetHeight(34)
 	button:SetPoint("TOPLEFT", clear, "TOPRIGHT", 4, 0)
 	button:SetPoint("TOPRIGHT", refresh, "TOPLEFT", -4, 0)
+	-- On press, not release: the purchase goes out sooner.
+	button:RegisterForClicks("LeftButtonDown")
 	button:SetScript("OnClick", function() ns.SafeCall(Buy) end)
 	ns.ClickSound(button)
 	button:SetMotionScriptsWhileDisabled(true)
@@ -867,7 +880,7 @@ ns.On("AUCTION_HOUSE_CLOSED", function()
 	-- What you bought this visit and haven't had a summary for yet.
 	for id in pairs(boughtNow) do ns.SafeCall(Summary, id) end
 	wipe(boughtNow)
-	holdSince = nil
+	holdSince, consumed = nil, nil
 	outside, gaveUp = nil, nil
 	refreshWaiting, refreshSentAt = false, nil
 end)

@@ -185,14 +185,19 @@ local function ReadOwned()
 end
 ns.On("OWNED_AUCTIONS_UPDATED", ReadOwned)
 
-local queryPending = false
-local function QueryOwned(delay)
+-- urgent: needed now (a seed's ID, for Cancel); otherwise it waits until
+-- you're off a Quick buy page, so it can't hold up a purchase.
+local queryPending, queryUrgent = false, false
+local function QueryOwned(delay, urgent)
+	if urgent then queryUrgent = true end
 	if queryPending or not (AH and AH.QueryOwnedAuctions) then return end
 	queryPending = true
 	C_Timer.After(delay, function()
 		queryPending = false
-		-- Not while a quick buy goes through: it could crowd out the purchase.
-		if ns.QuickBuy and ns.QuickBuy.Busy and ns.QuickBuy.Busy() then return QueryOwned(1) end
+		local QB = ns.QuickBuy
+		-- Never while a quick buy goes through: it could crowd out the purchase.
+		if QB and ((QB.Busy and QB.Busy()) or (not queryUrgent and QB.Item and QB.Item())) then return QueryOwned(1) end
+		queryUrgent = false
 		if ns.atAH then pcall(AH.QueryOwnedAuctions, {}) end
 	end)
 end
