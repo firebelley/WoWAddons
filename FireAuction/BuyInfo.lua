@@ -9,9 +9,8 @@
 --                     relist at to break even.
 --   Resale price      the price the "Resell" rows go by: automatic (the
 --                     cheapest listing) or your own, set with its two buttons.
---   What it's worth   what you've bought makes each way - resold, or crafted
---                     with one of your saved recipes - each and for all of
---                     it, the best way marked.
+--   What it's worth   what you've bought makes resold, each and for all of
+--                     it, and with your seeds counted.
 --   Next buy          the same at your "Up to" price: is the next one worth it.
 --   Recent            the last few purchases.
 --
@@ -69,17 +68,6 @@ local function TypedPrice()
 	return ok and type(price) == "number" and price > 0 and price or nil
 end
 
--- A recipe row's tooltip lines (the recipe's name is the title): "Sells for
--- 8s 70c (last seen). 4 Silk Cloth + 12c other reagents per craft." and
--- "Each Silk Cloth is worth 2s 6c after the cut."
-local function CraftSource(u, itemName)
-	local text = "Sells for " .. ns.Money(u.unit or 0)
-		.. (u.source == "vendor" and " (vendor)" or not u.current and " (last seen)" or "") .. ". "
-		.. u.qty .. " " .. itemName .. (u.other > 0 and (" + " .. ns.Money(u.other) .. " other reagents") or "")
-		.. " per craft" .. (u.made > 1 and (", makes " .. u.made) or "") .. "."
-	return text, ("Each %s is worth %s after the cut."):format(itemName, ns.Money(u.worth))
-end
-
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
 -- being "header", "price", "note", "cols", "bar" or nil. selling: on the sell
 -- page (no Next buy). Also returns the summary under the item's name.
@@ -89,7 +77,6 @@ local function Lines(id, selling)
 	local lines = {}
 	local function Add(left, mid, right, kind, tip, pct) lines[#lines + 1] = { left, mid, right, kind, tip, pct } end
 
-	local itemName = Name(id)
 	local bought, spent, want, max, log = QB.Session(id)
 	-- The resale price: on the sell page, the Unit Price you've typed there;
 	-- otherwise your own price if you've set one, else the cheapest listing.
@@ -109,10 +96,6 @@ local function Lines(id, selling)
 	local seeded = seedSold > 0 or seedLost > 0
 	-- What the rows that go by it are called.
 	local resell = typed and "List at your price" or target and ("Resell " .. CUSTOM .. "(custom)|r") or "Resell"
-	local uses = {}
-	for _, u in ipairs(ns.Crafting and ns.Crafting.Uses and ns.Crafting.Uses(id) or {}) do
-		if u.worth and #uses < 3 then uses[#uses + 1] = u end
-	end
 
 	local summaryText = bought == 0 and (want and ("Nothing bought yet - want %d"):format(want) or "Nothing bought yet")
 		or want and ("Bought %d of %d"):format(bought, want) or ("Bought %d"):format(bought)
@@ -154,41 +137,26 @@ local function Lines(id, selling)
 	if bought > 0 then
 		Add("What it's worth", nil, nil, "header", Tip("What it's worth",
 			"Profit on what you've bought, per item and in total."))
-		-- Each way of using what's left (seeds that sold are gone), at what it
-		-- cost you on average.
+		-- Reselling what's left (seeds that sold are gone), at what it cost you
+		-- on average.
 		Add(nil, "each", "all " .. left, "cols", nil, "return")
-		local options = {}
-		if sell then
-			options[#options + 1] = { name = resell, each = net - avg,
-				tip = Tip("Resell at " .. ns.Money(sell),
-					(left == bought and "After the 5%% cut you get %s for all %d; you paid %s."
-						or "After the 5%% cut you get %s for the %d left; they cost you %s."):format(
-						ns.Money(math.floor(net * left)), left, ns.Money(math.floor(avg * left + 0.5)))) }
+		local each = sell and net - avg
+		if each then
+			Add(resell, Signed(each), Signed(each * left), nil, Tip("Resell at " .. ns.Money(sell),
+				(left == bought and "After the 5%% cut you get %s for all %d; you paid %s."
+					or "After the 5%% cut you get %s for the %d left; they cost you %s."):format(
+					ns.Money(math.floor(net * left)), left, ns.Money(math.floor(avg * left + 0.5)))),
+				ns.Percent(each / avg * 100))
+		else
+			Add("No price to go by yet", nil, nil, "note")
 		end
-		for _, u in ipairs(uses) do
-			local source, worth = CraftSource(u, itemName)
-			local short = left < u.qty and (GREY .. ("%d more for one craft|r"):format(u.qty - left)) or nil
-			options[#options + 1] = { name = Name(u.output), each = u.worth - avg, note = short,
-				tip = Tip(Name(u.output), source, worth, ("You paid %s on average."):format(ns.Money(avg))) }
-		end
-		local best
-		for _, o in ipairs(options) do
-			if not best or o.each > best.each then best = o end
-		end
-		for _, o in ipairs(options) do
-			local name = o.name
-			if o == best and #options > 1 then name = name .. "  " .. GREY .. "best|r" end
-			Add(name, Signed(o.each), Signed(o.each * left), nil, o.tip, ns.Percent(o.each / avg * 100))
-			if o.note then Add("   " .. o.note, nil, nil, "note") end
-		end
-		if #options == 0 then Add("No price to go by yet", nil, nil, "note") end
 
 		-- Seeds: what the ones that sold brought in against what they cost you,
 		-- and deposits lost on the rest - then the profit with that counted.
 		if seeded then
 			local seedCost = avg * seedSold
 			local result = seedIncome - seedCost - seedLost
-			local each = seedSold > 0 and (seedIncome / seedSold - avg) or nil
+			local seedEach = seedSold > 0 and (seedIncome / seedSold - avg) or nil
 			local tip = {}
 			if seedSold > 0 then
 				tip[#tip + 1] = ("%d sold for %s after the 5%% cut; they cost you %s (%s each)."):format(seedSold,
@@ -197,12 +165,12 @@ local function Lines(id, selling)
 			if seedLost > 0 then
 				tip[#tip + 1] = ("Deposits lost on cancelled or expired seeds: %s."):format(ns.Money(seedLost))
 			end
-			Add(("Seeds (%d sold)"):format(seedSold), each and Signed(each), Signed(result), nil,
-				Tip("Seeds", unpack(tip)), each and ns.Percent(each / avg * 100))
-			if best then
-				local total = best.each * left + result
+			Add(("Seeds (%d sold)"):format(seedSold), seedEach and Signed(seedEach), Signed(result), nil,
+				Tip("Seeds", unpack(tip)), seedEach and ns.Percent(seedEach / avg * 100))
+			if each then
+				local total = each * left + result
 				Add("Profit after seeds", nil, Signed(total), nil, Tip("Profit after seeds",
-					("%s for the %d left, plus your seeds."):format(best.name, left)), ns.Percent(total / spent * 100))
+					("Reselling the %d left, plus your seeds."):format(left)), ns.Percent(total / spent * 100))
 			end
 		end
 		if seedUp > 0 then
@@ -221,17 +189,9 @@ local function Lines(id, selling)
 				Add(resell, Signed(net - max), nil, nil,
 					Tip("Resell at " .. ns.Money(sell), ("After the 5%% cut you get %s each."):format(ns.Money(net))),
 					ns.Percent((net - max) / max * 100))
+			else
+				Add("No price to go by yet", nil, nil, "note")
 			end
-			for _, u in ipairs(uses) do
-				local source, worth = CraftSource(u, itemName)
-				Add(Name(u.output), Signed(u.worth - max), nil, nil, Tip(Name(u.output), source, worth),
-					ns.Percent((u.worth - max) / max * 100))
-			end
-			if not sell and #uses == 0 then Add("No price to go by yet", nil, nil, "note") end
-		end
-		if #uses == 0 then
-			Add("No saved recipe uses it (open your profession", nil, nil, "note")
-			Add("window to save them)", nil, nil, "note")
 		end
 	end
 

@@ -187,6 +187,7 @@ local function SetCoins(max) SetCoinBoxes(coinBoxes, max or 0) end
 -- back, or HOLD_MAX passes.
 local HOLD_MAX = 3
 local holdSince, holdSawEmpty -- holding since (GetTime), and the listings were seen empty since
+local holdText                -- the button's text meanwhile
 local refreshSentAt           -- when the last refresh went out
 
 local function Held()
@@ -220,6 +221,9 @@ local function Update()
 		text = "Set the most to pay"
 	elseif Remaining(itemID) <= 0 then
 		text = ("Got all %d"):format(s.want)
+	elseif Held() then
+		-- The listings are out of date until refreshed: not "Buy..." from them.
+		text = holdText
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
 		if count <= 0 then
@@ -234,15 +238,11 @@ local function Update()
 			-- house is still busy with an earlier request: the game holds the
 			-- purchase and sends it the moment it can (one it drops instead is
 			-- given up on right away - AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED).
-			-- Only greyed out right after a purchase, until the listings are
-			-- refreshed: until then they still show what you just bought.
-			if not Held() then
-				plan = { quantity = count, total = total }
-				enabled = true
-			end
+			plan = { quantity = count, total = total }
+			enabled = true
 		end
 	end
-	button:SetText(text)
+	if text then button:SetText(text) end
 	button:SetEnabled(enabled)
 	clear:SetEnabled(not pending and (s.bought or 0) > 0)
 	refresh:SetEnabled(not pending)
@@ -341,6 +341,7 @@ local function Finish(text, why)
 	pending = nil
 	message = text
 	holdSince, holdSawEmpty = GetTime(), false
+	holdText = text and "Not bought" or "Buying..."
 	if C_Timer then
 		C_Timer.After(AFTER_PURCHASE, function()
 			if not pending then Refresh() end
@@ -349,6 +350,16 @@ local function Finish(text, why)
 		Refresh()
 	end
 	Update()
+end
+
+-- "Purchase successful!" after the status line (see Flash).
+local done
+
+local function HideDone()
+	if done then
+		done.anim:Stop()
+		done:Hide()
+	end
 end
 
 local function Buy()
@@ -360,6 +371,7 @@ local function Buy()
 	pending = { itemID = itemID, quantity = plan.quantity, total = plan.total, limit = max * plan.quantity,
 		stage = "quote", at = GetTime() }
 	message = nil
+	HideDone()
 	C_AuctionHouse.StartCommoditiesPurchase(itemID, plan.quantity)
 	Update()
 end
@@ -439,6 +451,58 @@ ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
 	Finish(TAKEN, "the game says the price is unavailable")
 end)
 
+-- A purchase went through: the button flashes gold, and "Purchase
+-- successful!" shows after the status line for a moment.
+local flash
+
+local function Flash()
+	if not (panel and panel:IsVisible() and button.CreateAnimationGroup) then return end
+	if not flash then
+		local t = button:CreateTexture(nil, "OVERLAY")
+		t:SetTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+		t:SetTexCoord(0, 0.625, 0, 0.6875)
+		t:SetBlendMode("ADD")
+		t:SetVertexColor(1, 0.8, 0.2)
+		t:SetAllPoints()
+		t:SetAlpha(0)
+		local g = t:CreateAnimationGroup()
+		local on = g:CreateAnimation("Alpha")
+		on:SetOrder(1)
+		on:SetDuration(0.08)
+		on:SetFromAlpha(0)
+		on:SetToAlpha(1)
+		local off = g:CreateAnimation("Alpha")
+		off:SetOrder(2)
+		off:SetDuration(0.6)
+		off:SetFromAlpha(1)
+		off:SetToAlpha(0)
+		flash = g
+	end
+	flash:Stop()
+	flash:Play()
+
+	if not done then
+		local text = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		text:SetTextColor(0.25, 1, 0.25)
+		text:SetText("Purchase successful!")
+		text:Hide()
+		local g = text:CreateAnimationGroup()
+		local fade = g:CreateAnimation("Alpha")
+		fade:SetStartDelay(1)
+		fade:SetDuration(0.5)
+		fade:SetFromAlpha(1)
+		fade:SetToAlpha(0)
+		g:SetScript("OnFinished", function() text:Hide() end)
+		text.anim = g
+		done = text
+	end
+	HideDone()
+	done:ClearAllPoints()
+	done:SetPoint("LEFT", status, "LEFT", (status:GetStringWidth() or 0) + 8, 0)
+	done:Show()
+	done.anim:Play()
+end
+
 ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
 	if not pending and outside and outside.total then
 		-- Bought through Blizzard's Buy popup: counts toward the session too.
@@ -467,6 +531,7 @@ ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
 		left and (left > 0 and (" (%d more to go)"):format(left) or " - that's all you wanted") or ""))
 	if left == 0 then Summary(id) end
 	Finish(nil)
+	ns.SafeCall(Flash) -- after Finish: the status line says what was bought by now
 end)
 
 ns.On("COMMODITY_PURCHASE_FAILED", function()
