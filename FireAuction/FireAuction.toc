@@ -18,6 +18,7 @@ QuickBuy.lua
 SideWindows.lua
 BuyInfo.lua
 Seed.lua
+Listings.lua
 Sales.lua
 Sync.lua
 Options.lua

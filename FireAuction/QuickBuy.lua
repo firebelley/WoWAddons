@@ -73,6 +73,8 @@ local function ClearSession(id)
 	s.bought, s.spent, s.log = nil, nil, nil
 	-- Seeding results too (Seed.lua); seeds listed before now no longer count.
 	s.seed, s.cleared = nil, time()
+	-- And what you've listed of it (Listings.lua).
+	s.listed, s.sold = nil, nil
 	summarized[id] = nil
 	boughtNow[id] = nil
 end

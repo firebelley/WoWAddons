@@ -13,7 +13,7 @@ local WIDTH = 290
 local PAD = 14
 local TOP = -66          -- where the rows start, under the portrait
 local DURATION = 1       -- the shortest listing time
-local DISCOUNT = 0.5     -- the price starts this much under your Quick buy "Up to"
+local SHARE = 0.75      -- the price starts at this much of your Quick buy "Up to"
 local QUOTE_TIMEOUT = 10 -- seconds to wait for the game to list it
 local AFTER_POST = 0.2   -- seconds after listing before refreshing: the game finishes it first
 local GREY = "|cff999999"
@@ -45,14 +45,14 @@ local function UnderCheapest(id)
 	return nil
 end
 
--- The price to list at, and where it comes from: what you typed, else 50%
--- under your Quick buy "Up to", else 1c under the cheapest listing.
+-- The price to list at, and where it comes from: what you typed, else 75%
+-- of your Quick buy "Up to", else 1c under the cheapest listing.
 local function Price(id)
 	if typedPrice[id] then return typedPrice[id], "Your price." end
 	local _, _, _, max = ns.QuickBuy.Session(id)
 	if max and max > 0 then
-		return math.max(1, math.floor(max * (1 - DISCOUNT))),
-			("%d%% under your Up to (%s)."):format(DISCOUNT * 100, ns.Money(max))
+		return math.max(1, math.floor(max * SHARE)),
+			("%d%% of your Up to (%s)."):format(SHARE * 100, ns.Money(max))
 	end
 	local under = UnderCheapest(id)
 	if under then return under, "1c under the cheapest listing." end
@@ -315,6 +315,10 @@ end)
 -- notice for an auction not known yet): the seed with that ID, or without
 -- one, your newest seed of that item whose ID isn't known yet either.
 ns.Seed = {}
+
+-- A seed is being listed (Listings.lua leaves it to Seed).
+function ns.Seed.Posting() return post ~= nil end
+
 function ns.Seed.Sold(name, auctionID)
 	local list = Seeds()
 	for i = #list, 1, -1 do
@@ -504,7 +508,7 @@ local function Create()
 	each:SetPoint("LEFT", last, "RIGHT", 4, 0)
 	amountBox.next, priceBoxes[1].next, priceBoxes[2].next = priceBoxes[1], priceBoxes[2], priceBoxes[3]
 	for _, box in ipairs(priceBoxes) do
-		Tooltip(box, "Price", "What to list each one at. Starts " .. DISCOUNT * 100 .. "% under your Quick buy \"Up to\" (or 1c under "
+		Tooltip(box, "Price", "What to list each one at. Starts at " .. SHARE * 100 .. "% of your Quick buy \"Up to\" (or 1c under "
 			.. "the cheapest listing without one); empty the boxes to go back to that.")
 	end
 
