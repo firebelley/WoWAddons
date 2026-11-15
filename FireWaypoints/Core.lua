@@ -1,7 +1,7 @@
 -- FireWaypoints: as many map pins as you like, shared with your group.
 --
 -- Shift-click the world map to drop a pin (or /fwp 45.2 60.1 for a spot in
--- your zone). Pins show on the world map and the minimap; right-click one to
+-- your zone). Pins show on the world map and the minimap; shift-right-click one to
 -- remove it. Everyone in your group with FireWaypoints sees your pins (in your
 -- class color, with your name), and you see theirs.
 --
@@ -300,7 +300,7 @@ function ns.Add(map, x, y)
 	if not ns.CanPlace(map, x, y) then return nil end
 	local id = FreeID()
 	if id > MAX_PER_PLAYER then
-		ns.Print(("you have %d pins already - right-click some to remove them."):format(MAX_PER_PLAYER))
+		ns.Print(("you have %d pins already - shift-right-click some to remove them."):format(MAX_PER_PLAYER))
 		return nil
 	end
 	local pin = { map = map, x = x, y = y, t = time() }
@@ -540,7 +540,7 @@ SlashCmdList.FIREWAYPOINTS = function(input)
 			tostring(map), px and ("%.3f, %.3f"):format(px, py) or "?"))
 	else
 		ns.Print("commands:")
-		print("  shift-click the world map - drop a pin (right-click a pin to remove it)")
+		print("  shift-click the world map - drop a pin (shift-right-click a pin to remove it)")
 		print("  /fwp 45.2 60.1 - drop a pin at those coordinates in your zone")
 		print("  /fwp list - list the pins")
 		print("  /fwp clear - remove your pins (for your group too)")

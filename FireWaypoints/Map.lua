@@ -31,14 +31,17 @@ local function ShowTooltip(f)
 	GameTooltip:AddLine(("%s  %.1f, %.1f"):format(ns.MapName(pin.map), pin.x * 100, pin.y * 100), 1, 1, 1)
 	local d = ns.Distance(pin)
 	if d then GameTooltip:AddLine(("%d yards away"):format(d), 0.7, 0.7, 0.7) end
-	GameTooltip:AddLine(f.owner and "Right-click to hide it" or "Right-click to remove it (for your group too)",
+	GameTooltip:AddLine(f.owner and "Shift-right-click to hide it" or "Shift-right-click to remove it (for your group too)",
 		0.25, 1, 0.25)
 	GameTooltip:Show()
 end
 
--- Right-click removes a pin; left clicks go through to the map (or minimap)
--- underneath. The game blocks setting up click pass-through in combat, so a
--- pin made mid-fight gets its clicks once the fight ends.
+-- Shift-right-click removes a pin; left clicks go through to the map (or
+-- minimap) underneath. A pin takes clicks a little beyond its edge, so it's
+-- easy to hit. The game blocks
+-- setting up click pass-through in combat, so a pin made mid-fight gets its
+-- clicks once the fight ends.
+local HIT_PAD = 0.35 -- extra click area around a pin, as a share of its size
 local clicksPending = {}
 local function EnableClicks(f)
 	if InCombatLockdown and InCombatLockdown() then
@@ -72,11 +75,13 @@ function ns.CreatePinFrame(parent, size)
 	local font = GameFontNormal:GetFont()
 	f.label:SetFont(font, math.max(9, math.floor(size * 0.45)), "OUTLINE")
 	f.label:SetPoint("BOTTOMLEFT", f, "RIGHT", -size * 0.15, -size * 0.1)
+	local pad = math.floor(size * HIT_PAD + 0.5)
+	f:SetHitRectInsets(-pad, -pad, -pad, -pad)
 	EnableClicks(f)
 	f:SetScript("OnEnter", ShowTooltip)
 	f:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	f:SetScript("OnMouseUp", function(self, button)
-		if button == "RightButton" and self.id then
+		if button == "RightButton" and IsShiftKeyDown() and self.id then
 			GameTooltip:Hide()
 			ns.Remove(self.owner, self.id)
 		end
@@ -176,6 +181,12 @@ local function Setup()
 		if type(WM[method]) == "function" then hooksecurefunc(WM, method, refresh) end
 	end
 	WM:HookScript("OnShow", refresh)
+	-- A shift-right-click that misses a pin does nothing, rather than zoom out.
+	if WM.AddCanvasClickHandler then
+		WM:AddCanvasClickHandler(function(_, button)
+			return button == "RightButton" and IsShiftKeyDown()
+		end, 1000)
+	end
 	local sc = WM.ScrollContainer
 	if sc then
 		sc:HookScript("OnMouseDown", OnMouseDown)
