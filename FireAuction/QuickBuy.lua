@@ -191,31 +191,38 @@ end
 local function SetCoins(max) SetCoinBoxes(coinBoxes, max or 0) end
 
 -- After a purchase the listings still show what was just bought until the
--- refreshed ones come in, so the button stays greyed out until then: the
--- game says the listings were updated, or they're seen emptying and coming
--- back, or HOLD_MAX passes.
+-- refreshed ones come in, so the button stays greyed out until they do, or
+-- HOLD_MAX passes.
 local HOLD_MAX = 3
-local holdSince, holdSawEmpty -- holding since (GetTime), and the listings were seen empty since
+local holdSince               -- holding since (GetTime)
 local holdText                -- the button's text meanwhile
 local refreshSentAt           -- when the last refresh went out
-local staleSince              -- a purchase failed: the listings on screen are wrong until refreshed
+local staleSince              -- a purchase finished: the listings on screen are out of date until refreshed
 local searchSentAt            -- when any search for listings last went out (ours or the auction house's own)
+local resultsAt               -- when the listings on screen came in
 local mode                    -- what a click on the button does now: "buy" or "refresh"
+local REFRESH_ICON = "|TInterface\\Buttons\\UI-RefreshButton:16:16:0:0|t "
+
+-- Never act on listings that are about to be replaced or are old: while a
+-- search is out (a purchase then waits behind it anyway, and would be sized
+-- from the listings it replaces), the button is greyed out; once they're
+-- older than OLD_AFTER, it refreshes instead of buying.
+local SEARCH_MAX = 2  -- seconds a search counts as out without an answer
+local OLD_AFTER = 5   -- seconds before listings are too old to buy from
+
+local function Searching()
+	return searchSentAt and (not resultsAt or resultsAt < searchSentAt) and GetTime() - searchSentAt < SEARCH_MAX
+end
+
+local function Old()
+	return not resultsAt or GetTime() - resultsAt > OLD_AFTER
+end
 
 local function Held()
 	if not holdSince then return false end
 	if GetTime() - holdSince > HOLD_MAX then
 		holdSince = nil
 		return false
-	end
-	local has = C_AuctionHouse.HasFullCommoditySearchResults
-	if has and refreshSentAt and refreshSentAt >= holdSince then
-		if not has(itemID) then
-			holdSawEmpty = true
-		elseif holdSawEmpty then
-			holdSince = nil
-			return false
-		end
 	end
 	return true
 end
@@ -238,9 +245,10 @@ local function Update()
 		text = holdText
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
-		if staleSince or count <= 0 then
+		local old = staleSince or Old()
+		if old or count <= 0 then
 			-- Nothing to buy from these listings: the button refreshes them.
-			text = staleSince and "Refresh" or "Refresh (none listed)"
+			text = REFRESH_ICON .. (old and "Refresh (stale)" or "Refresh")
 			mode, enabled = "refresh", not BlizzardDialogOpen()
 		elseif total > GetMoney() then
 			text = "Not enough money (" .. ns.Money(total) .. ")"
@@ -248,13 +256,16 @@ local function Update()
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
 		else
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
-			-- Usable as soon as there's something to buy, even while the auction
-			-- house is still busy with an earlier request: the game holds the
-			-- purchase and sends it the moment it can (one it drops instead is
-			-- given up on right away - AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED).
+			-- Usable even while the auction house is busy with another request
+			-- (your auctions list...): the game holds the purchase and sends it the
+			-- moment it can (one it drops instead is given up on right away -
+			-- AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED).
 			plan = { quantity = count, total = total }
 			mode, enabled = "buy", true
 		end
+		-- New listings on the way: wait for them (a refresh then would only
+		-- queue behind it, and hold up the purchase after).
+		if mode and Searching() then plan, mode, enabled = nil, nil, false end
 	end
 	if text then button:SetText(text) end
 	button:SetEnabled(enabled)
@@ -275,7 +286,7 @@ end
 -- was still busy), or no listings have come back a little later, it's sent
 -- once more.
 local AFTER_PURCHASE = 0.2 -- seconds after a purchase before refreshing: the game finishes it first
-local RESEND_AFTER = 2.5   -- seconds without listings before sending the refresh once more
+local RESEND_AFTER = 1.5   -- seconds without listings before sending the refresh once more (they take ~0.2s)
 local refreshWaiting = false -- resend when the auction house is ready
 local refreshRetried = false
 local refreshCount = 0
@@ -290,12 +301,14 @@ local function Refresh(retry)
 	ns.Debug(("quick buy: refresh%s"):format(retry and " (again)" or ""))
 	pcall(frame.RefreshSearchResults, frame, AuctionHouseSearchContext.BuyCommodities,
 		C_AuctionHouse.MakeItemKey(itemID))
-	-- Still nothing a little later (the list stuck on "Searching..."): once more.
-	if retry or not (C_Timer and C_AuctionHouse.HasFullCommoditySearchResults) then return end
-	local count, id = refreshCount, itemID
+	-- No answer a little later (the list stuck on "Searching..."): once more.
+	-- (Not "all pages loaded": a long list never is, and that would send a
+	-- second refresh every time, holding up a purchase behind it.)
+	if retry or not C_Timer then return end
+	local count, id, sent = refreshCount, itemID, refreshSentAt
 	C_Timer.After(RESEND_AFTER, function()
 		if count == refreshCount and id == itemID and not pending
-			and not C_AuctionHouse.HasFullCommoditySearchResults(id) then
+			and not (resultsAt and resultsAt >= sent) then
 			Refresh(true)
 		end
 	end)
@@ -303,20 +316,25 @@ end
 
 -- New listings: after a purchase, the refreshed ones are in and the button can
 -- be used again. Either way the button follows them now, not at the next tick.
-local function Refreshed(id)
-	if id and id ~= itemID then return end
+-- Only "received" means new listings came in: "updated" also fires the moment
+-- a refresh goes out (the old ones are cleared) and as more pages load.
+local function Refreshed()
+	resultsAt = GetTime()
 	if refreshSentAt and consumed and refreshSentAt >= consumed.at then consumed = nil end
 	if holdSince and refreshSentAt and refreshSentAt >= holdSince then holdSince = nil end
 	if staleSince and searchSentAt and searchSentAt >= staleSince then staleSince = nil end
 	ns.SafeCall(Update)
 end
-ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", Refreshed)
-ns.On("COMMODITY_SEARCH_RESULTS_RECEIVED", function() Refreshed(nil) end)
+ns.On("COMMODITY_SEARCH_RESULTS_RECEIVED", Refreshed)
+ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(id)
+	if id == itemID then ns.SafeCall(Update) end
+end)
 
 ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", function()
 	if pending then return end -- a purchase (handled further down)
-	-- Most likely ours, if we just sent one.
-	if refreshSentAt and GetTime() - refreshSentAt < 2 and not refreshRetried then
+	-- Most likely ours, if we just sent one - unless a newer search went out
+	-- since (yours, from the list's own refresh button): that one replaced it.
+	if refreshSentAt and searchSentAt == refreshSentAt and GetTime() - refreshSentAt < 2 and not refreshRetried then
 		refreshSentAt, refreshWaiting = nil, true
 		local ready = C_AuctionHouse.IsThrottledMessageSystemReady
 		if not ready or ready() then Refresh(true) end
@@ -354,12 +372,14 @@ local function Finish(text, why)
 	end
 	pending = nil
 	message = text
-	holdSince, holdSawEmpty = GetTime(), false
-	-- Not bought: what's on screen can't be bought, so until refreshed
-	-- listings come in, the button refreshes instead.
-	if text then staleSince = holdSince end
+	holdSince = GetTime()
+	-- Bought or not, the listings on screen are out of date: until refreshed
+	-- ones come in, the button refreshes instead of buying from them.
+	staleSince = holdSince
 	holdText = text and "Not bought" or "Buying..."
 	if C_Timer then
+		-- A refresh sent in the same moment the purchase ends gets no listings
+		-- back (the list stays on "Searching...").
 		C_Timer.After(AFTER_PURCHASE, function()
 			if not pending then Refresh() end
 		end)
@@ -592,7 +612,12 @@ if C_AuctionHouse and C_AuctionHouse.StartCommoditiesPurchase then
 	end)
 	-- The auction house's own searches and refreshes bring fresh listings too.
 	for _, fn in ipairs({ "SendSearchQuery", "RefreshCommoditySearchResults" }) do
-		if C_AuctionHouse[fn] then hooksecurefunc(C_AuctionHouse, fn, function() searchSentAt = GetTime() end) end
+		if C_AuctionHouse[fn] then
+			hooksecurefunc(C_AuctionHouse, fn, function()
+				searchSentAt = GetTime()
+				ns.SafeCall(Update)
+			end)
+		end
 	end
 end
 
@@ -689,7 +714,7 @@ end
 -- to pay starts at what it's worth crafted (if one of your recipes uses it).
 local function ShowItem(id)
 	if pending then return end
-	if id ~= itemID then staleSince = nil end
+	if id ~= itemID then staleSince, resultsAt = nil, nil end
 	itemID = id
 	message = nil
 	if not id then return end
@@ -881,7 +906,7 @@ ns.On("AUCTION_HOUSE_CLOSED", function()
 	-- What you bought this visit and haven't had a summary for yet.
 	for id in pairs(boughtNow) do ns.SafeCall(Summary, id) end
 	wipe(boughtNow)
-	holdSince, consumed, staleSince = nil, nil, nil
+	holdSince, consumed, staleSince, resultsAt, searchSentAt = nil, nil, nil, nil, nil
 	outside, gaveUp = nil, nil
 	refreshWaiting, refreshSentAt = false, nil
 end)
