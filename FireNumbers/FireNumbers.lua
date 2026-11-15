@@ -5,10 +5,11 @@
 -- its attacker (UNIT_COMBAT), and everything that would say (the combat log,
 -- the damage meter's totals, combat text) is closed or secret in combat. So
 -- FireNumbers changes how the game draws them, through its settings (CVars):
--- size, pop, rise, fall, spread - and the font.
+-- size, rise, fall, spread - and the font. Crits stay the game's: classic
+-- numbers hold them in place, and no setting moves them.
 --
 -- On first load it switches to its own style (bigger, floating up instead of
--- arcing down, crits popping harder); Options > AddOns > FireNumbers tunes it,
+-- arcing down); Options > AddOns > FireNumbers tunes it,
 -- or puts back the game's style (what you had before). The style is built on
 -- the game's classic numbers - the only ones its settings shape - so that's
 -- kept on.
@@ -23,7 +24,6 @@ local STYLE = {
 	[CLASSIC] = "1",
 	WorldTextScale_v2 = "1.4",
 	WorldTextMinSize_v2 = "10",
-	WorldTextRampPowCrit_v2 = "2.5", -- the curve of a crit's movement: higher leaves it later (the game's 8 stays put)
 	WorldTextGravity_v2 = "0",
 	WorldTextRandomZMax_v2 = "1.0",
 	WorldTextRandomZMin_v2 = "0.55",
@@ -190,8 +190,6 @@ local function Build()
 	-- all to the very end, so the number fades before it moves.
 	Slider("WorldTextRampPow_v2", "Ease", "Below 1: a hit's number shoots off, then slows. Above 1: it starts slow "
 		.. "and speeds up. Too high and it fades before it moves.", 0.1, 6, 0.1, Number)
-	Slider("WorldTextRampPowCrit_v2", "Crit ease", "The same for crits. The game's own is 8: crits stay put.",
-		0.1, 10, 0.1, Number)
 	EndSliders()
 
 	-- Font: a sample of each; the engine picks it up as you log in.
@@ -242,7 +240,7 @@ local function Build()
 		end)
 		Tooltip(b, text, tooltip)
 	end
-	Button("FireNumbers style", "Bigger, floating up instead of arcing down, crits popping harder.", 20, ApplyStyle)
+	Button("FireNumbers style", "Bigger, floating up instead of arcing down.", 20, ApplyStyle)
 	Button("Game's style", "What you had before FireNumbers (and the game font).", 200, GameStyle)
 
 	panel:SetScript("OnShow", function()
@@ -308,11 +306,14 @@ events:SetScript("OnEvent", function(_, event, addon)
 		DB.gameFont = DB.gameFont or (type(DAMAGE_TEXT_FONT) == "string" and DAMAGE_TEXT_FONT) or nil
 		if DB.font then DAMAGE_TEXT_FONT = DB.font end
 	else
-		-- The first style held crits still (12): if that's still set, the new one.
-		if DB.styled and not DB.critHoldFixed and tonumber(Get("WorldTextRampPowCrit_v2")) == 12 then
-			Set("WorldTextRampPowCrit_v2", STYLE.WorldTextRampPowCrit_v2)
+		-- Earlier versions shaped crits (which classic numbers never move): give
+		-- them back what you had.
+		if not DB.critReset then
+			local was = DB.original and DB.original.WorldTextRampPowCrit_v2
+			if DB.styled and not DB.gameStyle then Set("WorldTextRampPowCrit_v2", was or "8") end
+			if DB.original then DB.original.WorldTextRampPowCrit_v2 = nil end
+			DB.critReset, DB.critHoldFixed = true, nil
 		end
-		DB.critHoldFixed = true
 		if not DB.styled then
 			ApplyStyle()
 			DB.styled = true

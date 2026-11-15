@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: FireNumbers
-## Notes: Makes the game's own damage numbers (only yours) easier to read: bigger, floating up, crits that pop. Tune them in its options.
+## Notes: Makes the game's own damage numbers (only yours) easier to read: bigger and floating up. Tune them in its options.
 ## IconTexture: Interface\Icons\Ability_Warrior_Rampage
 ## Author: Firebelley
 ## Version: 0.1.0
