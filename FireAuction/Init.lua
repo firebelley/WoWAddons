@@ -104,8 +104,9 @@ function ns.Money(copper)
 	copper = math.floor((copper or 0) + 0.5)
 	local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
 	local parts = {}
+	-- Gold always with its silver (so sums add up); copper only under a gold.
 	if g > 0 then parts[#parts + 1] = (BreakUpLargeNumbers and BreakUpLargeNumbers(g) or g) .. GOLD end
-	if s > 0 and g < 100 then parts[#parts + 1] = s .. SILVER end
+	if s > 0 or g > 0 then parts[#parts + 1] = s .. SILVER end
 	if (c > 0 and g == 0) or #parts == 0 then parts[#parts + 1] = c .. COPPER end
 	return table.concat(parts, " ")
 end

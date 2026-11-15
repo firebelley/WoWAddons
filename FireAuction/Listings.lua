@@ -11,7 +11,7 @@
 --   Cancelled or expired: the rest comes back, and its share of the deposit is lost.
 --
 -- Saved with the session: s.listed = { { auctionID, qty, price, deposit, at,
--- length, left, soldSeen } } still up, s.sold = { n, income, lost } settled,
+-- length, left, soldSeen, house } } still up, s.sold = { n, income, lost } settled,
 -- s.after = auctions up to this ID were listed before the session, and
 -- s.done = { [auctionID] = time } settled (so they aren't taken up again).
 local _, ns = ...
@@ -179,7 +179,7 @@ ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	if not s then return end
 	s.listed = s.listed or {}
 	s.listed[#s.listed + 1] = { auctionID = auctionID, qty = p.qty, price = p.price, deposit = p.deposit,
-		at = p.at, length = p.length, left = p.qty }
+		at = p.at, length = p.length, left = p.qty, house = ns.house or "faction" }
 end)
 
 ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ local function Adopt(s, id, a)
 	end
 	s.listed = s.listed or {}
 	s.listed[#s.listed + 1] = { auctionID = a.auctionID, qty = p and p.qty or a.quantity, price = price,
-		deposit = p and p.deposit or nil, at = at, length = length, left = a.quantity }
+		deposit = p and p.deposit or nil, at = at, length = length, left = a.quantity, house = ns.house or "faction" }
 	ns.Debug(("listing found: %d at %s"):format(a.quantity or 0, ns.Money(price)))
 end
 
@@ -241,8 +241,9 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 			table.remove(s.listed, i)
 		elseif a then
 			l.left = math.min(l.left, a.quantity or l.left)
-		elseif full and now - l.at > 5 then
-			-- Gone: sold out, unless its time was up first.
+		elseif full and now - l.at > 5 and (l.house or "faction") == (ns.house or "faction") then
+			-- Gone: sold out, unless its time was up first. (Only this auction house's:
+			-- the list doesn't have the other one's.)
 			if now <= l.at + l.length or l.soldSeen then l.left = 0 end
 			Settle(s, i, l.left == 0 and "sold" or "expired")
 		end

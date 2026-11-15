@@ -101,8 +101,9 @@ local function Lines(id, selling)
 	local avg = bought > 0 and spent / bought or nil
 	-- Seeding (Seed.lua): seeds that sold are gone from what's left to resell
 	-- and brought in their price; cancelled or expired ones lost their deposit.
-	local seedSold, seedIncome, seedLost, seedUp = 0, 0, 0, 0
-	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp = ns.Seed.Stats(id) end
+	local seedSold, seedIncome, seedLost, seedUp, seedGone = 0, 0, 0, 0, 0
+	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp, seedGone = ns.Seed.Stats(id) end
+	local seededN = seedSold + seedUp + seedGone -- every seed item listed this session
 	-- Your listings (Listings.lua): the same, and what's still up.
 	local listSold, listIncome, listLost, listUp, upIncome = 0, 0, 0, 0, 0
 	if ns.Listings then listSold, listIncome, listLost, listUp, upIncome = ns.Listings.Stats(id) end
@@ -130,6 +131,10 @@ local function Lines(id, selling)
 		Add("Average cost", nil, ns.Money(math.floor(avg + 0.5)) .. " each", nil, Tip("Average cost",
 			("What you've paid per item: %s for %d."):format(ns.Money(spent), bought)))
 		Add("Spent", nil, ns.Money(spent))
+		if seededN > 0 then
+			Add("Bought per seed", nil, ("%.1f"):format(bought / seededN), nil, Tip("Bought per seed",
+				("%d bought for %d seeded."):format(bought, seededN)))
+		end
 		if left > 0 then
 			Add("Break-even relist", nil, cover > 0 and (ns.Money(QB.RelistPrice(cover, left)) .. " each")
 				or (GREY .. "any price|r"), nil, Tip("Break-even relist",
@@ -156,6 +161,19 @@ local function Lines(id, selling)
 		lines[#lines].mode = "auto"
 	end
 
+	-- Seeds listed before buying any: what's up, sold and lost (with purchases,
+	-- they're weighed against what you paid, under What it's worth).
+	if bought == 0 and (seeded or seedUp > 0) then
+		Add("Seeds", nil, nil, "header")
+		if seedUp > 0 then Add("Still up", nil, tostring(seedUp)) end
+		if seedSold > 0 then
+			Add(("Sold %d"):format(seedSold), nil, ns.Money(seedIncome), nil, Tip("Sold", "After the 5% cut."))
+		end
+		if seedLost > 0 then
+			Add("Deposits lost", nil, Signed(-seedLost), nil, Tip("Deposits lost", "On cancelled or expired seeds."))
+		end
+	end
+
 	-- Selling: the amount on the sell page, at its Unit Price.
 	local qty = selling and typed and TypedQuantity()
 	if bought > 0 and qty then
@@ -166,32 +184,54 @@ local function Lines(id, selling)
 				qty, ns.Money(math.floor(avg * qty + 0.5)))), ns.Percent(each / avg * 100))
 	end
 
-	-- Selling: toward making back what you spent, keeping the rest.
+	-- Selling: toward making back what you spent, keeping the rest. A ledger:
+	-- spent, what's come in, what's up and this listing would bring in, overall.
 	if selling and bought > 0 then
 		local soldN, soldIncome = seedSold + listSold, seedIncome + listIncome
+		local lostAll = seedLost + listLost
 		local thisIncome = qty and math.floor(typed * cut * qty) or 0
-		Add("Break-even", nil, nil, "header")
-		Add(("Sold %d"):format(soldN), nil, ns.Money(soldIncome), nil, Tip("Sold",
-			"What's sold of your listings and seeds since you started buying, after the 5% cut.",
-			(seedLost + listLost) > 0 and ("Deposits lost: %s."):format(ns.Money(seedLost + listLost)) or nil))
-		if listUp > 0 then
-			Add(("Still up %d"):format(listUp), nil, GREY .. ns.Money(upIncome) .. "|r", nil, Tip("Still up",
-				"Your listings not sold yet: what they bring in if they sell."))
-		end
-		local keep = math.max(0, left - listUp - (qty or 0))
+		-- What's in your bags: counted, so it includes any you had before buying
+		-- (seeds and listings from those come out of the bags, not what you bought).
+		-- Without a count: what you bought, less what's sold or up.
+		local count = C_Item and C_Item.GetItemCount and C_Item.GetItemCount(id) or (GetItemCount and GetItemCount(id))
+		local inBags = count or math.max(0, left - listUp - seedUp)
+		local keep = math.max(0, inBags - (qty or 0))
 		local result = upIncome + thisIncome - cover
-		Add(("Keeping %d"):format(keep), nil, Signed(result), nil, Tip("Keeping " .. keep,
-			qty and "If what's up and this listing sell: what you're up or down, keeping the rest."
-				or "If what's up sells: what you're up or down, keeping the rest."))
-		-- How many to list at this price to break even, with what's up.
+		Add("Break-even", nil, nil, "header", Tip("Break-even", "Making back what you spent, keeping the rest."))
+		Add(("Spent (%d bought)"):format(bought), nil, Signed(-spent))
+		if soldN > 0 then
+			Add(("Sold %d"):format(soldN), nil, Signed(soldIncome), nil, Tip("Sold",
+				"Your seeds and listings that sold, after the 5% cut."))
+		end
+		if lostAll > 0 then
+			Add("Deposits lost", nil, Signed(-lostAll), nil, Tip("Deposits lost", "On cancelled or expired seeds and listings."))
+		end
+		if listUp > 0 then
+			Add(("Still up %d"):format(listUp), nil, GREY .. Signed(upIncome) .. "|r", nil, Tip("Still up",
+				"Your listings not sold yet, if they sell, after the 5% cut."))
+		end
+		if qty then
+			Add(("This listing %d"):format(qty), nil, GREY .. Signed(thisIncome) .. "|r", nil, Tip("This listing",
+				"If it sells, after the 5% cut."))
+		end
+		Add("Overall", nil, Signed(result), nil, Tip("Overall",
+			(listUp > 0 or qty) and "If what's up and this listing sell." or "So far."))
+		Add(("Keeping %d"):format(keep), nil, (result >= 0 or keep == 0) and "free"
+			or (ns.Money(math.floor(-result / keep + 0.5)) .. " each"), nil, Tip("Keeping " .. keep,
+			"What's left in your bags" .. (qty and " after this listing." or "."),
+			result >= 0 and "Free: the rest pays for everything." or "What each costs you if the rest sells."))
+		-- How many to sell at this price to make back what you spent, with what's up.
 		local short = cover - upIncome
 		if typed and short > 0 then
 			local n = math.floor(short / (typed * cut)) + 1
 			while math.floor(typed * cut * n) <= short do n = n + 1 end
-			local have = left - listUp
-			Add("To break even", nil, n <= have and ("list " .. n) or ("list " .. n .. GREY .. " (have " .. have .. ")|r"),
-				nil, Tip("To break even", ("How many to list at %s, with what's up, to make back what you spent.")
-					:format(ns.Money(typed))))
+			local after = ("Each sold after that: %s profit."):format(Signed(typed * cut))
+			if qty and n <= qty then
+				Add("Break even at", nil, ("%d of %d sold"):format(n, qty), nil, Tip("Break even at", after))
+			else
+				Add("To break even", nil, n <= inBags and ("list " .. n) or ("list " .. n .. GREY .. " (have " .. inBags .. ")|r"),
+					nil, Tip("To break even", ("How many to sell at %s to make back what you spent."):format(ns.Money(typed)), after))
+			end
 		end
 	end
 

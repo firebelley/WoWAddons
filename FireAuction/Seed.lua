@@ -109,6 +109,7 @@ local function Settle(seed, outcome, extra)
 		st.income = st.income + math.floor(seed.price * seed.qty * (1 - ns.QuickBuy.AH_CUT))
 	else
 		st.lost = st.lost + (seed.deposit or 0) + (extra or 0)
+		st.gone = (st.gone or 0) + seed.qty -- seeded, came back unsold
 	end
 	ns.Debug(("seed %s: %d %s at %s"):format(outcome, seed.qty, ItemName(seed.itemID), ns.Money(seed.price)))
 end
@@ -147,7 +148,7 @@ end
 local function AddSeed(p, auctionID)
 	local list = Seeds()
 	list[#list + 1] = { auctionID = auctionID, itemID = p.itemID, qty = p.qty, price = p.price, deposit = p.deposit,
-		at = time() }
+		at = time(), house = ns.house or "faction" }
 end
 
 local function RefreshSoon()
@@ -291,6 +292,31 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 			end
 		end
 	end
+
+	-- Seeds that sold or ended without the game saying so: a "Sold" row with
+	-- their ID, or gone from the whole list (sold out, unless their time was up).
+	-- Only this auction house's: the list doesn't have the other one's.
+	local rows = {}
+	for i = 1, AH.GetNumOwnedAuctions() or 0 do
+		local ok, a = pcall(AH.GetOwnedAuctionInfo, i)
+		if ok and a and a.auctionID then rows[a.auctionID] = a end
+	end
+	local full = not AH.HasFullOwnedAuctionResults or AH.HasFullOwnedAuctionResults()
+	local list, now, length = Seeds(), time(), ns.DurationSeconds(DURATION)
+	for i = #list, 1, -1 do
+		local seed = list[i]
+		local a = seed.auctionID and rows[seed.auctionID]
+		if a and a.status == 1 then
+			table.remove(list, i)
+			Settle(seed, "sold")
+			elapsed = 1
+		elseif seed.auctionID and not a and full and now - seed.at > 5
+			and (seed.house or "faction") == (ns.house or "faction") then
+			table.remove(list, i)
+			Settle(seed, now <= seed.at + length and "sold" or "expired")
+			elapsed = 1
+		end
+	end
 end)
 
 ns.On("AUCTION_CANCELED", function(auctionID)
@@ -347,8 +373,8 @@ function ns.Seed.Sold(name, auctionID)
 end
 
 -- What seeding did in the item's purchase session: how many sold, what they
--- brought in (after the cut), what was lost (deposits, cancel costs), and how
--- many are up now.
+-- brought in (after the cut), what was lost (deposits, cancel costs), how
+-- many are up now, and how many came back unsold (cancelled or expired).
 function ns.Seed.Stats(id)
 	Sweep()
 	local s = ns.db.quickBuy[id]
@@ -357,7 +383,7 @@ function ns.Seed.Stats(id)
 	for _, seed in ipairs(Seeds()) do
 		if seed.itemID == id and not (s and s.cleared and seed.at < s.cleared) then up = up + seed.qty end
 	end
-	return st and st.sold or 0, st and st.income or 0, st and st.lost or 0, up
+	return st and st.sold or 0, st and st.income or 0, st and st.lost or 0, up, st and st.gone or 0
 end
 
 ---------------------------------------------------------------------------
