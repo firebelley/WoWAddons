@@ -339,6 +339,13 @@ local function ListingTooltip(row)
 	local l = row.listing
 	if not l then return end
 	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+	if l.items then
+		GameTooltip:SetText(("%d at %s each%s"):format(l.items, ns.Money(l.unit), l.bidOnly and " (bid only)" or ""), 1, 1, 1)
+		GameTooltip:AddDoubleLine("Total", ns.Money(l.items * l.unit), 1, 0.82, 0, 1, 1, 1)
+		GameTooltip:AddLine(l.count == 1 and "1 auction" or ("%d auctions"):format(l.count), 0.7, 0.7, 0.7)
+		GameTooltip:Show()
+		return
+	end
 	if l.buyout > 0 then
 		GameTooltip:SetText(("%d x %d"):format(l.count, l.stack), 1, 1, 1)
 		GameTooltip:AddDoubleLine("Buyout per item", ns.Money(l.unit), 1, 0.82, 0, 1, 1, 1)
@@ -366,7 +373,11 @@ local function UpdateListRows()
 			else
 				row.price:SetText("|cff999999bid|r " .. ns.Money(l.unit))
 			end
-			row.stack:SetText(l.count > 1 and ("%d |cff999999x%d|r"):format(l.stack, l.count) or tostring(l.stack))
+			if l.items then
+				row.stack:SetText(tostring(l.items))
+			else
+				row.stack:SetText(l.count > 1 and ("%d |cff999999x%d|r"):format(l.stack, l.count) or tostring(l.stack))
+			end
 			row:Show()
 		else
 			row:Hide()
@@ -374,10 +385,42 @@ local function UpdateListRows()
 	end
 end
 
+-- Stackable items (cloth, herbs...) are sold by the each like commodities:
+-- the stacks they were listed in don't matter.
+local function Stackable(id, list)
+	local max = C_Item and C_Item.GetItemMaxStackSizeByID and C_Item.GetItemMaxStackSizeByID(id)
+	if not max and GetItemInfo then max = select(8, GetItemInfo(id)) end
+	if max then return max > 1 end
+	for _, l in ipairs(list) do
+		if l.stack > 1 then return true end
+	end
+	return false
+end
+
+-- One row per price: how many there are in all, from how many auctions.
+local function ByPrice(list)
+	local out, last = {}, nil
+	for _, l in ipairs(list) do
+		local bidOnly = l.buyout <= 0
+		local unit = math.floor(l.unit + 0.5)
+		if last and last.unit == unit and last.bidOnly == bidOnly then
+			last.count, last.items = last.count + l.count, last.items + l.count * l.stack
+		else
+			last = { unit = unit, bidOnly = bidOnly, buyout = l.buyout, bid = l.bid, count = l.count,
+				items = l.count * l.stack, stack = l.stack }
+			out[#out + 1] = last
+		end
+	end
+	return out
+end
+
 local function UpdateListPanel()
 	if not (listPanel and listPanel:IsShown()) then return end
 	local rec = selected and ns.Data.Get(selected, View())
 	listData = ns.Data.Listings(rec)
+	local byPrice = selected and Stackable(selected, listData)
+	if byPrice then listData = ByPrice(listData) end
+	listPanel.stackHeader:SetText(byPrice and "Quantity" or "Stack")
 	listOffset = 0
 	listPanel.title:SetText(rec and (ns.Data.Name(selected, rec) or ("item " .. selected)) or "Listings")
 	if #listData == 0 then
@@ -385,7 +428,7 @@ local function UpdateListPanel()
 	else
 		local auctions, items = 0, 0
 		for _, l in ipairs(listData) do
-			auctions, items = auctions + l.count, items + l.count * l.stack
+			auctions, items = auctions + l.count, items + (l.items or l.count * l.stack)
 		end
 		listPanel.footer:SetText(("%d auctions, %d items - scanned %s"):format(auctions, items, ns.TimeAgo(rec.s)))
 	end
@@ -425,9 +468,10 @@ local function BuildListPanel()
 		h:SetWidth(width)
 		h:SetJustifyH(justify)
 		h:SetText(text)
+		return h
 	end
 	Header("Price each", 14, 120, "RIGHT")
-	Header("Stack", 144, 66, "RIGHT")
+	p.stackHeader = Header("Stack", 144, 66, "RIGHT")
 
 	local area = CreateFrame("Frame", nil, p)
 	area:SetPoint("TOPLEFT", 10, -50)
