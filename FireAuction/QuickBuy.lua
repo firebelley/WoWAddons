@@ -60,6 +60,8 @@ end
 --   log = { { quantity, total, time() }, ... } newest first
 local function Record(id, quantity, total)
 	local s = Settings(id)
+	-- A new session: only what you list from now on is its listings (Listings.lua).
+	if (s.bought or 0) == 0 and ns.Listings then ns.Listings.StartSession(s) end
 	s.bought = (s.bought or 0) + quantity
 	s.spent = (s.spent or 0) + total
 	s.log = s.log or {}
@@ -76,7 +78,7 @@ local function ClearSession(id)
 	-- Seeding results too (Seed.lua); seeds listed before now no longer count.
 	s.seed, s.cleared = nil, time()
 	-- And what you've listed of it (Listings.lua).
-	s.listed, s.sold = nil, nil
+	s.listed, s.sold, s.after, s.done = nil, nil, nil, nil
 	summarized[id] = nil
 	boughtNow[id] = nil
 end

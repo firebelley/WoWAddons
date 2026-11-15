@@ -319,6 +319,19 @@ ns.Seed = {}
 -- A seed is being listed (Listings.lua leaves it to Seed).
 function ns.Seed.Posting() return post ~= nil end
 
+-- One of your auctions (OwnedAuctionInfo) is a seed: its ID, or a seed whose
+-- ID isn't known yet with the same item, amount and price.
+function ns.Seed.Owns(a)
+	local id = a.itemKey and a.itemKey.itemID
+	for _, seed in ipairs(Seeds()) do
+		if seed.auctionID == a.auctionID then return true end
+		if not seed.auctionID and seed.itemID == id and seed.qty == a.quantity and seed.price == a.buyoutAmount then
+			return true
+		end
+	end
+	return false
+end
+
 function ns.Seed.Sold(name, auctionID)
 	local list = Seeds()
 	for i = #list, 1, -1 do
