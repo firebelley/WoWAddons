@@ -55,6 +55,60 @@ local function Build()
 		"Group members with FireWaypoints see your pins. You still see theirs either way.", ns.SharingChanged)
 	y = y - 10
 
+	-- How big pins are on the minimap (the classic options slider look).
+	do
+		local key, label, min, max, step = "minimapScale", "Minimap pin size", 0.5, 3, 0.1
+		local function Format(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
+		local ok, s = pcall(CreateFrame, "Slider", nil, panel, "BackdropTemplate")
+		if not ok then s = CreateFrame("Slider", nil, panel) end
+		s:SetOrientation("HORIZONTAL")
+		s:SetSize(200, 17)
+		s:SetPoint("TOPLEFT", 24, y - 18)
+		if s.SetBackdrop then
+			s:SetBackdrop({
+				bgFile = "Interface\\Buttons\\UI-SliderBar-Background",
+				edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
+				tile = true, tileSize = 8, edgeSize = 8,
+				insets = { left = 3, right = 3, top = 6, bottom = 6 },
+			})
+		end
+		s:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
+		s:SetMinMaxValues(min, max)
+		s:SetValueStep(step)
+		if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
+		s:EnableMouseWheel(true)
+		local name = s:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		name:SetPoint("BOTTOMLEFT", s, "TOPLEFT", 0, 2)
+		name:SetText(label)
+		local value = s:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		value:SetPoint("BOTTOMRIGHT", s, "TOPRIGHT", 0, 2)
+		local loading = false
+		s:SetScript("OnValueChanged", function(_, v)
+			v = math.floor((v - min) / step + 0.5) * step + min -- snap to the step
+			value:SetText(Format(v))
+			if loading or db[key] == v then return end
+			db[key] = v
+			ns.Changed()
+		end)
+		s:SetScript("OnMouseWheel", function(self, delta)
+			self:SetValue(math.max(min, math.min(max, self:GetValue() + delta * step)))
+		end)
+		s:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:SetText(label, 1, 1, 1)
+			GameTooltip:AddLine("How big pins are on the minimap, nearby and on its edge.", nil, nil, nil, true)
+			GameTooltip:Show()
+		end)
+		s:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		refreshers[#refreshers + 1] = function()
+			loading = true
+			s:SetValue(db[key])
+			value:SetText(Format(db[key]))
+			loading = false
+		end
+		y = y - 48
+	end
+
 	local clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	clear:SetSize(140, 22)
 	clear:SetText("Clear my pins")

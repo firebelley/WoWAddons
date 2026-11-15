@@ -43,6 +43,8 @@ local function Update()
 	if not map then return HideAll() end
 	local half = Minimap:GetWidth() / 2
 	local perYard = half / Radius()
+	local scale = ns.db.minimapScale or 1
+	local size, edgeSize = SIZE * scale, EDGE_SIZE * scale
 	local facing = Facing()
 	local cos, sin = 1, 0
 	if facing then cos, sin = math.cos(facing), math.sin(facing) end
@@ -55,7 +57,7 @@ local function Update()
 		if facing then east, north = east * cos + north * sin, -east * sin + north * cos end
 		local x, y = east * perYard, north * perYard
 		local dist = math.sqrt(x * x + y * y)
-		local edge = half - EDGE_SIZE / 2 - 2
+		local edge = half - edgeSize / 2 - 2
 		local off = dist > edge
 		if off then x, y = x / dist * edge, y / dist * edge end
 		n = n + 1
@@ -65,7 +67,7 @@ local function Update()
 			pool[n] = f
 		end
 		ns.SetPinFrame(f, owner, id, pin)
-		f:SetSize(off and EDGE_SIZE or SIZE, off and EDGE_SIZE or SIZE)
+		f:SetSize(off and edgeSize or size, off and edgeSize or size)
 		f:SetAlpha(off and 0.6 or 1)
 		f.label:SetShown(not off)
 		f:ClearAllPoints()
