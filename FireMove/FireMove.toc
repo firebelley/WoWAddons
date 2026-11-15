@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: FireMove
+## Notes: Drag Blizzard's windows anywhere. They stay where you put them.
+## IconTexture: Interface\Icons\Ability_Rogue_Sprint
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariables: FireMoveDB
+
+FireMove.lua
