@@ -299,6 +299,7 @@ SlashCmdList.FIREAUCTION = function(input)
 		Options.Open()
 	elseif cmd == "debug" then
 		ns.debug = not ns.debug
+		if ns.debug then ns.db.debugLog = {} end
 		ns.Print(("debug %s. Scan state %s; next scan allowed in %ds."):format(
 			ns.debug and "on" or "off", ns.Scan.state, ns.Scan.CooldownLeft()))
 		for _, house in ipairs({ "faction", "neutral" }) do

@@ -270,6 +270,9 @@ local function Update()
 		if mode and Searching() then plan, mode, enabled = nil, nil, false end
 	end
 	if text then button:SetText(text) end
+	if ns.debug and enabled ~= button:IsEnabled() then
+		ns.Debug(("quick buy: button %s (%s)"):format(enabled and "on" or "off", mode or text or "?"))
+	end
 	button:SetEnabled(enabled)
 	clear:SetEnabled(not pending and (s.bought or 0) > 0)
 
@@ -285,19 +288,25 @@ local function Update()
 end
 
 -- Refresh the listings. If the game drops the request (the auction house
--- was still busy), or no listings have come back a little later, it's sent
--- once more.
+-- was still busy), answers it without listings (right after a failed
+-- purchase it does), or no listings have come back a little later, it's
+-- sent again.
 local AFTER_PURCHASE = 0.2 -- seconds after a purchase before refreshing: the game finishes it first
-local RESEND_AFTER = 1.5   -- seconds without listings before sending the refresh once more (they take ~0.2s)
+local RESEND_AFTER = 1.5   -- seconds without listings before sending the refresh again (they take ~0.2s)
+local RESENDS = 3          -- times a refresh answered without listings is sent again, at most
 local refreshWaiting = false -- resend when the auction house is ready
 local refreshRetried = false
+local refreshResends = 0
+local refreshOut, refreshAnswered = false, false -- the refresh went out to the auction house / was answered
 local refreshCount = 0
 
-local function Refresh(retry)
+local function Refresh(retry, empty)
 	local frame = AuctionHouseFrame
 	if not (frame and frame.RefreshSearchResults and AuctionHouseSearchContext and itemID) then return end
 	refreshWaiting = false
 	refreshSentAt, refreshRetried = GetTime(), retry and true or false
+	refreshResends = retry and refreshResends + 1 or 0
+	refreshOut, refreshAnswered = false, false
 	searchSentAt = refreshSentAt
 	refreshCount = refreshCount + 1
 	ns.Debug(("quick buy: refresh%s"):format(retry and " (again)" or ""))
@@ -306,7 +315,7 @@ local function Refresh(retry)
 	-- No answer a little later (the list stuck on "Searching..."): once more.
 	-- (Not "all pages loaded": a long list never is, and that would send a
 	-- second refresh every time, holding up a purchase behind it.)
-	if retry or not C_Timer then return end
+	if (retry and not empty) or not C_Timer then return end
 	local count, id, sent = refreshCount, itemID, refreshSentAt
 	C_Timer.After(RESEND_AFTER, function()
 		if count == refreshCount and id == itemID and not pending
@@ -315,6 +324,26 @@ local function Refresh(retry)
 		end
 	end)
 end
+
+-- The refresh went out, and the next answer is its. Listings come in with
+-- the answer, in the same moment: if they didn't, it's sent again now rather
+-- than RESEND_AFTER later.
+ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", function()
+	if refreshSentAt and not pending then refreshOut = true end
+end)
+
+ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", function()
+	if not (refreshSentAt and refreshOut and not refreshAnswered and not pending and C_Timer) then return end
+	refreshAnswered = true
+	local count, id, sent = refreshCount, itemID, refreshSentAt
+	C_Timer.After(0, function()
+		if count == refreshCount and id == itemID and not pending and refreshResends < RESENDS
+			and not (resultsAt and resultsAt >= sent) then
+			ns.Debug("quick buy: answered without listings")
+			Refresh(true, true)
+		end
+	end)
+end)
 
 -- New listings: after a purchase, the refreshed ones are in and the button can
 -- be used again. Either way the button follows them now, not at the next tick.

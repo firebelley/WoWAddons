@@ -28,8 +28,18 @@ function ns.Print(msg)
 end
 
 ns.debug = false
+-- Also kept in FireAuctionDB.debugLog (the last DEBUG_LINES), to read after a
+-- /reload. Turning debug on starts it afresh.
+local DEBUG_LINES = 500
 function ns.Debug(msg)
-	if ns.debug then print("|cff80a0ffFireAuction debug|r: " .. msg) end
+	if not ns.debug then return end
+	print("|cff80a0ffFireAuction debug|r: " .. msg)
+	local db = FireAuctionDB
+	if not db then return end
+	db.debugLog = db.debugLog or {}
+	local log = db.debugLog
+	log[#log + 1] = ("%s %.3f %s"):format(date("%H:%M:%S"), GetTime(), msg)
+	if #log > DEBUG_LINES then table.remove(log, 1) end
 end
 
 ---------------------------------------------------------------------------
