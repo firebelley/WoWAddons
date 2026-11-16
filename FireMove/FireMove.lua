@@ -29,6 +29,41 @@ local function PlaceShown()
 	end
 end
 
+-- A child laid over the whole window (like the group finder's tabs) takes the
+-- clicks, so it drags the window too.
+local function Covers(child, frame)
+	if not child:IsObjectType("Frame") or child:IsObjectType("Button") or child:IsObjectType("ScrollFrame") then return false end
+	if not child:IsMouseEnabled() then return false end
+	local n = child:GetNumPoints()
+	if n == 2 then
+		local p1, r1, _, x1, y1 = child:GetPoint(1)
+		local p2, r2, _, x2, y2 = child:GetPoint(2)
+		if r1 == frame and r2 == frame and x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0
+			and ((p1 == "TOPLEFT" and p2 == "BOTTOMRIGHT") or (p1 == "BOTTOMRIGHT" and p2 == "TOPLEFT")) then
+			return true
+		end
+	end
+	local w, h, fw, fh = child:GetWidth(), child:GetHeight(), frame:GetWidth(), frame:GetHeight()
+	return w > 0 and h > 0 and math.abs(w - fw) < 2 and math.abs(h - fh) < 2
+end
+
+local function Grip(handle, frame)
+	handle:RegisterForDrag("LeftButton")
+	handle:HookScript("OnDragStart", function()
+		if not Locked(frame) then frame:StartMoving() end
+	end)
+	handle:HookScript("OnDragStop", function()
+		frame:StopMovingOrSizing()
+		-- Ours to keep, not the game's layout file (it would fight the panel placement).
+		frame:SetUserPlaced(false)
+		local point, _, relativePoint, x, y = frame:GetPoint(1)
+		if point then DB[frame:GetName()] = { point, relativePoint, x, y } end
+	end)
+	for _, child in ipairs({ handle:GetChildren() }) do
+		if Covers(child, handle) and not (child.IsForbidden and child:IsForbidden()) then Grip(child, frame) end
+	end
+end
+
 local function Make(frame)
 	if made[frame] or not frame.GetName or not frame:GetName() then return end
 	if frame.IsForbidden and frame:IsForbidden() then return end
@@ -40,17 +75,7 @@ local function Make(frame)
 	frame:SetMovable(true)
 	frame:SetClampedToScreen(true)
 	frame:EnableMouse(true)
-	frame:RegisterForDrag("LeftButton")
-	frame:HookScript("OnDragStart", function(self)
-		if not Locked(self) then self:StartMoving() end
-	end)
-	frame:HookScript("OnDragStop", function(self)
-		self:StopMovingOrSizing()
-		-- Ours to keep, not the game's layout file (it would fight the panel placement).
-		self:SetUserPlaced(false)
-		local point, _, relativePoint, x, y = self:GetPoint(1)
-		if point then DB[self:GetName()] = { point, relativePoint, x, y } end
-	end)
+	Grip(frame, frame)
 	frame:HookScript("OnShow", Place)
 	if frame:IsShown() then Place(frame) end
 end
