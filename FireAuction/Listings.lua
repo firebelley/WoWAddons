@@ -13,7 +13,8 @@
 -- Saved with the session: s.listed = { { auctionID, qty, price, deposit, at,
 -- length, left, soldSeen, house } } still up, s.sold = { n, income, lost } settled,
 -- s.after = auctions up to this ID were listed before the session, and
--- s.done = { [auctionID] = time } settled (so they aren't taken up again).
+-- s.done = { [auctionID] = { t = time, l = the listing, n, income, lost = what
+-- it added } } settled (so they aren't taken up again, unless still up).
 local _, ns = ...
 local AH = C_AuctionHouse
 
@@ -51,18 +52,42 @@ local function Settle(s, i, how)
 	local sold = l.qty - l.left
 	local st = s.sold or { n = 0, income = 0, lost = 0 }
 	s.sold = st
-	st.n = st.n + sold
-	st.income = st.income + math.floor(sold * l.price * Cut())
-	if how ~= "sold" and l.deposit and l.qty > 0 then st.lost = st.lost + math.floor(l.deposit * l.left / l.qty + 0.5) end
+	local income = math.floor(sold * l.price * Cut())
+	local lost = 0
+	if how ~= "sold" and l.deposit and l.qty > 0 then lost = math.floor(l.deposit * l.left / l.qty + 0.5) end
+	st.n, st.income, st.lost = st.n + sold, st.income + income, st.lost + lost
 	if l.auctionID then
+		-- Kept with what it added, in case it turns out not to be over (Unsettle).
 		local now = time()
 		s.done = s.done or {}
-		s.done[l.auctionID] = now
-		for id, at in pairs(s.done) do
-			if now - at > DONE_TIME then s.done[id] = nil end
+		s.done[l.auctionID] = { t = now, l = l, how = how, n = sold, income = income, lost = lost }
+		for id, d in pairs(s.done) do
+			if now - (type(d) == "table" and d.t or d) > DONE_TIME then s.done[id] = nil end
 		end
 	end
 	ns.Debug(("listing %s: %d of %d at %s"):format(how, sold, l.qty, ns.Money(l.price)))
+end
+
+-- Settled, but still up in your auctions list: it wasn't over after all. Back
+-- among the listings, what it added taken off the totals; the list then says
+-- how many are left. Not one you cancelled (it can linger in the list a
+-- moment), nor one settled by an older version.
+local function Unsettle(s, auctionID)
+	local d = s.done and s.done[auctionID]
+	if type(d) ~= "table" or not d.l or d.how == "cancelled" then return false end
+	s.done[auctionID] = nil
+	local st = s.sold
+	if st then
+		st.n = math.max(0, st.n - d.n)
+		st.income = math.max(0, st.income - d.income)
+		st.lost = math.max(0, st.lost - d.lost)
+	end
+	local l = d.l
+	l.left = l.qty
+	s.listed = s.listed or {}
+	s.listed[#s.listed + 1] = l
+	ns.Debug(("listing still up after all: %d at %s"):format(l.qty, ns.Money(l.price)))
+	return true
 end
 
 -- Every tracked listing, with its session: f(s, i, listing, itemID); backwards, so f may settle it.
@@ -225,9 +250,13 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 		local a = up[auctionID]
 		local id = a.itemKey and a.itemKey.itemID
 		local s = id and Session(id)
-		if s and auctionID > (s.after or 0) and not (s.done and s.done[auctionID]) and not Find(auctionID)
+		if s and auctionID > (s.after or 0) and not Find(auctionID)
 			and not (ns.Seed and ns.Seed.Owns and ns.Seed.Owns(a)) then
-			Adopt(s, id, a)
+			if not (s.done and s.done[auctionID]) then
+				Adopt(s, id, a)
+			else
+				Unsettle(s, auctionID)
+			end
 		end
 	end
 
@@ -250,17 +279,20 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 	end)
 end)
 
+-- Only when you cancelled it, or its time is up: the game says either when
+-- part of it sells too. (Otherwise your auctions list settles it.)
 ns.On("AUCTION_CANCELED", function(auctionID)
 	local s, i = Find(auctionID)
-	if s then Settle(s, i, "cancelled") end
+	if s and ns.YouCancelled(auctionID) then Settle(s, i, "cancelled") end
 end)
 
 ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(kind, _, auctionID)
 	if not (auctionID and ns.db) then return end
 	local s, i = Find(auctionID)
 	if not s then return end
+	local l = s.listed[i]
 	if kind == EXPIRED then
-		Settle(s, i, "expired")
+		if ns.TimeUp(l.at, l.length) then Settle(s, i, "expired") end
 	elseif kind == SOLD then
 		s.listed[i].soldSeen = true
 		-- How many: your auctions list says.

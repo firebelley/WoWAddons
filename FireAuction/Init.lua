@@ -100,6 +100,25 @@ function ns.DurationSeconds(index)
 	return (hours or ({ 2, 8, 24 })[index] or 24) * 3600
 end
 
+-- Auctions you've cancelled (from any window). The game also says an auction
+-- was cancelled - or expired - when part of a commodity listing sells, so a
+-- cancel only counts if it's one of these.
+local cancelled = {}
+if C_AuctionHouse and C_AuctionHouse.CancelAuction and hooksecurefunc then
+	hooksecurefunc(C_AuctionHouse, "CancelAuction", function(auctionID)
+		if auctionID then cancelled[auctionID] = time() end
+	end)
+end
+function ns.YouCancelled(auctionID)
+	local at = auctionID and cancelled[auctionID]
+	return at ~= nil and time() - at < 300
+end
+-- An auction listed at `at` lasting `length` seconds has run its time (near
+-- enough: the game's clock and ours differ a little).
+function ns.TimeUp(at, length)
+	return at ~= nil and length ~= nil and time() >= at + length - 600
+end
+
 function ns.Money(copper)
 	copper = math.floor((copper or 0) + 0.5)
 	local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100

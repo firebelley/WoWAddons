@@ -319,7 +319,9 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 	end
 end)
 
+-- Only when you cancelled it: the game says so when part of it sells too.
 ns.On("AUCTION_CANCELED", function(auctionID)
+	if not ns.YouCancelled(auctionID) then return end
 	local seed = ForgetSeed(auctionID)
 	if not seed then return end
 	Settle(seed, "cancelled", seed.cancelCost)
@@ -333,6 +335,12 @@ local SOLD = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotific
 local EXPIRED = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionExpired or 5
 ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(kind, _, auctionID)
 	if not (auctionID and (kind == SOLD or kind == EXPIRED)) then return end
+	if kind == EXPIRED then
+		-- Only once its time is up (the game says so when part of it sells too).
+		for _, seed in ipairs(Seeds()) do
+			if seed.auctionID == auctionID and not ns.TimeUp(seed.at, ns.DurationSeconds(DURATION)) then return end
+		end
+	end
 	local seed = ForgetSeed(auctionID)
 	if seed then Settle(seed, kind == SOLD and "sold" or "expired") end
 end)
