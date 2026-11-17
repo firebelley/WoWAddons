@@ -1,55 +1,14 @@
 -- Floating windows beside the auction house (the purchase tracker, seeding):
--- Blizzard's own window frame, dragged anywhere (remembered), each opened and
--- closed by a tab on the auction house window's right edge.
+-- Blizzard's own window frame, dragged anywhere (remembered). They show
+-- while the item's Quick buy session is on, and can't be closed meanwhile.
 local _, ns = ...
-
-local TAB_TOP, TAB_STEP = -36, 44 -- where the first tab goes, and the gap to the next
-
--- A tab on the auction house window's right edge (slot 1 at the top, 2 under
--- it...) that turns ns.db[key] on and off. The icon is always shown; a gold
--- outline marks it on. tab:Refresh() after ns.db[key] changes elsewhere.
-function ns.SideTab(slot, icon, title, key, onToggle)
-	local tab = CreateFrame("Button", nil, AuctionHouseFrame)
-	tab:SetSize(32, 32)
-	tab:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, TAB_TOP - (slot - 1) * TAB_STEP)
-	local back = tab:CreateTexture(nil, "BACKGROUND")
-	back:SetSize(64, 64)
-	back:SetPoint("TOPLEFT", -3, 11)
-	back:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
-	local image = tab:CreateTexture(nil, "ARTWORK")
-	image:SetAllPoints()
-	image:SetTexture(icon)
-	local outline = tab:CreateTexture(nil, "OVERLAY")
-	outline:SetAllPoints()
-	outline:SetTexture("Interface\\Buttons\\CheckButtonHilight")
-	outline:SetBlendMode("ADD")
-	tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	function tab.Refresh() outline:SetShown(ns.db[key] and true or false) end
-	tab:SetScript("OnClick", function()
-		ns.db[key] = not ns.db[key]
-		tab.Refresh()
-		if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB) end
-		if onToggle then ns.SafeCall(onToggle) end
-	end)
-	tab:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:SetText(title, 1, 1, 1)
-		GameTooltip:AddLine("Click to show or hide.", nil, nil, nil, true)
-		GameTooltip:Show()
-	end)
-	tab:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	tab.Refresh()
-	tab:Hide()
-	return tab
-end
 
 -- A floating window: Blizzard's portrait frame (portrait, title bar, close
 -- button), the same as the auction house's - a plain dark box if this client
 -- lacks it - with a darker inset from insetTop down for its rows. Above the
 -- auction house window, below popups. Dragged anywhere; where it goes is
--- saved in ns.db[pointKey], else defaultPoint() places it. Closing it turns
--- ns.db[key] off (and refreshes `tab`, set later).
-function ns.SideWindow(name, width, insetTop, pointKey, defaultPoint, key)
+-- saved in ns.db[pointKey], else defaultPoint() places it. No close button.
+function ns.SideWindow(name, width, insetTop, pointKey, defaultPoint)
 	local ok, f = pcall(CreateFrame, "Frame", name, AuctionHouseFrame, "PortraitFrameTemplate")
 	if not ok then
 		f = CreateFrame("Frame", name, AuctionHouseFrame, BackdropTemplateMixin and "BackdropTemplate")
@@ -90,15 +49,7 @@ function ns.SideWindow(name, width, insetTop, pointKey, defaultPoint, key)
 		local point, _, relPoint, x, y = self:GetPoint()
 		ns.db[pointKey] = { point, relPoint, x, y }
 	end)
-	-- The close button turns it off, like its tab.
-	if type(f.CloseButton) == "table" then
-		f.CloseButton:SetScript("OnClick", function()
-			ns.db[key] = false
-			if f.tab then f.tab.Refresh() end
-			f:Hide()
-		end)
-		ns.ClickSound(f.CloseButton)
-	end
+	if type(f.CloseButton) == "table" then f.CloseButton:Hide() end
 	f:ClearAllPoints()
 	local p = ns.db[pointKey]
 	if p then f:SetPoint(p[1], UIParent, p[2], p[3], p[4]) else defaultPoint(f) end

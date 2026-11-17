@@ -19,6 +19,8 @@ SideWindows.lua
 BuyInfo.lua
 Seed.lua
 Listings.lua
+Ledger.lua
+Profit.lua
 Sales.lua
 Sync.lua
 Options.lua

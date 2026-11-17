@@ -1,8 +1,6 @@
--- The purchase tracker: a window beside the auction house while you're on a
--- commodity's buy page (Silk Cloth...), next to Quick buy - or selling
--- something you've bought this session, to see what to list it at. Hidden by
--- default; a tab on the auction house window's edge opens it (remembered).
--- Drag it anywhere (remembered too).
+-- The purchase tracker: a window beside the auction house while the item's
+-- Quick buy session is on - on its buy page (Silk Cloth...), or selling it, to
+-- see what to list it at. Drag it anywhere (remembered).
 --
 --   (portrait)        the item, and how many you've bought (toward Want).
 --   This session      what it cost on average and in all, and the price to
@@ -31,7 +29,7 @@ local BUTTONS = 44 -- room for the Resale price row's two buttons
 local RECENT = 4   -- purchases listed under Recent
 local GREY = "|cff999999"
 local CUSTOM = "|cff66bbff" -- your own resale price, wherever it's used
-local LIST_MAX = 12 -- sessions named in the Clear all popup
+local LIST_MAX = 12 -- sessions named in the End all popup
 
 local frame, rows, summary, bar, clearAll
 local autoButton, customButton
@@ -127,7 +125,7 @@ local function Lines(id, selling)
 
 	-- This session
 	if bought > 0 then
-		Add("This session", nil, nil, "header", Tip("This session", "Everything bought since you last pressed Clear."))
+		Add("This session", nil, nil, "header", Tip("This session", "Everything bought since you pressed Start session."))
 		Add("Average cost", nil, ns.Money(math.floor(avg + 0.5)) .. " each", nil, Tip("Average cost",
 			("What you've paid per item: %s for %d."):format(ns.Money(spent), bought)))
 		Add("Spent", nil, ns.Money(spent))
@@ -433,7 +431,7 @@ local function Row(i)
 	return row
 end
 
--- The commodity on the sell page, if you've bought some of it this session.
+-- The commodity on the sell page, if its session is on.
 local function SellingItem()
 	local sf = AuctionHouseFrame and AuctionHouseFrame.CommoditiesSellFrame
 	if not (sf and sf:IsVisible() and sf.GetItem) then return nil end
@@ -441,14 +439,18 @@ local function SellingItem()
 		local loc = sf:GetItem()
 		return loc and loc.IsValid and loc:IsValid() and C_Item.GetItemID(loc)
 	end)
-	if ok and id and ns.QuickBuy.Session(id) > 0 then return id end
+	if ok and id and ns.QuickBuy.Active(id) then return id end
 	return nil
 end
 
--- What to show: the item on the buy page, or the one you're selling (and true).
+-- What to show: the item on the buy page, or the one you're selling (and
+-- true) - while its session is on.
 local function Current()
 	local id = ns.QuickBuy and ns.QuickBuy.Item()
-	if id then return id, false end
+	if id then
+		if ns.QuickBuy.Active(id) then return id, false end
+		return nil
+	end
 	id = ns.QuickBuy and SellingItem()
 	if id then return id, true end
 	return nil
@@ -526,9 +528,9 @@ local function Update(id, selling)
 end
 
 ---------------------------------------------------------------------------
--- Clear all sessions (Auctions tab)
+-- End all sessions (Auctions tab)
 ---------------------------------------------------------------------------
--- "Silk Cloth: 26 for 2g 2s" for each session, for the Clear all popup.
+-- "Silk Cloth: 26 for 2g 2s" for each session, for the End all popup.
 local function SessionList()
 	local lines = {}
 	local list = ns.QuickBuy.Sessions()
@@ -543,12 +545,12 @@ local function SessionList()
 end
 
 StaticPopupDialogs.FIREAUCTION_CLEAR_SESSIONS = {
-	text = "Clear all purchase sessions?\n\n%s",
+	text = "End all sessions?\n\n%s",
 	button1 = YES,
 	button2 = NO,
 	OnAccept = function()
-		local n = ns.QuickBuy.ClearAll()
-		ns.Print(n == 1 and "cleared 1 session." or ("cleared %d sessions."):format(n))
+		local n = ns.QuickBuy.EndAll()
+		ns.Print(n == 1 and "ended 1 session." or ("ended %d sessions."):format(n))
 		elapsed = 1
 	end,
 	timeout = 0,
@@ -564,7 +566,7 @@ local function CreateWindow()
 	-- Beside the auction house window, at its top, until you drag it.
 	frame = ns.SideWindow("FireAuctionBuyInfo", WIDTH, TOP + 6, "buyInfoPoint", function(f)
 		f:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 38, 0)
-	end, "buyInfo")
+	end)
 	local f = frame
 
 	-- Beside the portrait, under the title: how many you've bought, and
@@ -605,7 +607,7 @@ local function Create()
 	CreateWindow()
 	local f = frame
 
-	-- Clear all sessions: on the Auctions tab only, along the bottom just
+	-- End all sessions: on the Auctions tab only, along the bottom just
 	-- right of your gold (which sits in the bottom-left corner) - while any
 	-- session is open.
 	local auctions = AuctionHouseFrame.AuctionsFrame or AuctionHouseFrame
@@ -617,24 +619,19 @@ local function Create()
 	else
 		clearAll:SetPoint("BOTTOMLEFT", auctions, "BOTTOMLEFT", 3, -22)
 	end
-	clearAll:SetText("Clear all sessions")
+	clearAll:SetText("End all sessions")
 	clearAll:SetScript("OnClick", function()
 		if #ns.QuickBuy.Sessions() > 0 then StaticPopup_Show("FIREAUCTION_CLEAR_SESSIONS", SessionList()) end
 	end)
 	ns.ClickSound(clearAll)
 	clearAll:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("Clear all sessions", 1, 1, 1)
-		GameTooltip:AddLine("Start every item's session over. Asks first.", nil, nil, nil, true)
+		GameTooltip:SetText("End all sessions", 1, 1, 1)
+		GameTooltip:AddLine("Asks first.", nil, nil, nil, true)
 		GameTooltip:Show()
 	end)
 	clearAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	clearAll:Hide()
-
-	-- Its tab on the auction house window's edge (the first).
-	local tab = ns.SideTab(1, "Interface\\Icons\\INV_Misc_Coin_01", "Purchase tracker", "buyInfo",
-		function() elapsed = 1 end)
-	f.tab = tab
 
 	-- Shows and updates everything, a few times a second while the auction house is open.
 	local driver = CreateFrame("Frame", nil, AuctionHouseFrame)
@@ -644,9 +641,8 @@ local function Create()
 		elapsed = 0
 		local id, selling = Current()
 		clearAll:SetShown(ns.QuickBuy and #ns.QuickBuy.Sessions() > 0)
-		tab:SetShown(id ~= nil)
-		f:SetShown(id ~= nil and ns.db.buyInfo)
-		if id and ns.db.buyInfo then ns.SafeCall(Update, id, selling) end
+		f:SetShown(id ~= nil)
+		if id then ns.SafeCall(Update, id, selling) end
 	end)
 	driver:SetScript("OnShow", function() elapsed = 1 end)
 end

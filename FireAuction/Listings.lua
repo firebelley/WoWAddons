@@ -14,7 +14,13 @@
 -- length, left, soldSeen, house } } still up, s.sold = { n, income, lost } settled,
 -- s.after = auctions up to this ID were listed before the session, and
 -- s.done = { [auctionID] = { t = time, l = the listing, n, income, lost = what
--- it added } } settled (so they aren't taken up again, unless still up).
+-- it added, ledger = what it added to the Profit tab } } settled (so they aren't
+-- taken up again, unless still up).
+--
+-- Sales also go into the Profit tab (Ledger.lua) as they happen, deposits
+-- lost when a listing ends. Listings still up when a session ends are kept
+-- there (ns.Ledger.Kept(), each with its itemID) and followed the same way
+-- until they end.
 local _, ns = ...
 local AH = C_AuctionHouse
 
@@ -45,9 +51,30 @@ end
 
 local function Cut() return 1 - ns.QuickBuy.AH_CUT end
 
+-- What's sold of a listing into the Profit tab (Ledger.lua) as it sells,
+-- not when it ends: l.lgSold = how many of it are in already, l.lg = { { day,
+-- n, income }, ... } what they added (taken back by Unsettle).
+local function LedgerSync(l, id)
+	if not id then return end
+	local sold = l.qty - l.left
+	local new = sold - (l.lgSold or 0)
+	if new <= 0 then return end
+	local n, counted = ns.Ledger.Sold(id, new, math.floor(new * l.price * Cut()))
+	l.lgSold = sold
+	l.lg = l.lg or {}
+	l.lg[#l.lg + 1] = { ns.Data.Today(), n, counted }
+end
+
+local function LedgerUndo(l, id)
+	for _, e in ipairs(l.lg or {}) do
+		if id then ns.Ledger.Undo(id, e[1], e[2], e[3], 0) end
+	end
+	l.lg, l.lgSold = nil, nil
+end
+
 -- The listing's outcome into the session's totals: what sold brought in, and
 -- the deposit on what didn't was lost.
-local function Settle(s, i, how)
+local function Settle(s, i, how, id)
 	local l = table.remove(s.listed, i)
 	local sold = l.qty - l.left
 	local st = s.sold or { n = 0, income = 0, lost = 0 }
@@ -56,11 +83,16 @@ local function Settle(s, i, how)
 	local lost = 0
 	if how ~= "sold" and l.deposit and l.qty > 0 then lost = math.floor(l.deposit * l.left / l.qty + 0.5) end
 	st.n, st.income, st.lost = st.n + sold, st.income + income, st.lost + lost
+	local ledger
+	if id then
+		LedgerSync(l, id)
+		ledger = { day = ns.Data.Today(), lost = ns.Ledger.Lost(id, lost) }
+	end
 	if l.auctionID then
 		-- Kept with what it added, in case it turns out not to be over (Unsettle).
 		local now = time()
 		s.done = s.done or {}
-		s.done[l.auctionID] = { t = now, l = l, how = how, n = sold, income = income, lost = lost }
+		s.done[l.auctionID] = { t = now, l = l, how = how, n = sold, income = income, lost = lost, ledger = ledger }
 		for id, d in pairs(s.done) do
 			if now - (type(d) == "table" and d.t or d) > DONE_TIME then s.done[id] = nil end
 		end
@@ -72,10 +104,13 @@ end
 -- among the listings, what it added taken off the totals; the list then says
 -- how many are left. Not one you cancelled (it can linger in the list a
 -- moment), nor one settled by an older version.
-local function Unsettle(s, auctionID)
+local function Unsettle(s, auctionID, id)
 	local d = s.done and s.done[auctionID]
 	if type(d) ~= "table" or not d.l or d.how == "cancelled" then return false end
 	s.done[auctionID] = nil
+	local lg = d.ledger
+	if lg and id then ns.Ledger.Undo(id, lg.day, lg.n or 0, lg.income or 0, lg.lost) end
+	LedgerUndo(d.l, id)
 	local st = s.sold
 	if st then
 		st.n = math.max(0, st.n - d.n)
@@ -90,28 +125,40 @@ local function Unsettle(s, auctionID)
 	return true
 end
 
--- Every tracked listing, with its session: f(s, i, listing, itemID); backwards, so f may settle it.
+-- Every tracked listing, with its session (or the ended sessions' kept ones):
+-- f(s, i, listing, itemID); backwards, so f may settle it.
 local function Each(f)
 	for id, s in pairs(ns.db.quickBuy) do
 		if s.listed then
 			for i = #s.listed, 1, -1 do f(s, i, s.listed[i], id) end
 		end
 	end
+	local kept = ns.Ledger.Kept()
+	for i = #kept.listed, 1, -1 do f(kept, i, kept.listed[i], kept.listed[i].itemID) end
 end
 
 local function Find(auctionID)
-	local found, at
-	Each(function(s, i, l)
-		if l.auctionID == auctionID then found, at = s, i end
+	local found, at, item
+	Each(function(s, i, l, id)
+		if l.auctionID == auctionID then found, at, item = s, i, id end
 	end)
-	return found, at
+	return found, at, item
+end
+
+-- A session ended: its listings still up go on in the Profit tab.
+function Listings.Keep(id, listed)
+	local kept = ns.Ledger.Kept()
+	for _, l in ipairs(listed) do
+		l.itemID = id
+		kept.listed[#kept.listed + 1] = l
+	end
 end
 
 -- Past their time and not seen since: expired.
 local function Sweep()
 	local now = time()
-	Each(function(s, i, l)
-		if now > l.at + l.length + EXPIRE_GRACE and not l.soldSeen then Settle(s, i, "expired") end
+	Each(function(s, i, l, id)
+		if now > l.at + l.length + EXPIRE_GRACE and not l.soldSeen then Settle(s, i, "expired", id) end
 	end)
 end
 
@@ -242,6 +289,7 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 		end
 	end
 	ns.db.newestAuction = newest
+	ns.db.ownedReadAt = time() -- when sales were last read (the Profit tab says)
 
 	-- Your listings of each session's item since it started, oldest first.
 	Prune()
@@ -255,7 +303,7 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 			if not (s.done and s.done[auctionID]) then
 				Adopt(s, id, a)
 			else
-				Unsettle(s, auctionID)
+				Unsettle(s, auctionID, id)
 			end
 		end
 	end
@@ -270,11 +318,12 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 			table.remove(s.listed, i)
 		elseif a then
 			l.left = math.min(l.left, a.quantity or l.left)
+			LedgerSync(l, id)
 		elseif full and now - l.at > 5 and (l.house or "faction") == (ns.house or "faction") then
 			-- Gone: sold out, unless its time was up first. (Only this auction house's:
 			-- the list doesn't have the other one's.)
 			if now <= l.at + l.length or l.soldSeen then l.left = 0 end
-			Settle(s, i, l.left == 0 and "sold" or "expired")
+			Settle(s, i, l.left == 0 and "sold" or "expired", id)
 		end
 	end)
 end)
@@ -282,17 +331,17 @@ end)
 -- Only when you cancelled it, or its time is up: the game says either when
 -- part of it sells too. (Otherwise your auctions list settles it.)
 ns.On("AUCTION_CANCELED", function(auctionID)
-	local s, i = Find(auctionID)
-	if s and ns.YouCancelled(auctionID) then Settle(s, i, "cancelled") end
+	local s, i, id = Find(auctionID)
+	if s and ns.YouCancelled(auctionID) then Settle(s, i, "cancelled", id) end
 end)
 
 ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(kind, _, auctionID)
 	if not (auctionID and ns.db) then return end
-	local s, i = Find(auctionID)
+	local s, i, id = Find(auctionID)
 	if not s then return end
 	local l = s.listed[i]
 	if kind == EXPIRED then
-		if ns.TimeUp(l.at, l.length) then Settle(s, i, "expired") end
+		if ns.TimeUp(l.at, l.length) then Settle(s, i, "expired", id) end
 	elseif kind == SOLD then
 		s.listed[i].soldSeen = true
 		-- How many: your auctions list says.

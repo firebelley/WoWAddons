@@ -1,5 +1,6 @@
 -- The price window (/fah, the key binding, or Prices on the auction house):
--- search your saved prices, pick an item, and see its price over time.
+-- search your saved prices, pick an item, and see its price over time. Its
+-- second tab, Profit, is what your Quick buy sessions made (Profit.lua).
 local _, ns = ...
 
 local Window = {}
@@ -15,6 +16,7 @@ local TREND_COLOR = { 0.45, 0.65, 1 }
 
 local frame, search, sortButton, countText, rows = nil, nil, nil, nil, {}
 local titleText, houseButton, UpdateHouse
+local prices, profit, tab = nil, nil, 1 -- the two tabs' contents, and the one showing
 local detail = {}
 local results, offset, selected = {}, 0, nil
 
@@ -642,8 +644,12 @@ local function Build()
 	end
 	titleText = title
 
+	-- The Prices tab's contents (the Profit tab's are Profit.lua's).
+	prices = CreateFrame("Frame", nil, f)
+	prices:SetAllPoints()
+
 	-- Switch between your faction's auction house and the neutral one.
-	houseButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+	houseButton = CreateFrame("Button", nil, prices, "UIPanelButtonTemplate")
 	houseButton:SetSize(150, 22)
 	houseButton:SetPoint("BOTTOMLEFT", 14, 12)
 	houseButton:SetScript("OnClick", function(self)
@@ -666,8 +672,8 @@ local function Build()
 	houseButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	-- Search and sort
-	local okSearch, box = pcall(CreateFrame, "EditBox", nil, f, "SearchBoxTemplate")
-	if not okSearch then box = CreateFrame("EditBox", nil, f, "InputBoxTemplate") end
+	local okSearch, box = pcall(CreateFrame, "EditBox", nil, prices, "SearchBoxTemplate")
+	if not okSearch then box = CreateFrame("EditBox", nil, prices, "InputBoxTemplate") end
 	box:SetSize(LIST_W - 84, 20)
 	box:SetPoint("TOPLEFT", 18, -32)
 	box:SetAutoFocus(false)
@@ -689,7 +695,7 @@ local function Build()
 	box:HookScript("OnLeave", function() GameTooltip:Hide() end)
 	search = box
 
-	sortButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+	sortButton = CreateFrame("Button", nil, prices, "UIPanelButtonTemplate")
 	sortButton:SetSize(74, 22)
 	sortButton:SetPoint("LEFT", box, "RIGHT", 6, 0)
 	sortButton:SetText(SORTS[sortIndex].label)
@@ -710,7 +716,7 @@ local function Build()
 	sortButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	-- Result rows
-	local list = CreateFrame("Frame", nil, f)
+	local list = CreateFrame("Frame", nil, prices)
 	list:SetPoint("TOPLEFT", 12, -58)
 	list:SetSize(LIST_W, ROWS * ROW_H)
 	list:EnableMouseWheel(true)
@@ -763,17 +769,17 @@ local function Build()
 		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		rows[i] = row
 	end
-	countText = f:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	countText = prices:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	countText:SetPoint("TOPLEFT", list, "BOTTOMLEFT", 4, -6)
 
-	local divider = f:CreateTexture(nil, "ARTWORK")
+	local divider = prices:CreateTexture(nil, "ARTWORK")
 	divider:SetColorTexture(1, 1, 1, 0.12)
 	divider:SetWidth(1)
 	divider:SetPoint("TOPLEFT", list, "TOPRIGHT", 8, 24)
 	divider:SetPoint("BOTTOM", f, "BOTTOM", 0, 12)
 
 	-- Details
-	local right = CreateFrame("Frame", nil, f)
+	local right = CreateFrame("Frame", nil, prices)
 	right:SetPoint("TOPLEFT", list, "TOPRIGHT", 18, 24)
 	right:SetPoint("BOTTOMRIGHT", -14, 12)
 	detail.icon = right:CreateTexture(nil, "ARTWORK")
@@ -915,16 +921,66 @@ local function Build()
 		UpdateRows()
 		ns.SafeCall(UpdateDetail)
 	end)
+
+	-- Tabs along the bottom: Prices, Profit.
+	profit = ns.Profit.Build(f)
+	local names = { "Prices", "Profit" }
+	local tabs = {}
+	for i, label in ipairs(names) do
+		local ok, t = pcall(CreateFrame, "Button", "FireAuctionFrameTab" .. i, f, "PanelTabButtonTemplate")
+		if not ok then
+			-- Without the game's tabs: plain buttons, the selected one lit.
+			t = CreateFrame("Button", "FireAuctionFrameTab" .. i, f, "UIPanelButtonTemplate")
+			t:SetSize(90, 22)
+		end
+		t:SetID(i)
+		t:SetText(label)
+		t:SetScript("OnClick", function(self)
+			Window.SetTab(self:GetID())
+			if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB) end
+		end)
+		tabs[i] = t
+	end
+	tabs[1]:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 11, 2)
+	if PanelTemplates_SetNumTabs and tabs[1].Left then
+		PanelTemplates_SetNumTabs(f, #tabs)
+	else
+		tabs[2]:SetPoint("LEFT", tabs[1], "RIGHT", 4, 0)
+	end
+	f.fireTabs = tabs
+	Window.SetTab(tab)
+end
+
+-- Show the Prices (1) or Profit (2) tab.
+function Window.SetTab(i)
+	if not frame then return end
+	tab = i
+	prices:SetShown(i == 1)
+	profit:SetShown(i == 2)
+	if i ~= 1 and listPanel then listPanel:Hide() end
+	local tabs = frame.fireTabs
+	if PanelTemplates_SetTab and tabs[1].Left then
+		PanelTemplates_SetTab(frame, i)
+	else
+		for n, t in ipairs(tabs) do
+			if n == i then t:LockHighlight() else t:UnlockHighlight() end
+		end
+	end
+	UpdateHouse()
 end
 
 function UpdateHouse() -- (declared at the top)
+	if tab == 2 then
+		titleText:SetText("FireAuction - Profit")
+		return
+	end
 	local name = ns.HouseName(View())
 	titleText:SetText("FireAuction - " .. name .. " Prices")
 	houseButton:SetText("Show " .. ns.HouseName(View() == "neutral" and "faction" or "neutral") .. " prices")
 end
 
 function Window.Refresh()
-	if frame and frame:IsShown() then
+	if frame and frame:IsShown() and tab == 1 then
 		UpdateHouse()
 		ns.SafeCall(BuildResults)
 		UpdateRows()
@@ -946,12 +1002,23 @@ end
 function Window.Show(itemID)
 	if not frame then Build() end
 	frame:Show()
-	if itemID then Window.Select(itemID) end
+	if itemID then
+		Window.SetTab(1)
+		Window.Select(itemID)
+	end
+end
+
+-- The Profit tab (/fah profit).
+function Window.ShowProfit()
+	if not frame then Build() end
+	frame:Show()
+	Window.SetTab(2)
 end
 
 -- /fah <name or item link>: search, and pick the item if there's one match.
 function Window.Search(text, itemID)
 	Window.Show()
+	Window.SetTab(1)
 	search:SetText(text or "")
 	ns.SafeCall(BuildResults)
 	UpdateRows()

@@ -1,7 +1,6 @@
 -- Seeding: list a few of the item you're buying, from your bags, at a low
 -- price, to draw out lower listings to buy. In its own window beside the
--- auction house - the second tab on its edge - while you're on a commodity's
--- buy page.
+-- auction house while the item's Quick buy session is on, on its buy page.
 --
 -- One click lists them (one listing, for the shortest time) and refreshes the
 -- listings once, so you see what it draws out. Cancel takes your latest seed
@@ -101,12 +100,19 @@ local function Settle(seed, outcome, extra)
 		s = {}
 		ns.db.quickBuy[seed.itemID] = s
 	end
+	-- The Profit tab (Ledger.lua): as far as it's items bought in a session.
+	local income = math.floor(seed.price * seed.qty * (1 - ns.QuickBuy.AH_CUT))
+	if outcome == "sold" then
+		ns.Ledger.Sold(seed.itemID, seed.qty, income)
+	else
+		ns.Ledger.Lost(seed.itemID, (seed.deposit or 0) + (extra or 0))
+	end
 	if s.cleared and seed.at < s.cleared then return end
 	local st = s.seed or { sold = 0, income = 0, lost = 0 }
 	s.seed = st
 	if outcome == "sold" then
 		st.sold = st.sold + seed.qty
-		st.income = st.income + math.floor(seed.price * seed.qty * (1 - ns.QuickBuy.AH_CUT))
+		st.income = st.income + income
 	else
 		st.lost = st.lost + (seed.deposit or 0) + (extra or 0)
 		st.gone = (st.gone or 0) + seed.qty -- seeded, came back unsold
@@ -516,7 +522,7 @@ local function Create()
 	-- Beside the auction house window, at its bottom, until you drag it.
 	frame = ns.SideWindow("FireAuctionSeed", WIDTH, TOP + 6, "seedPoint", function(f)
 		f:SetPoint("BOTTOMLEFT", AuctionHouseFrame, "BOTTOMRIGHT", 38, 0)
-	end, "seedWindow")
+	end)
 	frame:SetHeight(-TOP + 192)
 
 	-- Beside the portrait: the item, and how many you have.
@@ -608,10 +614,6 @@ local function Create()
 	status:SetPoint("RIGHT", frame, "RIGHT", -PAD, 0)
 	status:SetJustifyH("LEFT")
 
-	-- Its tab on the auction house window's edge (the second).
-	frame.tab = ns.SideTab(2, "Interface\\Icons\\INV_Misc_Note_01", "Seed listing", "seedWindow",
-		function() elapsed = 1 end)
-
 	-- Shows and updates it a few times a second while the auction house is open.
 	local driver = CreateFrame("Frame", nil, AuctionHouseFrame)
 	driver:SetScript("OnUpdate", function(_, dt)
@@ -622,10 +624,11 @@ local function Create()
 		elapsed = elapsed + dt
 		if elapsed < 0.25 then return end
 		elapsed = 0
+		-- While the item's session is on.
 		local id = ns.QuickBuy and ns.QuickBuy.Item()
-		frame.tab:SetShown(id ~= nil)
-		frame:SetShown(id ~= nil and ns.db.seedWindow)
-		if id and ns.db.seedWindow then ns.SafeCall(Update, id) end
+		if id and not ns.QuickBuy.Active(id) then id = nil end
+		frame:SetShown(id ~= nil)
+		if id then ns.SafeCall(Update, id) end
 	end)
 	driver:SetScript("OnShow", function() elapsed = 1 end)
 end

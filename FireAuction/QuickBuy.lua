@@ -12,9 +12,11 @@
 -- final price before buying; if it's more than the button said (someone got
 -- the cheap ones first), the purchase is cancelled instead.
 --
--- The session - how many you've bought, what they cost, and a log - is kept
--- per item until you press Clear (through /reload and logouts). Purchases
--- through Blizzard's own Buy popup count too.
+-- Quick buy shows once you press Start session for the item. The session -
+-- how many you've bought, what they cost, and a log - is kept until you press
+-- End session (through /reload and logouts), and counts in the Profit tab of
+-- the price window (Ledger.lua). Purchases through Blizzard's own Buy popup
+-- count too while it's on.
 local _, ns = ...
 
 local QuickBuy = {}
@@ -26,7 +28,7 @@ local RECONFIRMS = 3     -- times a purchase is confirmed again when its price c
 local RESENDS = 3        -- times a confirmation the game dropped is sent again
 local AH_CUT = 0.05
 
-local panel, button, clear, status, wantBox, coinBoxes
+local panel, body, start, button, clear, status, wantBox, coinBoxes
 local itemID          -- the commodity on screen
 local plan            -- { quantity, total } the button would buy right now
 local pending         -- { itemID, quantity, total, stage = "quote"/"buying", at }
@@ -56,10 +58,15 @@ local function Settings(id)
 end
 
 -- The session lives with the item's settings (saved):
+--   active = started (Start session) and not ended
 --   bought, spent = how many, and what they cost in all
 --   log = { { quantity, total, time() }, ... } newest first
+-- Only purchases in a session count (here and in the Profit tab, Ledger.lua):
+-- one-off ones through Blizzard's Buy popup don't.
 local function Record(id, quantity, total)
 	local s = Settings(id)
+	if not s.active then return end
+	ns.Ledger.Buy(id, quantity, total)
 	-- A new session: only what you list from now on is its listings (Listings.lua).
 	if (s.bought or 0) == 0 and ns.Listings then ns.Listings.StartSession(s) end
 	s.bought = (s.bought or 0) + quantity
@@ -77,10 +84,22 @@ local function ClearSession(id)
 	s.bought, s.spent, s.log = nil, nil, nil
 	-- Seeding results too (Seed.lua); seeds listed before now no longer count.
 	s.seed, s.cleared = nil, time()
-	-- And what you've listed of it (Listings.lua).
+	-- And what you've listed of it (Listings.lua): still up, they keep counting
+	-- in the Profit tab until they end.
+	if s.listed and ns.Listings then ns.Listings.Keep(id, s.listed) end
 	s.listed, s.sold, s.after, s.done = nil, nil, nil, nil
 	summarized[id] = nil
 	boughtNow[id] = nil
+end
+
+local function StartSession(id)
+	ClearSession(id)
+	Settings(id).active = true
+end
+
+local function EndSession(id)
+	ClearSession(id)
+	Settings(id).active = nil
 end
 
 local function ItemName(id)
@@ -233,6 +252,14 @@ end
 local function Update()
 	if not (panel and panel:IsShown() and itemID) then return end
 	local s = Settings(itemID)
+	-- No session: just its Start session button.
+	local active = s.active or pending ~= nil
+	body:SetShown(active)
+	start:SetShown(not active)
+	if not active then
+		plan, mode = nil, nil
+		return
+	end
 	local max = s.max
 	plan, mode = nil, nil
 	local text, enabled = nil, false
@@ -274,7 +301,7 @@ local function Update()
 		ns.Debug(("quick buy: button %s (%s)"):format(enabled and "on" or "off", mode or text or "?"))
 	end
 	button:SetEnabled(enabled)
-	clear:SetEnabled(not pending and (s.bought or 0) > 0)
+	clear:SetEnabled(not pending)
 
 	local line = message
 	local count = s.bought or 0
@@ -659,7 +686,7 @@ QuickBuy.RelistPrice = RelistPrice
 QuickBuy.AH_CUT = AH_CUT
 
 -- Your own resale price for an item (copper), or nil: the "Target" you set in
--- the panel on the right (BuyInfo.lua). Kept through Clear, like Want and Up to.
+-- the panel on the right (BuyInfo.lua). Kept through End session, like Want and Up to.
 function QuickBuy.Target(id)
 	local s = ns.db.quickBuy[id]
 	return s and s.target
@@ -668,25 +695,37 @@ function QuickBuy.SetTarget(id, price)
 	Settings(id).target = price and price > 0 and math.floor(price) or nil
 end
 
--- Every item with a session, by name: { { id, bought, spent }, ... }
+-- Every item with a session on, by name: { { id, bought, spent }, ... }
 function QuickBuy.Sessions()
 	local list = {}
 	for id, s in pairs(ns.db.quickBuy) do
-		if (s.bought or 0) > 0 then list[#list + 1] = { id = id, bought = s.bought, spent = s.spent or 0 } end
+		if s.active then list[#list + 1] = { id = id, bought = s.bought or 0, spent = s.spent or 0 } end
 	end
 	table.sort(list, function(x, y) return ItemName(x.id) < ItemName(y.id) end)
 	return list
 end
 
--- Clear every session (not while a purchase is going through). Returns how many.
-function QuickBuy.ClearAll()
+-- End every session (not while a purchase is going through). Returns how many.
+function QuickBuy.EndAll()
 	if pending then return 0 end
 	local list = QuickBuy.Sessions()
-	for _, s in ipairs(list) do ClearSession(s.id) end
+	for _, s in ipairs(list) do
+		ns.SafeCall(Summary, s.id)
+		EndSession(s.id)
+	end
 	message = nil
 	ns.SafeCall(Update)
 	return #list
 end
+
+-- Sessions from before Start session: still on.
+ns.On("PLAYER_LOGIN", function()
+	if ns.db.sessionsStarted then return end
+	ns.db.sessionsStarted = true
+	for _, s in pairs(ns.db.quickBuy) do
+		if (s.bought or 0) > 0 then s.active = true end
+	end
+end)
 
 -- Refresh the listings now (not while a purchase is going through).
 function QuickBuy.Refresh()
@@ -695,6 +734,12 @@ end
 
 -- A purchase is going through.
 function QuickBuy.Busy() return pending ~= nil end
+
+-- The item's session is on (Start session).
+function QuickBuy.Active(id)
+	local s = id and ns.db.quickBuy[id]
+	return s ~= nil and s.active == true
+end
 
 QuickBuy.BlizzardDialogOpen = BlizzardDialogOpen
 
@@ -731,7 +776,7 @@ local function ReadInputs()
 	local s = Settings(itemID)
 	local want = tonumber(wantBox:GetText())
 	want = want and want > 0 and math.floor(want) or nil
-	s.want = want -- what you've bought still counts toward a new goal (Clear starts over)
+	s.want = want -- what you've bought still counts toward a new goal (End session starts over)
 	local g = tonumber(coinBoxes[1]:GetText()) or 0
 	local sv = math.min(99, tonumber(coinBoxes[2]:GetText()) or 0)
 	local c = math.min(99, tonumber(coinBoxes[3]:GetText()) or 0)
@@ -801,29 +846,33 @@ local function Create()
 	local title = Label(panel, "Quick buy")
 	title:SetPoint("TOPLEFT", 0, 0)
 
-	local wantLabel = Label(panel, "Want", "GameFontHighlight")
+	-- Everything but the title: shown while a session is on (Update).
+	body = CreateFrame("Frame", nil, panel)
+	body:SetAllPoints()
+
+	local wantLabel = Label(body, "Want", "GameFontHighlight")
 	wantLabel:SetPoint("TOPLEFT", 0, -24)
-	wantBox = Box(panel, 44, 5)
+	wantBox = Box(body, 44, 5)
 	wantBox:SetPoint("LEFT", wantLabel, "RIGHT", 10, 0)
 
-	local maxLabel = Label(panel, "Up to", "GameFontHighlight")
+	local maxLabel = Label(body, "Up to", "GameFontHighlight")
 	maxLabel:SetPoint("LEFT", wantBox, "RIGHT", 14, 0)
-	coinBoxes = { Box(panel, 34, 4), Box(panel, 22, 2), Box(panel, 22, 2) }
+	coinBoxes = { Box(body, 34, 4), Box(body, 22, 2), Box(body, 22, 2) }
 	coinBoxes[1]:SetPoint("LEFT", maxLabel, "RIGHT", 10, 0)
-	local g = Coin(panel, coinBoxes[1], "Gold")
+	local g = Coin(body, coinBoxes[1], "Gold")
 	coinBoxes[2]:SetPoint("LEFT", g, "RIGHT", 8, 0)
-	local sv = Coin(panel, coinBoxes[2], "Silver")
+	local sv = Coin(body, coinBoxes[2], "Silver")
 	coinBoxes[3]:SetPoint("LEFT", sv, "RIGHT", 8, 0)
-	local c = Coin(panel, coinBoxes[3], "Copper")
-	local each = Label(panel, "each", "GameFontHighlight")
+	local c = Coin(body, coinBoxes[3], "Copper")
+	local each = Label(body, "each", "GameFontHighlight")
 	each:SetPoint("LEFT", c, "RIGHT", 4, 0)
 	wantBox.next, coinBoxes[1].next, coinBoxes[2].next, coinBoxes[3].next = coinBoxes[1], coinBoxes[2], coinBoxes[3], nil
 
 	-- "Cheapest listing only": each click buys just the lowest price within
 	-- "Up to" - fewer listings to lose to someone else.
-	local cheapLabel = Label(panel, "Cheapest listing only", "GameFontHighlightSmall")
+	local cheapLabel = Label(body, "Cheapest listing only", "GameFontHighlightSmall")
 	cheapLabel:SetPoint("TOPRIGHT", 0, -1)
-	local cheap = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+	local cheap = CreateFrame("CheckButton", nil, body, "UICheckButtonTemplate")
 	cheap:SetSize(22, 22)
 	cheap:SetPoint("RIGHT", cheapLabel, "LEFT", -1, 0)
 	cheap:SetChecked(ns.db.quickBuyCheapest)
@@ -857,29 +906,53 @@ local function Create()
 		box:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	end
 
-	-- Clear: start the count (and what it cost) over, after a last summary.
-	clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	clear:SetSize(50, 34)
+	-- End session: a last summary, then Quick buy goes back to Start session.
+	clear = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
+	clear:SetSize(96, 34)
 	clear:SetPoint("TOPLEFT", 0, -50)
-	clear:SetText("Clear")
+	clear:SetText("End session")
 	clear:SetMotionScriptsWhileDisabled(true)
 	clear:SetScript("OnClick", function()
 		if pending or not itemID then return end
 		ns.SafeCall(Summary, itemID)
-		ClearSession(itemID)
+		EndSession(itemID)
 		message = nil
 		ns.SafeCall(Update)
 	end)
 	ns.ClickSound(clear)
 	clear:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("Clear", 1, 1, 1)
-		GameTooltip:AddLine("Start the session over. A summary is printed first.", nil, nil, nil, true)
+		GameTooltip:SetText("End session", 1, 1, 1)
+		GameTooltip:AddLine("Prints a summary. Your listings still up keep counting in the Profit tab.", nil, nil, nil, true)
 		GameTooltip:Show()
 	end)
 	clear:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-	button = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	-- Start session: shows Quick buy, and tracks the item's buying and
+	-- selling for the Profit tab.
+	start = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	start:SetHeight(34)
+	start:SetPoint("TOPLEFT", 0, -50)
+	start:SetPoint("TOPRIGHT", 0, -50)
+	start:SetText("Start session")
+	start:SetScript("OnClick", function()
+		if pending or not itemID then return end
+		StartSession(itemID)
+		message = nil
+		ns.SafeCall(Update)
+	end)
+	ns.ClickSound(start)
+	start:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Start session", 1, 1, 1)
+		GameTooltip:AddLine("Shows Quick buy. What you buy and sell of this item counts in the Profit tab of the "
+			.. "price window.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	start:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	start:Hide()
+
+	button = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
 	button:SetHeight(34)
 	button:SetPoint("TOPLEFT", clear, "TOPRIGHT", 4, 0)
 	button:SetPoint("TOPRIGHT", 0, -50)
@@ -900,7 +973,7 @@ local function Create()
 	end)
 	button:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-	status = Label(panel, "", "GameFontHighlightSmall")
+	status = Label(body, "", "GameFontHighlightSmall")
 	status:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -6)
 	status:SetPoint("TOPRIGHT", button, "BOTTOMRIGHT", 0, -6)
 	status:SetJustifyH("LEFT")

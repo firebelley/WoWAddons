@@ -285,6 +285,10 @@ SlashCmdList.FIREAUCTION = function(input)
 	cmd = (cmd or ""):lower()
 	if cmd == "" then
 		ns.Window.Toggle()
+	elseif cmd == "profit" then
+		ns.Window.ShowProfit()
+	elseif cmd == "rebuild" then
+		ns.Print(("Profit tab rebuilt from %d records."):format(ns.Ledger.Rebuild()))
 	elseif cmd == "scan" then
 		ns.Scan.Start(false)
 	elseif cmd == "sales" then
@@ -315,6 +319,8 @@ SlashCmdList.FIREAUCTION = function(input)
 		ns.Print("commands:")
 		print("  /fah - show/hide the price window")
 		print("  /fah <item name> - search for an item")
+		print("  /fah profit - what your Quick buy sessions made")
+		print("  /fah rebuild - redo the Profit tab from its saved record")
 		print("  /fah scan - scan the auction house (while it's open)")
 		print("  /fah sales - what's sold and waiting in the mailbox")
 		print("  /fah auctions - what you have listed, with time left")
