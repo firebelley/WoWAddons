@@ -223,8 +223,9 @@ local function Lines(id, selling)
 	-- Not rounded: the cut is taken from the whole sale, not from each item.
 	local net = sell and sell * cut
 	-- Seeds (Seed.lua) and your listings (Listings.lua): sold, lost, still up.
-	local seedSold, seedIncome, seedLost, seedUp = 0, 0, 0, 0
-	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp = ns.Seed.Stats(id) end
+	local seedSold, seedIncome, seedLost, seedUp, seedGone = 0, 0, 0, 0, 0
+	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp, seedGone = ns.Seed.Stats(id) end
+	local seededN = seedSold + seedUp + seedGone -- every seed item listed this session
 	local listSold, listIncome, listLost, listUp, upIncome = 0, 0, 0, 0, 0
 	if ns.Listings then listSold, listIncome, listLost, listUp, upIncome = ns.Listings.Stats(id) end
 	local soldN, income, lost = seedSold + listSold, seedIncome + listIncome, seedLost + listLost
@@ -241,6 +242,10 @@ local function Lines(id, selling)
 	if bought > 0 then
 		Add("So far", nil, nil, "header", Tip("So far", "Since you pressed Start session."))
 		Add(("Bought %d at %s"):format(bought, ns.Money(math.floor(spent / bought + 0.5))), nil, Signed(-spent))
+		if seededN > 0 then
+			Add("Bought per seed", nil, ("%.1f"):format(bought / seededN), nil, Tip("Bought per seed",
+				("%d bought for %d seeded."):format(bought, seededN)))
+		end
 	end
 	if soldN > 0 or seedUp > 0 or lost > 0 then
 		if bought == 0 then Add("Seeds", nil, nil, "header") end

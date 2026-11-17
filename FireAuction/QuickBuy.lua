@@ -1129,6 +1129,34 @@ local function Create()
 	local title = Label(panel, "Quick buy")
 	title:SetPoint("TOPLEFT", 0, 0)
 
+	-- The item's price history in the price window: FireAuction's coin, under
+	-- the item's favourite star.
+	local item = display.ItemDisplay or display
+	local star = item.FavoriteButton
+	local history = CreateFrame("Button", "FireAuctionPriceHistory", item)
+	history:SetSize(18, 18)
+	if star then
+		history:SetPoint("TOP", star, "BOTTOM", 0, -4)
+	else
+		history:SetPoint("TOPRIGHT", item, "TOPRIGHT", -8, -28)
+	end
+	history:SetFrameLevel((item:GetFrameLevel() or 1) + 5)
+	history.icon = history:CreateTexture(nil, "ARTWORK")
+	history.icon:SetAllPoints()
+	history.icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01")
+	history:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	history:SetScript("OnClick", function()
+		if itemID and ns.Window then ns.Window.Search(ItemName(itemID), itemID) end
+	end)
+	ns.ClickSound(history)
+	history:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Price history", 1, 1, 1)
+		GameTooltip:AddLine("Opens the price window on this item.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	history:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	-- Everything but the title: shown while a session is on (Update).
 	body = CreateFrame("Frame", nil, panel)
 	body:SetAllPoints()
