@@ -22,7 +22,7 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Shift-click the world map to drop a pin, shift-right-click to remove it. Your group sees your pins if "
+	about:SetText("Shift-click the world map to drop a pin, click it to track it, shift-right-click to remove it. Your group sees your pins if "
 		.. "they have FireWaypoints. /fwp 45.2 60.1 drops one at those coordinates.")
 	y = y - 36
 

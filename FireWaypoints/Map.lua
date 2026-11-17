@@ -12,6 +12,7 @@ ns.Map = Map
 local PIN_SIZE = 26
 local CLICK_SLOP = 8 -- pixels the cursor may move for it to still be a click
 local ATLAS = "Waypoint-MapPin-Untracked"
+local ATLAS_TRACKED = "Waypoint-MapPin-Tracked"
 local FALLBACK = "Interface\\COMMON\\Indicator-Yellow"
 
 ---------------------------------------------------------------------------
@@ -31,16 +32,15 @@ local function ShowTooltip(f)
 	GameTooltip:AddLine(("%s  %.1f, %.1f"):format(ns.MapName(pin.map), pin.x * 100, pin.y * 100), 1, 1, 1)
 	local d = ns.Distance(pin)
 	if d then GameTooltip:AddLine(("%d yards away"):format(d), 0.7, 0.7, 0.7) end
+	GameTooltip:AddLine(ns.IsTracked(pin) and "Click to stop tracking" or "Click to track", 0.25, 1, 0.25)
 	GameTooltip:AddLine(f.owner and "Shift-right-click to hide it" or "Shift-right-click to remove it (for your group too)",
 		0.25, 1, 0.25)
 	GameTooltip:Show()
 end
 
--- Shift-right-click removes a pin; left clicks go through to the map (or
--- minimap) underneath. A pin takes clicks a little beyond its edge, so it's
--- easy to hit. The game blocks
--- setting up click pass-through in combat, so a pin made mid-fight gets its
--- clicks once the fight ends.
+-- Click a pin to track it (an arrow on the minimap), shift-right-click to
+-- remove it. A pin takes clicks a little beyond its edge, so it's easy to
+-- hit. A pin made mid-fight gets its clicks once the fight ends.
 local HIT_PAD = 0.35 -- extra click area around a pin, as a share of its size
 local clicksPending = {}
 local function EnableClicks(f)
@@ -49,7 +49,6 @@ local function EnableClicks(f)
 		return
 	end
 	f:EnableMouse(true)
-	if f.SetPassThroughButtons then pcall(f.SetPassThroughButtons, f, "LeftButton") end
 end
 local combatEnd = CreateFrame("Frame")
 combatEnd:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -59,6 +58,24 @@ combatEnd:SetScript("OnEvent", function()
 		EnableClicks(f)
 	end
 end)
+
+-- Hover and clicks for a frame standing for a pin (f.owner, f.id, f.pin):
+-- the pins, and the minimap's arrow to the tracked one.
+function ns.PinMouse(f)
+	EnableClicks(f)
+	f:SetScript("OnEnter", ShowTooltip)
+	f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	f:SetScript("OnMouseUp", function(self, button)
+		if not self.id then return end
+		if button == "RightButton" and IsShiftKeyDown() then
+			GameTooltip:Hide()
+			ns.Remove(self.owner, self.id)
+		elseif button == "LeftButton" and self:IsMouseOver() then
+			ns.Track(self.owner, self.id)
+			if GameTooltip:IsOwned(self) then ShowTooltip(self) end
+		end
+	end)
+end
 
 function ns.CreatePinFrame(parent, size)
 	local f = CreateFrame("Frame", nil, parent)
@@ -77,20 +94,19 @@ function ns.CreatePinFrame(parent, size)
 	f.label:SetPoint("BOTTOMLEFT", f, "RIGHT", -size * 0.15, -size * 0.1)
 	local pad = math.floor(size * HIT_PAD + 0.5)
 	f:SetHitRectInsets(-pad, -pad, -pad, -pad)
-	EnableClicks(f)
-	f:SetScript("OnEnter", ShowTooltip)
-	f:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	f:SetScript("OnMouseUp", function(self, button)
-		if button == "RightButton" and IsShiftKeyDown() and self.id then
-			GameTooltip:Hide()
-			ns.Remove(self.owner, self.id)
-		end
-	end)
+	ns.PinMouse(f)
 	return f
 end
 
 function ns.SetPinFrame(f, owner, id, pin)
 	f.owner, f.id, f.pin = owner, id, pin
+	local tracked = ns.IsTracked(pin)
+	if tracked ~= f.tracked then
+		f.tracked = tracked
+		local atlas = tracked and ATLAS_TRACKED or ATLAS
+		if HasAtlas(atlas) then f.icon:SetAtlas(atlas) end
+		f.icon:SetDesaturated(true)
+	end
 	local r, g, b = ns.OwnerColor(owner)
 	f.icon:SetVertexColor(r, g, b)
 	f.label:SetText(id)

@@ -8,13 +8,19 @@ ns.Minimap = Minimap_
 
 local SIZE = 16
 local EDGE_SIZE = 12
+-- The arrow to the tracked pin: the game's navigation arrow (points up), at
+-- its own size; else the minimap's guide arrow.
+local ARROW_ATLAS = "Navigation-Tracked-Arrow"
+local ARROW_FILE = "Interface\\Minimap\\ROTATING-MINIMAPGUIDEARROW"
+local arrowW, arrowH = 24, 24
+local ARROW_SCALE = 0.6 -- of the navigation arrow's own size
 local INTERVAL = 0.05
 -- Yards across the minimap at each zoom level, for clients without
 -- C_Minimap.GetViewRadius.
 local OUTDOOR = { [0] = 466.67, 400, 333.33, 266.67, 200, 133.33 }
 local INDOOR = { [0] = 300, 240, 180, 120, 80, 50 }
 
-local holder, pool = nil, {}
+local holder, pool, arrow = nil, {}, nil
 
 local function Radius()
 	if C_Minimap and C_Minimap.GetViewRadius then
@@ -35,6 +41,7 @@ end
 
 local function HideAll(from)
 	for i = from or 1, #pool do pool[i]:Hide() end
+	if not from and arrow then arrow:Hide() end
 end
 
 local function Update()
@@ -49,6 +56,7 @@ local function Update()
 	local cos, sin = 1, 0
 	if facing then cos, sin = math.cos(facing), math.sin(facing) end
 	local n = 0
+	local showArrow = false
 	ns.ForEach(function(owner, id, pin)
 		local dx, dy = ns.Offset(pin, map, px, py)
 		if not dx then return end
@@ -59,6 +67,18 @@ local function Update()
 		local dist = math.sqrt(x * x + y * y)
 		local edge = half - edgeSize / 2 - 2
 		local off = dist > edge
+		if off and ns.IsTracked(pin) then
+			-- The tracked pin, off the minimap: an arrow on the edge instead.
+			local r = half - math.max(arrowW, arrowH) * scale / 2 + 4
+			arrow:SetSize(arrowW * scale, arrowH * scale)
+			arrow.owner, arrow.id, arrow.pin = owner, id, pin
+			arrow:ClearAllPoints()
+			arrow:SetPoint("CENTER", Minimap, "CENTER", x / dist * r, y / dist * r)
+			arrow.icon:SetRotation(math.atan2(-x, y))
+			arrow:Show()
+			showArrow = true
+			return
+		end
 		if off then x, y = x / dist * edge, y / dist * edge end
 		n = n + 1
 		local f = pool[n]
@@ -75,6 +95,7 @@ local function Update()
 		f:Show()
 	end)
 	HideAll(n + 1)
+	if not showArrow then arrow:Hide() end
 end
 
 function Minimap_.Refresh()
@@ -86,6 +107,24 @@ local function Setup()
 	holder = CreateFrame("Frame", nil, Minimap)
 	holder:SetAllPoints(Minimap)
 	holder:SetFrameLevel(Minimap:GetFrameLevel() + 5)
+	arrow = CreateFrame("Frame", nil, holder)
+	arrow:SetFrameLevel(holder:GetFrameLevel() + 2)
+	arrow.icon = arrow:CreateTexture(nil, "OVERLAY")
+	arrow.icon:SetAllPoints()
+	ns.PinMouse(arrow)
+	local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(ARROW_ATLAS)
+	if info and info.width and info.width > 0 then
+		arrow.icon:SetAtlas(ARROW_ATLAS, false, "TRILINEAR")
+		arrowW, arrowH = info.width * ARROW_SCALE, info.height * ARROW_SCALE
+	else
+		arrow.icon:SetTexture(ARROW_FILE, nil, nil, "TRILINEAR")
+	end
+	-- Smooth edges when turned (no snapping to the pixel grid).
+	if arrow.icon.SetSnapToPixelGrid then
+		arrow.icon:SetSnapToPixelGrid(false)
+		arrow.icon:SetTexelSnappingBias(0)
+	end
+	arrow:Hide()
 	local elapsed = 0
 	holder:SetScript("OnUpdate", function(_, dt)
 		elapsed = elapsed + dt

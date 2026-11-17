@@ -1,7 +1,8 @@
 -- FireWaypoints: as many map pins as you like, shared with your group.
 --
 -- Shift-click the world map to drop a pin (or /fwp 45.2 60.1 for a spot in
--- your zone). Pins show on the world map and the minimap; shift-right-click one to
+-- your zone). Pins show on the world map and the minimap; click one to track it
+-- (an arrow on the minimap's edge points to it); shift-right-click one to
 -- remove it. Everyone in your group with FireWaypoints sees your pins (in your
 -- class color, with your name), and you see theirs.
 --
@@ -357,6 +358,45 @@ function ns.Count()
 end
 
 ---------------------------------------------------------------------------
+-- Tracking: one pin at a time, with an arrow to it on the minimap's edge
+---------------------------------------------------------------------------
+
+local active -- { owner (false for yours), id }, this session
+
+local function Lookup(owner, id)
+	if not owner then return ns.mine[id] end
+	return ns.shared[owner] and ns.shared[owner][id]
+end
+
+function ns.IsTracked(pin)
+	return active ~= nil and pin ~= nil and Lookup(active.owner, active.id) == pin
+end
+
+function ns.Tracked()
+	return active and Lookup(active.owner, active.id)
+end
+
+-- Click a pin: track it (or stop, if it's tracked).
+function ns.Track(owner, id)
+	local pin = Lookup(owner, id)
+	if not pin then return end
+	if ns.IsTracked(pin) then
+		active = nil
+	else
+		active = { owner = owner or false, id = id }
+		if SOUNDKIT and SOUNDKIT.UI_MAP_WAYPOINT_SUPER_TRACK_ON then
+			pcall(PlaySound, SOUNDKIT.UI_MAP_WAYPOINT_SUPER_TRACK_ON)
+		end
+	end
+	Changed()
+end
+
+-- A tracked pin that's gone (removed, its owner left) stops being tracked.
+ns.OnChange(function()
+	if active and not Lookup(active.owner, active.id) then active = nil end
+end)
+
+---------------------------------------------------------------------------
 -- Receiving
 ---------------------------------------------------------------------------
 
@@ -540,7 +580,7 @@ SlashCmdList.FIREWAYPOINTS = function(input)
 			tostring(map), px and ("%.3f, %.3f"):format(px, py) or "?"))
 	else
 		ns.Print("commands:")
-		print("  shift-click the world map - drop a pin (shift-right-click a pin to remove it)")
+		print("  shift-click the world map - drop a pin (click a pin to track it, shift-right-click to remove it)")
 		print("  /fwp 45.2 60.1 - drop a pin at those coordinates in your zone")
 		print("  /fwp list - list the pins")
 		print("  /fwp clear - remove your pins (for your group too)")
