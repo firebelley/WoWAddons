@@ -17,8 +17,9 @@
 --   So far            spent, sold, up, and how many are left (mail too).
 --   This listing      the amount on the sell page: what it brings in, and
 --                     where that leaves you.
---   If all sell       the profit if everything left sells at the price, and
---                     the break-even price.
+--   Break even        the lowest price for what's left; at the price, how
+--                     many to sell and how many are then yours for free.
+--   If all sell       the profit if everything left sells at the price.
 --
 -- Everything after the auction house's 5% cut. Hover a line for how it's
 -- worked out.
@@ -80,6 +81,25 @@ local function TypedQuantity()
 	if not (sf and sf.GetQuantity) then return nil end
 	local ok, qty = pcall(sf.GetQuantity, sf)
 	return ok and type(qty) == "number" and qty > 0 and math.floor(qty) or nil
+end
+
+-- How many of the `have` in hand to sell at `net` each (after the cut) to
+-- make back `short`, and how many are then yours for free (for crafting).
+-- label: the first row's (default "Sell to break even").
+local function BreakEvenRows(Add, short, net, have, label)
+	label = label or "Sell to break even"
+	if have <= 0 then return end
+	local n = 0
+	if short > 0 then
+		n = math.floor(short / net) + 1
+		while math.floor(net * n) <= short do n = n + 1 end
+	end
+	if n > have then
+		Add(label, nil, GREY .. ("more than your %d"):format(have) .. "|r")
+	else
+		Add(label, nil, n > 0 and ("%d of %d"):format(n, have) or (GREY .. "paid back|r"))
+		Add("Then free to keep", nil, tostring(have - n), nil, Tip("Then free to keep", "Yours for nothing once those sell."))
+	end
 end
 
 -- The sell page's lines (see Lines): what you've put in and got back, what
@@ -158,30 +178,27 @@ local function SellLines(id)
 		Add("Brings in", nil, Signed(thisIncome), nil, Tip("Brings in", "After the 5% cut."))
 		Add("Then you're at", GREY .. ("%d left"):format(math.max(0, have - qty)) .. "|r", Signed(result), nil,
 			Tip("Then you're at", listUp > 0 and "If this and what's up sell." or "If it sells."))
-		-- Where it pays back what you spent.
-		local short = cover - upIncome
-		if short > 0 and result >= 0 then
-			local n = math.floor(short / (typed * cut)) + 1
-			while math.floor(typed * cut * n) <= short do n = n + 1 end
-			Add("Paid back at", nil, ("%d sold"):format(n))
-		end
 	end
 
-	-- If everything left sells at the price (what's up at its own).
+	-- Breaking even: the lowest price for what's left, and at the price, how
+	-- many to sell and how many are then yours for free. Then the profit if
+	-- everything left sells at it (what's up at its own).
 	local left = have + seedUp
 	if left > 0 then
 		local money = (approx and "~" or "") .. ns.Money(sell or 0)
+		money = target and (CUSTOM .. money .. "|r") or money
+		local short = cover - upIncome
+		Add("Break even", nil, nil, "header", Tip("Break even", "Making back what you spent, with what's sold and up."))
+		Add("Lowest price", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
+			nil, Tip("Lowest price", ("For the %d left, after the 5%% cut."):format(left)))
 		if not sell then
 			Add("No price to go by yet", nil, nil, "note")
 		else
-			Add(("If all %d sell at %s"):format(left + listUp, target and (CUSTOM .. money .. "|r") or money), nil, nil,
-				"header", Tip("Price", typed and "Your Unit Price on the sell page." or target and "Your own price."
-					or AutoSource(approx, true)))
-			local short = cover - upIncome
+			BreakEvenRows(Add, short, sell * cut, have, "Sell at " .. money)
 			local total = math.floor(sell * cut * left) - short
+			Add(("If all %d sell at %s"):format(left + listUp, money), nil, nil, "header", Tip("Price",
+				typed and "Your Unit Price on the sell page." or target and "Your own price." or AutoSource(approx, true)))
 			Add("Profit", nil, Signed(total), nil, Tip("Profit", "After the 5% cut."), ns.Percent(total / spent * 100))
-			Add("Break-even", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
-				nil, Tip("Break-even", ("The lowest price for the %d left to make back what you spent."):format(left)))
 		end
 	end
 	return lines, summaryText, progress
@@ -273,19 +290,7 @@ local function Lines(id, selling)
 			Add("Break-even", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
 				nil, Tip("Break-even", ("The lowest price for the %d left to make back what you spent."):format(left)))
 		end
-		if have > 0 then
-			local n = 0
-			if short > 0 then
-				n = math.floor(short / net) + 1
-				while math.floor(net * n) <= short do n = n + 1 end
-			end
-			if n > have then
-				Add("Sell to break even", nil, GREY .. ("more than your %d"):format(have) .. "|r")
-			else
-				Add("Sell to break even", nil, n > 0 and ("%d of %d"):format(n, have) or (GREY .. "paid back|r"))
-				Add("Then free to keep", nil, tostring(have - n), nil, Tip("Then free to keep", "Yours for nothing once those sell."))
-			end
-		end
+		BreakEvenRows(Add, short, net, have)
 	elseif bought > 0 and not sell then
 		Add("No price to go by yet", nil, nil, "note")
 	end
