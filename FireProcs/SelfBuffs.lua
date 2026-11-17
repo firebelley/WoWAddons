@@ -4,8 +4,12 @@
 --
 -- Which buffs: any buff you cast on yourself from your spellbook that lasts a
 -- minute or more, plus spells of yours the game credits to your pet (Soul
--- Link, which has no timer and drops when the pet dies or is dismissed). They're learned as you cast them, and each can be turned off
--- in Options > AddOns > FireProcs > Buffs (or /fprocs buffs).
+-- Link, which has no timer and drops when the pet dies or is dismissed), plus
+-- long buffs a spell of yours gives under another name (Demonic Sacrifice:
+-- Touch of Shadow, Burning Wish... - alternatives to each other, and not
+-- reminded when they go as you cast a spell, like summoning a demon). They're
+-- learned as you cast them, and each can be turned off in Options > AddOns >
+-- FireProcs > Buffs (or /fprocs buffs).
 --
 -- Tracking (Find Minerals, Find Herbs, Track Beasts...) counts too: it's read
 -- from the minimap's tracking menu, and reminded when it goes off on its own
@@ -230,6 +234,20 @@ local function IsCandidate(a)
 	-- Your spell that the game says your pet applied, like Soul Link: it lasts
 	-- until the pet dies or is dismissed (no timer), and is worth recasting.
 	if a.source == "pet" and inBook then return true end
+	-- A long buff one of your spells gives under another name (Demonic
+	-- Sacrifice -> Touch of Shadow): learned when it appears just as you cast
+	-- that spell, fresh (its full time left); then known by name.
+	local mine = a.source == "player" or a.source == "pet" or a.source == nil
+	if not inBook and mine and (a.duration or 0) >= MIN_DURATION then
+		local e = Entry(a.name)
+		if e and e.from then return true end
+		local from = Spells.RecentBookCast and Spells.RecentBookCast()
+		local left = (a.expires or 0) - GetTime()
+		if from and a.expires and a.expires > 0 and a.duration - left < 3 then
+			a.from = from
+			return true
+		end
+	end
 	-- (Some buffs carry no caster; one named after your own spell is yours.)
 	if a.source ~= "player" and a.source ~= nil then return false, "not cast by you (from " .. tostring(a.source) .. ")" end
 	if not inBook then
@@ -249,6 +267,7 @@ local function Learn(a, kind)
 	local db = ns.db
 	local e = db.selfBuffs[a.name]
 	if e then
+		e.from = a.from or e.from
 		e.icon = a.icon or e.icon
 		e.duration = a.duration or e.duration -- to time it when recast in combat
 		e.spellId = a.spellId or e.spellId     -- to ask whether it's hidden in combat
@@ -256,9 +275,15 @@ local function Learn(a, kind)
 		if kind == "enchant" then e.enchant = true end
 		return
 	end
-	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, spellId = a.spellId,
+	db.selfBuffs[a.name] = { icon = a.icon, on = true, duration = a.duration, spellId = a.spellId, from = a.from,
 		combat = kind == "combat" or nil,
 		tracking = kind == "tracking" or nil, enchant = kind == "enchant" or nil }
+	-- Given by the same spell as one you know (Demonic Sacrifice): either counts.
+	if a.from then
+		for other, o in pairs(db.selfBuffs) do
+			if other ~= a.name and o.from == a.from then Link(other, a.name) break end -- (keeps that group: what's missing is filed under it)
+		end
+	end
 	if a.quiet then return end
 	if kind == "tracking" then
 		ns.Print(("I'll let you know when |cffffd100%s|r is turned off. Turn that off in /fprocs buffs."):format(a.name))
@@ -359,12 +384,20 @@ local function Lost(name, info, old)
 	if Spells.WasRecentlyCast(name) then
 		return ns.Trace(name .. " went away as you recast it (refreshed)")
 	end
-	-- Replaced by another buff of yours that appeared at the same moment.
+	-- Replaced by another buff of yours that appeared at the same moment (or
+	-- that the same spell gives: Touch of Shadow for Burning Wish).
+	local from = Entry(name) and Entry(name).from
 	for other in pairs(present) do
-		if other ~= name and not old[other] and Spells.WasRecentlyCast(other) then
+		local o = Entry(other)
+		if other ~= name and not old[other] and (Spells.WasRecentlyCast(other) or (from and o and o.from == from)) then
 			Link(other, name)
 			return
 		end
+	end
+	-- One a spell gave under another name, gone as you cast a spell (summoning
+	-- a demon ends Demonic Sacrifice's): on purpose.
+	if from and Spells.RecentBookCast and Spells.RecentBookCast() then
+		return ns.Trace(("%s went as you cast %s: not reminding"):format(name, Spells.RecentBookCast()))
 	end
 	if info.enchant then
 		if GetInventoryItemID("player", info.enchant) ~= info.item then

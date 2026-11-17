@@ -216,6 +216,7 @@ local function RememberCast(spellID)
 	recentById[spellID] = now
 	local name = API.SpellInfo(spellID)
 	if name then recentByName[name] = now end
+	if name and Spells.active[name] then Spells.lastBookCast, Spells.lastBookCastAt = name, now end
 end
 
 ns.OnUnit("UNIT_SPELLCAST_SENT", "player", function(_, _, castGUID, spellID)
@@ -243,6 +244,12 @@ ns.OnUnit("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, castGUID, spellID)
 		ns.Casts.Triggered(spellID)
 	end
 end)
+
+-- The spell from your spellbook you cast a moment ago, or nil.
+function Spells.RecentBookCast()
+	if Spells.lastBookCast and GetTime() - (Spells.lastBookCastAt or 0) < RECENT_CAST then return Spells.lastBookCast end
+	return nil
+end
 
 function Spells.WasRecentlyCast(name, spellID)
 	local now = GetTime()
