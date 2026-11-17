@@ -361,6 +361,10 @@ local function Update()
 	end
 	plan, mode, checkPlan = nil, nil, nil
 	local text, enabled = nil, false
+	-- Waiting on the auction house (a purchase, new listings, Blizzard's own
+	-- dialog): End session waits too. Not for "Got all", "Set the most to
+	-- pay" or "Not enough money" - ending the session is the way out of those.
+	local busy = pending ~= nil
 	if pending then
 		text = pending.stage == "quote" and "Checking the price..." or "Buying..."
 	elseif not max or max <= 0 then
@@ -370,6 +374,7 @@ local function Update()
 	elseif Held() then
 		-- The listings are out of date until refreshed: not "Buy..." from them.
 		text = holdText
+		busy = true
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
 		local old = staleSince or Old()
@@ -387,6 +392,7 @@ local function Update()
 			text = "Not enough money (" .. ns.Money(total) .. ")"
 		elseif BlizzardDialogOpen() then
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
+			busy = true
 		else
 			text = ("Buy %d for %s"):format(count, ns.Money(total))
 			-- Usable even while the auction house is busy with another request
@@ -398,14 +404,15 @@ local function Update()
 		end
 		-- New listings on the way: wait for them (a refresh then would only
 		-- queue behind it, and hold up the purchase after).
-		if mode and Searching() then plan, mode, checkPlan, enabled = nil, nil, nil, false end
+		if mode and Searching() then plan, mode, checkPlan, enabled, busy = nil, nil, nil, false, true end
+		if (mode == "check" or mode == "refresh") and not enabled then busy = true end -- Blizzard's dialog
 	end
 	if text then button:SetText(text) end
 	if ns.debug and enabled ~= button:IsEnabled() then
 		ns.Debug(("quick buy: button %s (%s)"):format(enabled and "on" or "off", mode or text or "?"))
 	end
 	button:SetEnabled(enabled)
-	clear:SetEnabled(not pending)
+	clear:SetEnabled(not busy)
 
 	local line = message
 	local count = s.bought or 0
