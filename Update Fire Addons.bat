@@ -1,7 +1,7 @@
 <# :
 @echo off
-rem Updates the Fire addons you have installed to the latest version on GitHub.
-rem Double-click to run. Only addons already in your AddOns folder are updated.
+rem Updates the Fire addons you have installed to the latest version on GitHub,
+rem then offers to install the ones you don't have yet. Double-click to run.
 setlocal
 set "FIRE_UPDATER=%~f0"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Expression ([IO.File]::ReadAllText($env:FIRE_UPDATER))"
@@ -154,21 +154,58 @@ try {
     Say ''
     if ($installed -eq 0) {
         Say "None of the Fire addons are installed in $AddOns yet." 'Yellow'
-        Say "To install one, download it from https://github.com/$Repo (Code > Download ZIP),"
-        Say 'and copy the addon folders you want (for example FireBags) into your AddOns folder.'
-        Say 'After that, this updater keeps them up to date.'
     } elseif ($updated -gt 0) {
         Say "$updated addon(s) updated." 'Green'
-        if (Get-Process -Name 'Wow*' -ErrorAction SilentlyContinue) {
-            Say 'WoW is running: type /reload in game to load the new version.' 'Yellow'
-        }
     } else {
         Say 'Everything is up to date.' 'Green'
     }
 
-    $notInstalled = $available | Where-Object { -not (Test-Path -LiteralPath (Join-Path $AddOns $_.Name)) } | ForEach-Object Name
-    if ($notInstalled -and $installed -gt 0) {
-        Say ("Also available (not installed): " + ($notInstalled -join ', ')) 'DarkGray'
+    # ---------------------------------------------------------------------------
+    # Offer the ones not installed yet
+    # ---------------------------------------------------------------------------
+    function Get-Notes($folder, $name) {
+        $toc = Join-Path $folder "$name.toc"
+        $line = Get-Content -LiteralPath $toc | Where-Object { $_ -match '^##\s*Notes:\s*(.+)$' } | Select-Object -First 1
+        if ($line -match '^##\s*Notes:\s*(.+)$') { return $Matches[1].Trim() }
+        return ''
+    }
+
+    $notInstalled = @($available | Where-Object { -not (Test-Path -LiteralPath (Join-Path $AddOns $_.Name)) })
+    $added = 0
+    if ($notInstalled.Count -gt 0) {
+        Say ''
+        Say 'Not installed yet:' 'Yellow'
+        for ($i = 0; $i -lt $notInstalled.Count; $i++) {
+            $a = $notInstalled[$i]
+            Say ("  {0,2}. {1,-14} {2}" -f ($i + 1), $a.Name, (Get-Notes $a.FullName $a.Name))
+        }
+        Say ''
+        Say 'Which to install? Numbers (for example 1 3), "all", or press Enter for none.'
+        while ($true) {
+            $answer = (Read-Host '>').Trim().ToLower()
+            if ($answer -eq '') { $picks = @(); break }
+            if ($answer -eq 'all') { $picks = $notInstalled; break }
+            $numbers = $answer -split '[\s,]+' | Where-Object { $_ }
+            $bad = $numbers | Where-Object { -not ($_ -match '^\d+$' -and [int]$_ -ge 1 -and [int]$_ -le $notInstalled.Count) }
+            if ($bad) { Say "Not on the list: $($bad -join ', ')" 'Red'; continue }
+            $picks = $numbers | ForEach-Object { [int]$_ } | Sort-Object -Unique | ForEach-Object { $notInstalled[$_ - 1] }
+            break
+        }
+        foreach ($addon in $picks) {
+            Copy-Item -LiteralPath $addon.FullName -Destination (Join-Path $AddOns $addon.Name) -Recurse
+            Say ("  {0,-14} installed ({1})" -f $addon.Name, (Get-Version $addon.FullName $addon.Name)) 'Green'
+            $added++
+        }
+        if ($added -gt 0) { Say "$added addon(s) installed. This updater keeps them up to date from now on." 'Green' }
+    }
+
+    if (($updated + $added) -gt 0 -and (Get-Process -Name 'Wow*' -ErrorAction SilentlyContinue)) {
+        Say ''
+        if ($added -gt 0) {
+            Say 'WoW is running: restart it to load the new addons (/reload is enough for updates).' 'Yellow'
+        } else {
+            Say 'WoW is running: type /reload in game to load the new version.' 'Yellow'
+        }
     }
     if (Test-Path -LiteralPath (Join-Path $AddOns "WoWAddons-$Branch")) {
         Say ''
