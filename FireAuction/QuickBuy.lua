@@ -12,6 +12,14 @@
 -- final price before buying; if it's more than the button said (someone got
 -- the cheap ones first), the purchase is cancelled instead.
 --
+-- With "Check for" ticked and nothing within "Up to" on screen, a click
+-- checks the price of N instead of refreshing (typed, or the number that
+-- would have bought the most of your recent finds, see BestSize): the price
+-- check is a fresh look in itself, so new listings are bought straight from
+-- it, a step (~0.6s) ahead of a refresh.
+-- If they average more, nothing's bought and the listings refresh (unless the
+-- check found the cheapest just as they are on screen).
+--
 -- Quick buy shows once you press Start session for the item. The session -
 -- how many you've bought, what they cost, and a log - is kept until you press
 -- End session (through /reload and logouts), and counts in the Profit tab of
@@ -29,6 +37,7 @@ local RESENDS = 3        -- times a confirmation the game dropped is sent again
 local AH_CUT = 0.05
 
 local panel, body, start, button, clear, status, wantBox, coinBoxes
+local checkToggle, checkBox, checkHint -- "Check for [N]"
 local itemID          -- the commodity on screen
 local plan            -- { quantity, total } the button would buy right now
 local pending         -- { itemID, quantity, total, stage = "quote"/"buying", at }
@@ -40,6 +49,7 @@ local LATE = 15       -- seconds such a purchase can still come through and be c
 local LOG_SIZE = 20   -- purchases kept in the session log
 local message         -- last result, shown under the button until the next change
 local consumed        -- { id, qty, at } just bought: still in the listings until they're refreshed
+local resultsAt       -- when the listings on screen came in
 -- Lost to someone else: the cheap ones went before the quote, or between the
 -- quote and the purchase.
 local TAKEN = "|cffff5050Not available|r (someone else bought them)"
@@ -137,7 +147,7 @@ local function Walk(id, maxPrice, quantity)
 		local take = 0
 		if maxPrice and r.unitPrice <= maxPrice and count < quantity and not (level and r.unitPrice > level) then
 			take = math.max(0, math.min(open, quantity - count))
-			if take > 0 and ns.db.quickBuyCheapest then level = level or r.unitPrice end
+			if take > 0 and ns.db.quickBuyCheapest and maxPrice ~= math.huge then level = level or r.unitPrice end
 		end
 		count = count + take
 		if r.quantity - gone > 0 then rows[#rows + 1] = { price = r.unitPrice, quantity = r.quantity - gone, take = take } end
@@ -169,6 +179,88 @@ local function Available(id, maxPrice, quantity)
 		total = total + row.take * row.price
 	end
 	return count, total
+end
+
+-- What the cheapest `n` on screen cost in all (not yours, not just bought),
+-- or nil if fewer are listed.
+local function CheapestTotal(id, n)
+	local count, total = 0, 0
+	for _, row in ipairs(Walk(id, math.huge, n) or {}) do
+		count, total = count + row.take, total + row.take * row.price
+	end
+	if count < n then return nil end
+	return total
+end
+
+-- How many to check for, left to the addon: your last cheap finds (purchase
+-- attempts for the item, not checks: how many, at what price) replayed
+-- against the listings on screen now. A find smaller than N is made up with
+-- the cheapest listed, and the check goes through if it all averages within
+-- "Up to". The N that would have bought the most in all (the smaller on a
+-- tie), up to cap. nil until there are a few finds.
+local CHECK_HISTORY, CHECK_MIN_HISTORY = 50, 3
+local bestKey, bestN
+local function BestSize(id, max, cap)
+	local list = ns.db.attempts and ns.db.attempts.list
+	if not (id and list and max and max > 0 and cap >= 1) then return nil end
+	local key = table.concat({ id, max, cap, tostring(resultsAt), consumed and consumed.qty or 0, #list,
+		tostring(list[#list]) }, " ")
+	if key == bestKey then return bestN end
+	local finds, maxQ = {}, 0
+	for i = #list, 1, -1 do
+		local a = list[i]
+		if a.id == id and not a.chk and a.q and a.q > 0 and a.total then
+			finds[#finds + 1] = a
+			maxQ = math.max(maxQ, a.q)
+		end
+		if #finds >= CHECK_HISTORY then break end
+	end
+	local best, most = nil, 0
+	if #finds >= CHECK_MIN_HISTORY then
+		-- What the cheapest k on screen cost in all, worked out as needed.
+		local rows, r, used, fill = Walk(id, math.huge, math.huge) or {}, 1, 0, { [0] = 0 }
+		local function Fill(k)
+			while #fill < k do
+				local row = rows[r]
+				if not row then return nil end
+				if used < row.take then
+					used = used + 1
+					fill[#fill + 1] = fill[#fill] + row.price
+				else
+					r, used = r + 1, 0
+				end
+			end
+			return fill[k]
+		end
+		local n = 0
+		while n < cap do
+			n = n + 1
+			local wins = 0
+			for _, f in ipairs(finds) do
+				local k = math.min(f.q, n)
+				local padding = Fill(n - k)
+				if padding and f.total / f.q * k + padding <= max * n then wins = wins + 1 end
+			end
+			if wins * n > most then best, most = n, wins * n end
+			-- Past the biggest find, every one more is made up from listings
+			-- dearer than "Up to": once none would go through, none will.
+			if wins == 0 and n >= maxQ then break end
+		end
+	end
+	bestKey, bestN = key, best
+	return best
+end
+
+-- How many a price check is for: the "Check for" number (s.checkSize), else
+-- BestSize; within what you still want and can pay for. nil with "Check for"
+-- off (the default; s.check = true when on).
+local function CheckSize(id, max)
+	local s = Settings(id)
+	if not s.check then return nil end
+	local cap = math.min(Remaining(id), math.floor(GetMoney() / max))
+	local n = s.checkSize and math.min(s.checkSize, cap) or BestSize(id, max, cap)
+	if not n or n < 1 then return nil end
+	return n
 end
 
 -- "Silk Cloth: bought 100 for 1g 75s (1s 75c each). Break-even: 1s 84c each."
@@ -220,8 +312,8 @@ local holdText                -- the button's text meanwhile
 local refreshSentAt           -- when the last refresh went out
 local staleSince              -- a purchase finished: the listings on screen are out of date until refreshed
 local searchSentAt            -- when any search for listings last went out (ours or the auction house's own)
-local resultsAt               -- when the listings on screen came in
-local mode                    -- what a click on the button does now: "buy" or "refresh"
+local mode                    -- what a click on the button does now: "buy", "check" or "refresh"
+local checkPlan               -- { quantity, expected } a "check" click's price check
 local REFRESH_ICON = "|TInterface\\Buttons\\UI-RefreshButton:16:16:0:0|t "
 
 -- Never act on listings that are about to be replaced or are old: while a
@@ -261,7 +353,13 @@ local function Update()
 		return
 	end
 	local max = s.max
-	plan, mode = nil, nil
+	if checkBox then
+		local best = max and max > 0 and resultsAt
+			and BestSize(itemID, max, math.min(Remaining(itemID), math.floor(GetMoney() / max)))
+		checkHint:SetText(best and tostring(best) or "")
+		checkHint:SetShown(checkBox:GetText() == "" and not checkBox:HasFocus())
+	end
+	plan, mode, checkPlan = nil, nil, nil
 	local text, enabled = nil, false
 	if pending then
 		text = pending.stage == "quote" and "Checking the price..." or "Buying..."
@@ -275,7 +373,13 @@ local function Update()
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
 		local old = staleSince or Old()
-		if old or count <= 0 then
+		local n = count <= 0 and resultsAt and not staleSince and CheckSize(itemID, max)
+		if n then
+			-- Nothing within "Up to" on screen: check the price of N.
+			checkPlan = { quantity = n, expected = CheapestTotal(itemID, n) }
+			text = REFRESH_ICON .. ("Check for %d"):format(n)
+			mode, enabled = "check", not BlizzardDialogOpen()
+		elseif old or count <= 0 then
 			-- Nothing to buy from these listings: the button refreshes them.
 			text = REFRESH_ICON .. (old and "Refresh (stale)" or "Refresh")
 			mode, enabled = "refresh", not BlizzardDialogOpen()
@@ -294,7 +398,7 @@ local function Update()
 		end
 		-- New listings on the way: wait for them (a refresh then would only
 		-- queue behind it, and hold up the purchase after).
-		if mode and Searching() then plan, mode, enabled = nil, nil, false end
+		if mode and Searching() then plan, mode, checkPlan, enabled = nil, nil, nil, false end
 	end
 	if text then button:SetText(text) end
 	if ns.debug and enabled ~= button:IsEnabled() then
@@ -305,7 +409,9 @@ local function Update()
 
 	local line = message
 	local count = s.bought or 0
-	if pending then
+	if pending and pending.check and pending.stage == "quote" then
+		line = ("Checking %d within %s each"):format(pending.quantity, ns.Money(max or 0))
+	elseif pending then
 		-- What this click is buying, while the button says "Checking the price...".
 		line = ("Buying %d for %s"):format(pending.quantity, ns.Money(pending.total))
 	elseif not line and count > 0 then
@@ -417,12 +523,125 @@ for _, event in ipairs({ "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", "AUCTION_HOUSE_
 	end)
 end
 
+---------------------------------------------------------------------------
+-- Every purchase attempt, for /fah attempts: how old the listings were at the
+-- click, when the price check and the confirmation went out, and how it ended.
+--   ns.db.attempts = { since, refreshes, list = { { t, id, q (how many),
+--     total, limit, age, qs, qr, cs, r (seconds after the click: price check
+--     sent, quoted, confirmation sent, ended), quoted, how, why }, ... } }
+--   how: "ok", "quote" (gone before the price check), "buy" (gone between it
+--   and the purchase), "dropped", "timeout"; chk: from a "Check for" click
+--   (only those that found them within "Up to" - db.checks counts them all)
+---------------------------------------------------------------------------
+local ATTEMPTS_KEPT = 2000
+local attempt -- the one going on
+
+local function AttemptsDB()
+	local a = ns.db.attempts
+	if type(a) ~= "table" then
+		a = { since = time(), refreshes = 0, list = {} }
+		ns.db.attempts = a
+	end
+	return a
+end
+
+local function AttemptStart(p)
+	attempt = { t = time(), id = p.itemID, q = p.quantity, total = p.total, limit = p.limit, click = GetTime(), chk = p.check,
+		age = resultsAt and math.floor((GetTime() - resultsAt) * 1000 + 0.5) / 1000 or nil }
+end
+
+local function Since(a)
+	return math.floor((GetTime() - a.click) * 1000 + 0.5) / 1000
+end
+
+local function AttemptEnd(why)
+	local a = attempt
+	if not a then return end
+	attempt = nil
+	a.r = Since(a)
+	a.why = why
+	if not why then a.how = "ok"
+	elseif why:find("^quoted") or why:find("unavailable") then a.how = "quote"
+	elseif why:find("confirming") or why:find("purchase failed") then a.how = "buy"
+	elseif why:find("dropped") then a.how = "dropped"
+	else a.how = "timeout" end
+	a.click = nil
+	local list = AttemptsDB().list
+	list[#list + 1] = a
+	while #list > ATTEMPTS_KEPT do table.remove(list, 1) end
+end
+
+-- The price check and the confirmation going out, and the quote coming back.
+ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", function()
+	local a = attempt
+	if not (a and pending) then return end
+	if pending.stage == "quote" and not a.qs then a.qs = Since(a)
+	elseif pending.stage == "buying" and not a.cs then a.cs = Since(a) end
+end)
+ns.On("COMMODITY_PRICE_UPDATED", function(_, totalPrice)
+	local a = attempt
+	if a and pending and not a.qr then a.qr, a.quoted = Since(a), totalPrice end
+end)
+
+local function Median(t)
+	if #t == 0 then return nil end
+	table.sort(t)
+	return t[math.floor((#t + 1) / 2)]
+end
+
+function QuickBuy.PrintAttempts()
+	local db = AttemptsDB()
+	local list = db.list
+	if #list == 0 then
+		ns.Print("no purchase attempts recorded yet.")
+		return
+	end
+	local n, items, how = 0, 0, {}
+	local small, smallOK, big, bigOK = 0, 0, 0, 0
+	local ages, sent = {}, {}
+	local chk, chkOK, chkItems = 0, 0, 0
+	for _, a in ipairs(list) do
+		if a.chk then
+			chk = chk + 1
+			if a.how == "ok" then chkOK, chkItems = chkOK + 1, chkItems + (a.q or 0) end
+		end
+		n = n + 1
+		how[a.how] = (how[a.how] or 0) + 1
+		local ok = a.how == "ok"
+		if ok then items = items + (a.q or 0) end
+		if (a.q or 0) >= 10 then big, bigOK = big + 1, bigOK + (ok and 1 or 0)
+		else small, smallOK = small + 1, smallOK + (ok and 1 or 0) end
+		if a.age then ages[#ages + 1] = a.age end
+		if a.cs then sent[#sent + 1] = a.cs end
+	end
+	ns.Print(("%d purchase attempts since %s, %d refreshes:"):format(n, date("%b %d %H:%M", db.since), db.refreshes or 0))
+	print(("  bought: %d (%d items)"):format(how.ok or 0, items))
+	print(("  gone before the price check: %d"):format(how.quote or 0))
+	print(("  gone before the purchase: %d"):format(how.buy or 0))
+	if (how.dropped or 0) + (how.timeout or 0) > 0 then
+		print(("  no answer: %d"):format((how.dropped or 0) + (how.timeout or 0)))
+	end
+	print(("  1-9 at once: %d of %d bought;  10+: %d of %d"):format(smallOK, small, bigOK, big))
+	if (db.checks or 0) > 0 then
+		print(("  price checks: %d, found %d within Up to, bought %d (%d items)"):format(db.checks, chk, chkOK, chkItems))
+	end
+	local age, cs = Median(ages), Median(sent)
+	if age then print(("  listings at your click: %.2fs old (median)"):format(age)) end
+	if cs then print(("  purchase sent: %.2fs after your click (median)"):format(cs)) end
+end
+
+function QuickBuy.ClearAttempts()
+	ns.db.attempts = nil
+	AttemptsDB()
+end
+
 -- Done with a purchase, however it went: close it on the game's side (like
 -- Blizzard's Buy popup does whenever it closes - an open one can hold back
 -- the refresh, leaving the list stuck on "Searching..."), then refresh a
 -- moment later, once the game has finished with it.
 local function Finish(text, why)
 	if why then ns.Debug("quick buy: not bought - " .. why) end
+	AttemptEnd(why)
 	if pending then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
 	-- Confirmed but given up on: if it goes through after all, it's still counted.
 	if pending and pending.stage == "buying" and not pending.done then
@@ -469,17 +688,66 @@ local function Buy()
 		stage = "quote", at = GetTime() }
 	message = nil
 	HideDone()
+	AttemptStart(pending)
 	C_AuctionHouse.StartCommoditiesPurchase(itemID, plan.quantity)
 	Update()
 end
 
+-- A "Check for" click: the price of N, bought if it averages
+-- within "Up to".
+local function Check()
+	if pending or not itemID then return end
+	Update()
+	if not checkPlan then return end
+	local max = Settings(itemID).max or 0
+	local n = checkPlan.quantity
+	pending = { itemID = itemID, quantity = n, total = max * n, limit = max * n, stage = "quote", at = GetTime(),
+		check = true, expected = checkPlan.expected }
+	message = nil
+	HideDone()
+	local db = AttemptsDB()
+	db.checks = (db.checks or 0) + 1
+	AttemptStart(pending)
+	C_AuctionHouse.StartCommoditiesPurchase(itemID, n)
+	Update()
+end
+
+-- A price check that found nothing within "Up to": not bought, and not a
+-- loss either (not kept as an attempt). The listings refresh, unless the
+-- check found the cheapest just as they are on screen.
+local function CheckMissed(quoted)
+	ns.Debug(("quick buy: check - %s for %d"):format(quoted and ns.Money(quoted) or "none", pending.quantity))
+	attempt = nil
+	local same = quoted ~= nil and quoted == pending.expected and not Old()
+	pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+	pending = nil
+	message = nil
+	if not same then
+		-- Greyed until the refresh goes out (as after a purchase, see Finish).
+		staleSince = GetTime()
+		holdSince, holdText = staleSince, "Checking the price..."
+		if C_Timer then
+			C_Timer.After(AFTER_PURCHASE, function()
+				if not pending then Refresh() end
+			end)
+		else
+			Refresh()
+		end
+	end
+	Update()
+end
+
 -- One click, one thing: buy what's listed within "Up to", or refresh when
--- there's nothing to buy.
+-- there's nothing to buy (or check the price, see Check).
 local function Click()
 	if pending or not itemID then return end
 	Update()
-	if mode == "refresh" then
+	if mode == "check" then
+		Check()
+	elseif mode == "refresh" then
 		message = nil
+		local db = AttemptsDB()
+		db.refreshes = (db.refreshes or 0) + 1
 		Refresh()
 		Update()
 	elseif mode == "buy" then
@@ -516,6 +784,7 @@ ns.On("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
 		Confirm()
 		return Update()
 	end
+	if not ok and pending.check then return CheckMissed(totalPrice) end
 	if not ok then
 		return Finish(TAKEN, ("quoted %s for %d, limit %s"):format(ns.Money(totalPrice), pending.quantity,
 			ns.Money(pending.limit))) -- closes it without buying
@@ -559,6 +828,7 @@ end)
 
 ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
 	if not pending then return end
+	if pending.check and pending.stage == "quote" then return CheckMissed(nil) end
 	Finish(TAKEN, "the game says the price is unavailable")
 end)
 
@@ -777,6 +1047,8 @@ local function ReadInputs()
 	local want = tonumber(wantBox:GetText())
 	want = want and want > 0 and math.floor(want) or nil
 	s.want = want -- what you've bought still counts toward a new goal (End session starts over)
+	local size = tonumber(checkBox:GetText())
+	s.checkSize = size and size > 0 and math.floor(size) or nil
 	local g = tonumber(coinBoxes[1]:GetText()) or 0
 	local sv = math.min(99, tonumber(coinBoxes[2]:GetText()) or 0)
 	local c = math.min(99, tonumber(coinBoxes[3]:GetText()) or 0)
@@ -801,6 +1073,10 @@ local function ShowItem(id)
 		if ok and best then s.max = best.price end
 	end
 	wantBox:SetText(s.want and tostring(s.want) or "")
+	checkBox:SetText(s.checkSize and tostring(s.checkSize) or "")
+	checkToggle:SetChecked(s.check == true)
+	checkBox:SetEnabled(s.check == true)
+	checkBox:SetAlpha(s.check and 1 or 0.5)
 	SetCoins(s.max)
 	Update()
 end
@@ -891,6 +1167,43 @@ local function Create()
 	end)
 	cheap:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+	-- "Check for [N]": with nothing within "Up to" listed, the button checks
+	-- the price of N instead of refreshing (see Check). Empty: how many you
+	-- BestSize (shown greyed in the box).
+	checkBox = Box(body, 30, 3)
+	checkBox:SetPoint("RIGHT", cheap, "LEFT", -12, 0)
+	checkHint = checkBox:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+	checkHint:SetPoint("LEFT", 0, 0)
+	checkBox:HookScript("OnEditFocusGained", function() checkHint:Hide() end)
+	local checkLabel = Label(body, "Check for", "GameFontHighlightSmall")
+	checkLabel:SetPoint("RIGHT", checkBox, "LEFT", -6, 0)
+	checkToggle = CreateFrame("CheckButton", nil, body, "UICheckButtonTemplate")
+	checkToggle:SetSize(22, 22)
+	checkToggle:SetPoint("RIGHT", checkLabel, "LEFT", -1, 0)
+	checkToggle:SetScript("OnClick", function(self)
+		if not itemID then return end
+		local on = self:GetChecked() and true or false
+		Settings(itemID).check = on
+		checkBox:SetEnabled(on)
+		checkBox:SetAlpha(on and 1 or 0.5)
+		message = nil
+		ns.SafeCall(Update)
+	end)
+	ns.ClickSound(checkToggle)
+	local function CheckTip(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Check for", 1, 1, 1)
+		GameTooltip:AddLine("With nothing within \"Up to\" listed, the button checks the price of this many and buys "
+			.. "them if they average within it - faster than a refresh. Off: it refreshes.", nil, nil, nil, true)
+		GameTooltip:AddLine("Empty: the number that would have bought the most of your recent finds, "
+			.. "at today's listings.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end
+	checkToggle:SetScript("OnEnter", CheckTip)
+	checkToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	checkBox:SetScript("OnEnter", CheckTip)
+	checkBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	local tips = {
 		[wantBox] = { "Want", "How many to buy in total. Leave empty for no limit." },
 		[coinBoxes[1]] = { "Up to", "The most to pay per item, on average." },
@@ -963,6 +1276,10 @@ local function Create()
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		if mode == "refresh" then
 			GameTooltip:SetText("Refresh", 1, 1, 1)
+		elseif mode == "check" and checkPlan then
+			GameTooltip:SetText("Check for " .. checkPlan.quantity, 1, 1, 1)
+			GameTooltip:AddLine(("Buys %d if they average within \"Up to\", else refreshes."):format(checkPlan.quantity),
+				nil, nil, nil, true)
 		else
 			GameTooltip:SetText("Quick buy", 1, 1, 1)
 			GameTooltip:AddLine("Buys the cheapest first, with no confirmation. If some sell first, the rest are bought "

@@ -287,6 +287,13 @@ SlashCmdList.FIREAUCTION = function(input)
 		ns.Window.Toggle()
 	elseif cmd == "profit" then
 		ns.Window.ShowProfit()
+	elseif cmd == "attempts" then
+		if rest:lower() == "clear" then
+			ns.QuickBuy.ClearAttempts()
+			ns.Print("purchase attempts cleared.")
+		else
+			ns.QuickBuy.PrintAttempts()
+		end
 	elseif cmd == "rebuild" then
 		ns.Print(("Profit tab rebuilt from %d records."):format(ns.Ledger.Rebuild()))
 	elseif cmd == "scan" then
@@ -321,6 +328,7 @@ SlashCmdList.FIREAUCTION = function(input)
 		print("  /fah <item name> - search for an item")
 		print("  /fah profit - what your Quick buy sessions made")
 		print("  /fah rebuild - redo the Profit tab from its saved record")
+		print("  /fah attempts - how your Quick buy purchases went (/fah attempts clear to start over)")
 		print("  /fah scan - scan the auction house (while it's open)")
 		print("  /fah sales - what's sold and waiting in the mailbox")
 		print("  /fah auctions - what you have listed, with time left")

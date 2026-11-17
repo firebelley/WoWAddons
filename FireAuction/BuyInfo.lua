@@ -2,18 +2,23 @@
 -- Quick buy session is on - on its buy page (Silk Cloth...), or selling it, to
 -- see what to list it at. Drag it anywhere (remembered).
 --
+-- Buying:
 --   (portrait)        the item, and how many you've bought (toward Want).
---   This session      what it cost on average and in all, and the price to
---                     relist at to break even.
---   Resale price      the price the "Resell" rows go by: automatic (the
---                     cheapest listing) or your own, set with its two buttons.
---   This listing      selling: the profit on the amount on the sell page.
---   Break-even        selling: what's sold and up, what you'd keep, and how
---                     many to list to break even (Listings.lua).
---   What it's worth   what you've bought makes resold, each and for all of
---                     it, and with your seeds counted.
---   Next buy          the same at your "Up to" price: is the next one worth it.
+--   So far            spent, sold, up, and how many are left (mail too).
+--   Resale price      automatic (the cheapest listing) or your own, set with
+--                     its two buttons; under it, the profit if all sell at it,
+--                     the break-even price, how many to sell to break even and
+--                     how many are then yours for free.
+--   Next buy          the profit per item at your "Up to" price, and how many
+--                     more to buy per 1g of it.
 --   Recent            the last few purchases.
+--
+-- Selling (SellLines), with how much is paid back on the bar:
+--   So far            spent, sold, up, and how many are left (mail too).
+--   This listing      the amount on the sell page: what it brings in, and
+--                     where that leaves you.
+--   If all sell       the profit if everything left sells at the price, and
+--                     the break-even price.
 --
 -- Everything after the auction house's 5% cut. Hover a line for how it's
 -- worked out.
@@ -26,7 +31,7 @@ local ROW = 15
 local COL = 88     -- width of a number column ("all")
 local PCT = 58     -- width of the "return" column
 local BUTTONS = 44 -- room for the Resale price row's two buttons
-local RECENT = 4   -- purchases listed under Recent
+local RECENT = 2   -- purchases listed under Recent
 local GREY = "|cff999999"
 local CUSTOM = "|cff66bbff" -- your own resale price, wherever it's used
 local LIST_MAX = 12 -- sessions named in the End all popup
@@ -77,77 +82,172 @@ local function TypedQuantity()
 	return ok and type(qty) == "number" and qty > 0 and math.floor(qty) or nil
 end
 
+-- The sell page's lines (see Lines): what you've put in and got back, what
+-- the listing on the sell page would do, and where selling everything leaves
+-- you. Priced at the sell page's Unit Price, else your own, else the cheapest
+-- listing.
+local function SellLines(id)
+	local QB = ns.QuickBuy
+	local cut = 1 - QB.AH_CUT
+	local lines = {}
+	local function Add(left, mid, right, kind, tip, pct) lines[#lines + 1] = { left, mid, right, kind, tip, pct } end
+
+	local bought, spent, want = QB.Session(id)
+	local seedSold, seedIncome, seedLost, seedUp = 0, 0, 0, 0
+	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp = ns.Seed.Stats(id) end
+	local listSold, listIncome, listLost, listUp, upIncome = 0, 0, 0, 0, 0
+	if ns.Listings then listSold, listIncome, listLost, listUp, upIncome = ns.Listings.Stats(id) end
+	local soldN, income, lost = seedSold + listSold, seedIncome + listIncome, seedLost + listLost
+	-- What's left to make back: what you paid and lost, less what sales brought in.
+	local cover = spent + lost - income
+	-- Bought, not sold or up: in your bags, or the mail if they didn't fit.
+	local have = math.max(0, bought - soldN - listUp - seedUp)
+
+	local typed = TypedPrice()
+	local target = not typed and QB.Target(id) or nil
+	local sell, approx = typed, false
+	if not sell then
+		if target then sell = target else sell, approx = QB.SellPrice(id, true) end
+	end
+	local qty = typed and TypedQuantity()
+
+	if bought == 0 then
+		local summaryText = want and ("Nothing bought yet - want %d"):format(want) or "Nothing bought yet"
+		if seedSold > 0 or seedLost > 0 or seedUp > 0 then
+			Add("Seeds", nil, nil, "header")
+			if seedUp > 0 then Add("Up now", nil, tostring(seedUp)) end
+			if seedSold > 0 then
+				Add(("Sold %d"):format(seedSold), nil, Signed(seedIncome), nil, Tip("Sold", "After the 5% cut."))
+			end
+			if seedLost > 0 then
+				Add("Deposits lost", nil, Signed(-seedLost), nil, Tip("Deposits lost", "On cancelled or expired seeds."))
+			end
+		end
+		return lines, summaryText, nil
+	end
+
+	local paid = spent + lost
+	local progress = paid > 0 and math.max(0, math.min(1, 1 - cover / paid)) or 1
+	local summaryText = (want and ("Bought %d of %d"):format(bought, want) or ("Bought %d"):format(bought))
+		.. (cover <= 0 and " - paid back" or (" - %d%% paid back"):format(math.floor(progress * 100)))
+
+	-- So far
+	Add("So far", nil, nil, "header", Tip("So far", "Since you pressed Start session."))
+	Add(("Bought %d at %s"):format(bought, ns.Money(math.floor(spent / bought + 0.5))), nil, Signed(-spent))
+	if soldN > 0 then
+		Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", "After the 5% cut.",
+			seedSold > 0 and listSold > 0 and ("Seeds %d, listings %d."):format(seedSold, listSold) or nil))
+	end
+	if lost > 0 then
+		Add("Deposits lost", nil, Signed(-lost), nil, Tip("Deposits lost", "On cancelled or expired listings."))
+	end
+	if listUp > 0 then
+		Add(("Up now %d"):format(listUp), nil, GREY .. Signed(upIncome) .. "|r", nil, Tip("Up now", "If they sell."))
+	end
+	if seedUp > 0 then Add(("Seeds up %d"):format(seedUp), nil, nil) end
+	local count = C_Item and C_Item.GetItemCount and C_Item.GetItemCount(id) or (GetItemCount and GetItemCount(id))
+	local away = count and math.max(0, have - count) or 0
+	Add(("Left %d"):format(have), nil, away > 0 and (GREY .. away .. " not in bags|r") or nil, nil,
+		away > 0 and Tip("Left", ("%d in your bags; the rest in the mail."):format(have - away)) or nil)
+
+	-- This listing: the amount on the sell page.
+	if qty then
+		local thisIncome = math.floor(typed * cut * qty)
+		local result = upIncome + thisIncome - cover
+		Add(("This listing: %d at %s"):format(qty, ns.Money(typed)), nil, nil, "header")
+		Add("Brings in", nil, Signed(thisIncome), nil, Tip("Brings in", "After the 5% cut."))
+		Add("Then you're at", GREY .. ("%d left"):format(math.max(0, have - qty)) .. "|r", Signed(result), nil,
+			Tip("Then you're at", listUp > 0 and "If this and what's up sell." or "If it sells."))
+		-- Where it pays back what you spent.
+		local short = cover - upIncome
+		if short > 0 and result >= 0 then
+			local n = math.floor(short / (typed * cut)) + 1
+			while math.floor(typed * cut * n) <= short do n = n + 1 end
+			Add("Paid back at", nil, ("%d sold"):format(n))
+		end
+	end
+
+	-- If everything left sells at the price (what's up at its own).
+	local left = have + seedUp
+	if left > 0 then
+		local money = (approx and "~" or "") .. ns.Money(sell or 0)
+		if not sell then
+			Add("No price to go by yet", nil, nil, "note")
+		else
+			Add(("If all %d sell at %s"):format(left + listUp, target and (CUSTOM .. money .. "|r") or money), nil, nil,
+				"header", Tip("Price", typed and "Your Unit Price on the sell page." or target and "Your own price."
+					or AutoSource(approx, true)))
+			local short = cover - upIncome
+			local total = math.floor(sell * cut * left) - short
+			Add("Profit", nil, Signed(total), nil, Tip("Profit", "After the 5% cut."), ns.Percent(total / spent * 100))
+			Add("Break-even", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
+				nil, Tip("Break-even", ("The lowest price for the %d left to make back what you spent."):format(left)))
+		end
+	end
+	return lines, summaryText, progress
+end
+
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
 -- being "header" (mid, right and pct its column names), "price", "note" or nil. selling: on the sell
--- page (no Next buy). Also returns the summary under the item's name.
+-- page (SellLines). Also returns the summary under the item's name.
 local function Lines(id, selling)
+	if selling then return SellLines(id) end
 	local QB = ns.QuickBuy
 	local cut = 1 - QB.AH_CUT
 	local lines = {}
 	local function Add(left, mid, right, kind, tip, pct) lines[#lines + 1] = { left, mid, right, kind, tip, pct } end
 
 	local bought, spent, want, max, log = QB.Session(id)
-	-- The resale price: on the sell page, the Unit Price you've typed there;
-	-- otherwise your own price if you've set one, else the cheapest listing.
-	local typed = selling and TypedPrice()
-	local target = not typed and QB.Target(id) or nil
+	-- The resale price: your own if you've set one, else the cheapest listing.
+	local target = QB.Target(id)
 	local live, liveApprox = QB.SellPrice(id, selling)
 	local sell, approx = live, liveApprox
-	if typed then sell, approx = typed, false elseif target then sell, approx = target, false end
+	if target then sell, approx = target, false end
 	-- Not rounded: the cut is taken from the whole sale, not from each item.
 	local net = sell and sell * cut
-	local avg = bought > 0 and spent / bought or nil
-	-- Seeding (Seed.lua): seeds that sold are gone from what's left to resell
-	-- and brought in their price; cancelled or expired ones lost their deposit.
-	local seedSold, seedIncome, seedLost, seedUp, seedGone = 0, 0, 0, 0, 0
-	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp, seedGone = ns.Seed.Stats(id) end
-	local seededN = seedSold + seedUp + seedGone -- every seed item listed this session
-	-- Your listings (Listings.lua): the same, and what's still up.
+	-- Seeds (Seed.lua) and your listings (Listings.lua): sold, lost, still up.
+	local seedSold, seedIncome, seedLost, seedUp = 0, 0, 0, 0
+	if ns.Seed and ns.Seed.Stats then seedSold, seedIncome, seedLost, seedUp = ns.Seed.Stats(id) end
 	local listSold, listIncome, listLost, listUp, upIncome = 0, 0, 0, 0, 0
 	if ns.Listings then listSold, listIncome, listLost, listUp, upIncome = ns.Listings.Stats(id) end
-	local left = math.max(0, bought - seedSold - listSold)
-	local seeded = seedSold > 0 or seedLost > 0
-	local listed = listSold > 0 or listLost > 0
+	local soldN, income, lost = seedSold + listSold, seedIncome + listIncome, seedLost + listLost
 	-- What's left to make back: what you paid and lost, less what sales brought in.
-	local cover = spent + seedLost + listLost - seedIncome - listIncome
-	-- What the rows that go by it are called.
-	local resell = typed and "List at your price" or target and ("Resell " .. CUSTOM .. "(custom)|r") or "Resell"
+	local cover = spent + lost - income
+	-- Bought, not sold or up: in your bags, or the mail if they didn't fit.
+	local have = math.max(0, bought - soldN - listUp - seedUp)
 
 	local summaryText = bought == 0 and (want and ("Nothing bought yet - want %d"):format(want) or "Nothing bought yet")
 		or want and ("Bought %d of %d"):format(bought, want) or ("Bought %d"):format(bought)
-	-- Selling: how much of the cost sales have made back, on the bar.
 	local progress = want and math.min(1, bought / want) or nil
-	if selling and bought > 0 then
-		local paid = spent + seedLost + listLost
-		progress = paid > 0 and math.max(0, math.min(1, 1 - cover / paid)) or 1
-		summaryText = summaryText .. (cover <= 0 and " - paid back" or (" - %d%% paid back"):format(math.floor(progress * 100)))
-	end
 
-	-- This session
+	-- So far
 	if bought > 0 then
-		Add("This session", nil, nil, "header", Tip("This session", "Everything bought since you pressed Start session."))
-		Add("Average cost", nil, ns.Money(math.floor(avg + 0.5)) .. " each", nil, Tip("Average cost",
-			("What you've paid per item: %s for %d."):format(ns.Money(spent), bought)))
-		Add("Spent", nil, ns.Money(spent))
-		if seededN > 0 then
-			Add("Bought per seed", nil, ("%.1f"):format(bought / seededN), nil, Tip("Bought per seed",
-				("%d bought for %d seeded."):format(bought, seededN)))
+		Add("So far", nil, nil, "header", Tip("So far", "Since you pressed Start session."))
+		Add(("Bought %d at %s"):format(bought, ns.Money(math.floor(spent / bought + 0.5))), nil, Signed(-spent))
+	end
+	if soldN > 0 or seedUp > 0 or lost > 0 then
+		if bought == 0 then Add("Seeds", nil, nil, "header") end
+		if soldN > 0 then
+			Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", "After the 5% cut.",
+				seedSold > 0 and listSold > 0 and ("Seeds %d, listings %d."):format(seedSold, listSold) or nil))
 		end
-		if left > 0 then
-			Add("Break-even relist", nil, cover > 0 and (ns.Money(QB.RelistPrice(cover, left)) .. " each")
-				or (GREY .. "any price|r"), nil, Tip("Break-even relist",
-				((seeded or listed) and "The lowest price to list the %d left at and still make a profit after the 5%% cut, "
-					.. "sales counted." or "The lowest price to list all %d at and still make a profit after the 5%% cut.")
-					:format(left)))
+		if lost > 0 then
+			Add("Deposits lost", nil, Signed(-lost), nil, Tip("Deposits lost", "On cancelled or expired listings."))
 		end
+		if seedUp > 0 then Add(("Seeds up %d"):format(seedUp), nil, nil) end
+	end
+	if listUp > 0 then
+		Add(("Up now %d"):format(listUp), nil, GREY .. Signed(upIncome) .. "|r", nil, Tip("Up now", "If they sell."))
+	end
+	if bought > 0 then
+		local count = C_Item and C_Item.GetItemCount and C_Item.GetItemCount(id) or (GetItemCount and GetItemCount(id))
+		local away = count and math.max(0, have - count) or 0
+		Add(("Left %d"):format(have), nil, away > 0 and (GREY .. away .. " not in bags|r") or nil, nil,
+			away > 0 and Tip("Left", ("%d in your bags; the rest in the mail."):format(have - away)) or nil)
 	end
 
-	-- Resale price: automatic or your own (the row's two buttons), or the sell page's.
-	if typed then
-		Add("Resale price", GREY .. "sell page|r", ns.Money(typed), "price",
-			Tip("Resale price", "Your Unit Price on the sell page."))
-		lines[#lines].mode = "typed"
-	elseif target then
+	-- Resale price: automatic or your own (the row's two buttons).
+	if target then
 		Add("Resale price", CUSTOM .. "custom|r", CUSTOM .. ns.Money(target) .. "|r", "price",
 			Tip("Resale price", "Your own price.", live and ("Automatic would be %s%s: %s"):format(liveApprox and "~" or "",
 				ns.Money(live), AutoSource(liveApprox, selling):lower()) or "No listings loaded."))
@@ -159,150 +259,50 @@ local function Lines(id, selling)
 		lines[#lines].mode = "auto"
 	end
 
-	-- Seeds listed before buying any: what's up, sold and lost (with purchases,
-	-- they're weighed against what you paid, under What it's worth).
-	if bought == 0 and (seeded or seedUp > 0) then
-		Add("Seeds", nil, nil, "header")
-		if seedUp > 0 then Add("Still up", nil, tostring(seedUp)) end
-		if seedSold > 0 then
-			Add(("Sold %d"):format(seedSold), nil, ns.Money(seedIncome), nil, Tip("Sold", "After the 5% cut."))
-		end
-		if seedLost > 0 then
-			Add("Deposits lost", nil, Signed(-seedLost), nil, Tip("Deposits lost", "On cancelled or expired seeds."))
-		end
-	end
-
-	-- Selling: the amount on the sell page, at its Unit Price.
-	local qty = selling and typed and TypedQuantity()
-	if bought > 0 and qty then
-		local each = typed * cut - avg
-		Add("This listing", "each", "all " .. qty, "header", nil, "return")
-		Add("Profit", Signed(each), Signed(each * qty), nil, Tip("This listing",
-			("After the 5%% cut you get %s for %d; they cost you %s."):format(ns.Money(math.floor(typed * cut * qty)),
-				qty, ns.Money(math.floor(avg * qty + 0.5)))), ns.Percent(each / avg * 100))
-	end
-
-	-- Selling: toward making back what you spent, keeping the rest. A ledger:
-	-- spent, what's come in, what's up and this listing would bring in, overall.
-	if selling and bought > 0 then
-		local soldN, soldIncome = seedSold + listSold, seedIncome + listIncome
-		local lostAll = seedLost + listLost
-		local thisIncome = qty and math.floor(typed * cut * qty) or 0
-		-- What's in your bags: counted, so it includes any you had before buying
-		-- (seeds and listings from those come out of the bags, not what you bought).
-		-- Without a count: what you bought, less what's sold or up.
-		local count = C_Item and C_Item.GetItemCount and C_Item.GetItemCount(id) or (GetItemCount and GetItemCount(id))
-		local inBags = count or math.max(0, left - listUp - seedUp)
-		local keep = math.max(0, inBags - (qty or 0))
-		local result = upIncome + thisIncome - cover
-		Add("Break-even", nil, nil, "header", Tip("Break-even", "Making back what you spent, keeping the rest."))
-		Add(("Spent (%d bought)"):format(bought), nil, Signed(-spent))
-		if soldN > 0 then
-			Add(("Sold %d"):format(soldN), nil, Signed(soldIncome), nil, Tip("Sold",
-				"Your seeds and listings that sold, after the 5% cut."))
-		end
-		if lostAll > 0 then
-			Add("Deposits lost", nil, Signed(-lostAll), nil, Tip("Deposits lost", "On cancelled or expired seeds and listings."))
-		end
-		if listUp > 0 then
-			Add(("Still up %d"):format(listUp), nil, GREY .. Signed(upIncome) .. "|r", nil, Tip("Still up",
-				"Your listings not sold yet, if they sell, after the 5% cut."))
-		end
-		if qty then
-			Add(("This listing %d"):format(qty), nil, GREY .. Signed(thisIncome) .. "|r", nil, Tip("This listing",
-				"If it sells, after the 5% cut."))
-		end
-		Add("Overall", nil, Signed(result), nil, Tip("Overall",
-			(listUp > 0 or qty) and "If what's up and this listing sell." or "So far."))
-		Add(("Keeping %d"):format(keep), nil, (result >= 0 or keep == 0) and "free"
-			or (ns.Money(math.floor(-result / keep + 0.5)) .. " each"), nil, Tip("Keeping " .. keep,
-			"What's left in your bags" .. (qty and " after this listing." or "."),
-			result >= 0 and "Free: the rest pays for everything." or "What each costs you if the rest sells."))
-		-- How many to sell at this price to make back what you spent, with what's up.
+	-- If everything left sells at it (what's up at its own price): the profit,
+	-- the break-even price, and how many to sell to break even - the rest are
+	-- yours for free (for crafting).
+	local left = have + seedUp
+	if bought > 0 and sell and left + listUp > 0 then
 		local short = cover - upIncome
-		if typed and short > 0 then
-			local n = math.floor(short / (typed * cut)) + 1
-			while math.floor(typed * cut * n) <= short do n = n + 1 end
-			local after = ("Each sold after that: %s profit."):format(Signed(typed * cut))
-			if qty and n <= qty then
-				Add("Break even at", nil, ("%d of %d sold"):format(n, qty), nil, Tip("Break even at", after))
+		local total = math.floor(net * left) - short
+		Add(("Profit (all %d)"):format(left + listUp), nil, Signed(total), nil, Tip("Profit",
+			"If all you bought sells: what's left at this price, what's up at its own; after the 5% cut."),
+			ns.Percent(total / spent * 100))
+		if left > 0 then
+			Add("Break-even", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
+				nil, Tip("Break-even", ("The lowest price for the %d left to make back what you spent."):format(left)))
+		end
+		if have > 0 then
+			local n = 0
+			if short > 0 then
+				n = math.floor(short / net) + 1
+				while math.floor(net * n) <= short do n = n + 1 end
+			end
+			if n > have then
+				Add("Sell to break even", nil, GREY .. ("more than your %d"):format(have) .. "|r")
 			else
-				Add("To break even", nil, n <= inBags and ("list " .. n) or ("list " .. n .. GREY .. " (have " .. inBags .. ")|r"),
-					nil, Tip("To break even", ("How many to sell at %s to make back what you spent."):format(ns.Money(typed)), after))
+				Add("Sell to break even", nil, n > 0 and ("%d of %d"):format(n, have) or (GREY .. "paid back|r"))
+				Add("Then free to keep", nil, tostring(have - n), nil, Tip("Then free to keep", "Yours for nothing once those sell."))
 			end
 		end
+	elseif bought > 0 and not sell then
+		Add("No price to go by yet", nil, nil, "note")
 	end
 
-	-- What it's worth: each way of using what you've bought.
-	if bought > 0 then
-		-- Reselling what's left (seeds that sold are gone), at what it cost you
-		-- on average.
-		Add("What it's worth", "each", "all " .. left, "header", Tip("What it's worth",
-			"Profit on what you've bought, per item and in total."), "return")
-		local each = sell and net - avg
-		if each then
-			Add(resell, Signed(each), Signed(each * left), nil, Tip("Resell at " .. ns.Money(sell),
-				(left == bought and "After the 5%% cut you get %s for all %d; you paid %s."
-					or "After the 5%% cut you get %s for the %d left; they cost you %s."):format(
-					ns.Money(math.floor(net * left)), left, ns.Money(math.floor(avg * left + 0.5)))),
-				ns.Percent(each / avg * 100))
+	-- Next buy, at "Up to": is it worth it.
+	if not max then
+		Add("Next buy", nil, nil, "header")
+		Add("Set \"Up to\" to see", nil, nil, "note")
+	else
+		Add(("Next buy at %s"):format(ns.Money(max)), nil, nil, "header", Tip("Next buy", "At your \"Up to\" price."))
+		if sell then
+			local each = net - max
+			Add("Profit each", nil, Signed(each), nil, Tip("Profit each",
+				("Resold after the 5%% cut (%s), less your Up to."):format(ns.Money(net))), ns.Percent(each / max * 100))
+			Add("Buy per 1g profit", nil, each > 0 and tostring(math.ceil(10000 / each)) or (GREY .. "no profit|r"))
 		else
 			Add("No price to go by yet", nil, nil, "note")
-		end
-
-		-- Seeds: what the ones that sold brought in against what they cost you,
-		-- and deposits lost on the rest - then the profit with that counted.
-		if seeded then
-			local seedCost = avg * seedSold
-			local result = seedIncome - seedCost - seedLost
-			local seedEach = seedSold > 0 and (seedIncome / seedSold - avg) or nil
-			local tip = {}
-			if seedSold > 0 then
-				tip[#tip + 1] = ("%d sold for %s after the 5%% cut; they cost you %s (%s each)."):format(seedSold,
-					ns.Money(seedIncome), ns.Money(math.floor(seedCost + 0.5)), ns.Money(math.floor(avg + 0.5)))
-			end
-			if seedLost > 0 then
-				tip[#tip + 1] = ("Deposits lost on cancelled or expired seeds: %s."):format(ns.Money(seedLost))
-			end
-			Add(("Seeds (%d sold)"):format(seedSold), seedEach and Signed(seedEach), Signed(result), nil,
-				Tip("Seeds", unpack(tip)), seedEach and ns.Percent(seedEach / avg * 100))
-		end
-		-- Your listings: the same.
-		if listed then
-			local listResult = listIncome - avg * listSold - listLost
-			local listEach = listSold > 0 and (listIncome / listSold - avg) or nil
-			Add(("Listings (%d sold)"):format(listSold), listEach and Signed(listEach), Signed(listResult), nil,
-				Tip("Listings", ("%d sold for %s after the 5%% cut; they cost you %s."):format(listSold,
-					ns.Money(listIncome), ns.Money(math.floor(avg * listSold + 0.5))),
-					listLost > 0 and ("Deposits lost on cancelled or expired listings: %s."):format(ns.Money(listLost)) or nil),
-				listEach and ns.Percent(listEach / avg * 100))
-		end
-		if (seeded or listed) and each then
-			local total = each * left + seedIncome - avg * seedSold - seedLost + listIncome - avg * listSold - listLost
-			Add("Profit in all", nil, Signed(total), nil, Tip("Profit in all",
-				("Reselling the %d left, plus what's sold."):format(left)), ns.Percent(total / spent * 100))
-		end
-		if seedUp > 0 then
-			Add(("   %d in seeds still up - counted when they sell or end"):format(seedUp), nil, nil, "note")
-		end
-	end
-
-	-- Next buy, at "Up to".
-	if not selling then
-		Add("Next buy", nil, nil, "header", Tip("Next buy", "Profit per item at your \"Up to\" price."))
-		if not max then
-			Add("Set \"Up to\" to see", nil, nil, "note")
-		else
-			Add("Up to", nil, ns.Money(max))
-			if sell then
-				local money = (approx and "~" or "") .. ns.Money(sell)
-				Add(resell, nil, target and (CUSTOM .. money .. "|r") or money, nil,
-					Tip("Resell", target and "Your own price." or AutoSource(approx, selling)))
-				Add("Per unit", nil, Signed(net - max) .. " (" .. ns.Percent((net - max) / max * 100) .. ")", nil,
-					Tip("Per unit", ("Resell after the 5%% cut (%s), less your Up to."):format(ns.Money(net))))
-			else
-				Add("No price to go by yet", nil, nil, "note")
-			end
 		end
 	end
 
