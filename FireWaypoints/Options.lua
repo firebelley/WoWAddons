@@ -23,7 +23,7 @@ local function Build()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Shift-click the world map to drop a pin, click it to track it, shift-right-click to remove it. Your group sees your pins if "
-		.. "they have FireWaypoints. /fwp 45.2 60.1 drops one at those coordinates.")
+		.. "they have FireWaypoints, and your guild shows on the map. /fwp 45.2 60.1 drops one at those coordinates.")
 	y = y - 36
 
 	local function Checkbox(key, label, tooltip, onChange)
@@ -53,6 +53,9 @@ local function Build()
 		"Nearby pins where they are, further ones on the minimap's edge pointing the way.", ns.Changed)
 	Checkbox("share", "Share your pins with your group",
 		"Group members with FireWaypoints see your pins. You still see theirs either way.", ns.SharingChanged)
+	Checkbox("guild", "Show your guild on the map",
+		"Guild members with FireWaypoints show as dots on the map and minimap, and see where you are. Off: neither.",
+		function() ns.Guild.Changed() end)
 	y = y - 10
 
 	-- How big pins are on the minimap (the classic options slider look).

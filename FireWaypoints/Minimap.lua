@@ -42,6 +42,7 @@ end
 local function HideAll(from)
 	for i = from or 1, #pool do pool[i]:Hide() end
 	if not from and arrow then arrow:Hide() end
+	if not from and ns.Guild then ns.Guild.DrawMinimap(holder, nil) end
 end
 
 local function Update()
@@ -96,6 +97,7 @@ local function Update()
 	end)
 	HideAll(n + 1)
 	if not showArrow then arrow:Hide() end
+	if ns.Guild then ns.Guild.DrawMinimap(holder, map, px, py, perYard, cos, sin, half, scale) end
 end
 
 function Minimap_.Refresh()

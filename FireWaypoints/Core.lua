@@ -4,7 +4,8 @@
 -- your zone). Pins show on the world map and the minimap; click one to track it
 -- (an arrow on the minimap's edge points to it); shift-right-click one to
 -- remove it. Everyone in your group with FireWaypoints sees your pins (in your
--- class color, with your name), and you see theirs.
+-- class color, with your name), and you see theirs. Guild members with
+-- FireWaypoints show as dots on the map and minimap (Guild.lua).
 --
 -- Sharing: addon messages to the group. Each change is sent as it happens;
 -- anyone joining (or reloading) says hello and the others send their pins.
@@ -16,7 +17,7 @@ local PREFIX = "FireWP"
 local MAX_MESSAGE = 240
 local MAX_PER_PLAYER = 100
 local RETRY = 5           -- seconds before resending pins the game wouldn't send
-local DEFAULTS = { minimap = true, share = true, minimapScale = 1 }
+local DEFAULTS = { minimap = true, share = true, minimapScale = 1, guild = true }
 
 ns.mine = {}   -- [id] = pin, your pins (saved)
 ns.shared = {} -- [owner] = { [id] = pin }, other players' pins
@@ -415,16 +416,28 @@ local function Put(owner, id, pin)
 	list[id] = pin
 end
 
+-- An addon message's sender as a name, or nil for you (our own messages come
+-- back to us too).
+function ns.SenderKey(sender)
+	local from = Key(sender)
+	if not from then return nil end
+	me = me or UnitKey("player")
+	if me and Norm(from) == Norm(me) then return nil end
+	local okSelf, isSelf = pcall(UnitIsUnit, sender, "player")
+	if okSelf and isSelf and not IsSecret(isSelf) then return nil end
+	return from
+end
+
+-- Is this player in your group?
+function ns.InGroup(name)
+	return IsInGroup() and FindMember(Roster(), name) ~= nil
+end
+
 local function OnAddonMessage(prefix, text, _, sender)
 	if prefix ~= PREFIX then return end
 	if IsSecret(text) or IsSecret(sender) then return end
-	local from = Key(sender)
+	local from = ns.SenderKey(sender)
 	if not from then return end
-	-- Our own messages come back to us too.
-	me = me or UnitKey("player")
-	if me and Norm(from) == Norm(me) then return end
-	local okSelf, isSelf = pcall(UnitIsUnit, sender, "player")
-	if okSelf and isSelf and not IsSecret(isSelf) then return end
 	from = FindMember(Roster(), from) or from
 	local kind, a, b = strsplit("\t", text)
 	if ns.debug then ns.Print(("%s from %s"):format(tostring(kind), from)) end

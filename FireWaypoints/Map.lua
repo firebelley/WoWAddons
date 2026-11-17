@@ -156,6 +156,7 @@ function Map.Refresh()
 		end)
 	end
 	for i = n + 1, #pool do pool[i]:Hide() end
+	if ns.Guild then ns.Guild.DrawMap(canvas, map, scale, math.max(0, level - 1)) end -- under the pins
 end
 
 -- Shift-click: where the button went down (by the time it comes up, a click
