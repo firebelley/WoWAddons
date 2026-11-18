@@ -18,7 +18,7 @@ local DEFAULT_Y = 200
 
 local holder = CreateFrame("Frame", "FireProcsFrame", UIParent)
 holder:SetSize(WIDTH, LINE_HEIGHT)
-holder:SetFrameStrata("HIGH")
+holder:SetFrameStrata("LOW") -- with the buff icons: under windows
 holder:SetClampedToScreen(true)
 holder:SetMovable(true)
 holder:SetPoint("CENTER", UIParent, "CENTER", 0, DEFAULT_Y)
