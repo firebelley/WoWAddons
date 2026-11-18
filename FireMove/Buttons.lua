@@ -164,6 +164,25 @@ local function Update(b)
 	if GameTooltip:IsOwned(b) then b:GetScript("OnEnter")(b) end
 end
 
+-- Which of a bar's buttons show (empty ones hide): worked out once, on the
+-- next frame, however many slots changed. A bag sort changes dozens in one.
+local dirtyBars, barsQueued = {}, false
+local function UpdateBars()
+	barsQueued = false
+	for bar in pairs(dirtyBars) do
+		dirtyBars[bar] = nil
+		if bar.UpdateShownButtons then bar:UpdateShownButtons() end
+	end
+end
+local function BarChanged(bar)
+	if not bar then return end
+	dirtyBars[bar] = true
+	if not barsQueued then
+		barsQueued = true
+		C_Timer.After(0, UpdateBars)
+	end
+end
+
 -- Its slot (from its bar's page): changed, then the new one shown.
 local function Slot(b)
 	-- Until its bar gives it a page it'd read the main bar's: wait.
@@ -176,7 +195,7 @@ local function Slot(b)
 	b.rangeSlot = action
 	bySlot[action] = b
 	Update(b)
-	if b.bar and b.bar.UpdateShownButtons then b.bar:UpdateShownButtons() end
+	BarChanged(b.bar)
 end
 
 ---------------------------------------------------------------------------
@@ -334,13 +353,14 @@ for _, event in ipairs({
 end
 events:SetScript("OnEvent", function(_, event, a, b, c)
 	if event == "ACTIONBAR_SLOT_CHANGED" then
-		local button = bySlot[a]
-		if a == 0 or not button then
+		-- 0: all of them. Otherwise just ours, if it's one of ours.
+		if a == 0 then
 			Each(Update)
-		else
-			Update(button)
+			Each(function(btn) BarChanged(btn.bar) end)
+		elseif bySlot[a] then
+			Update(bySlot[a])
+			BarChanged(bySlot[a].bar)
 		end
-		Each(function(btn) if btn.bar and btn.bar.UpdateShownButtons then btn.bar:UpdateShownButtons() end end)
 	elseif event == "ACTION_RANGE_CHECK_UPDATE" then
 		local button = bySlot[a]
 		if button then UpdateRange(button, c, b) end
@@ -365,3 +385,9 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
 		Each(Update)
 	end
 end)
+
+-- TEMPORARY (Profile.lua)
+Update = ns.Timed("Button Update", Update)
+Slot = ns.Timed("Button Slot", Slot)
+flasher:SetScript("OnUpdate", ns.Timed("Button flash", flasher:GetScript("OnUpdate")))
+events:SetScript("OnEvent", ns.Timed("Buttons event", events:GetScript("OnEvent"), true))

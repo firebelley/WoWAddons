@@ -192,6 +192,12 @@ local function UpdateDividers(bar)
 		if not (ok and ok2) then return end
 		bar.dividers = { horizontal = horizontal, vertical = vertical }
 	end
+	-- Only redrawn when what they depend on changed.
+	local key = { tostring(bar.hideBarArt), bar.numRows, bar.buttonPadding, tostring(bar.isHorizontal) }
+	for _, b in ipairs(bar.actionButtons) do key[#key + 1] = b:IsShown() and "1" or "0" end
+	key = table.concat(key, ",")
+	if key == bar.dividerKey then return end
+	bar.dividerKey = key
 	local pools = bar.dividers
 	pools.horizontal:ReleaseAll()
 	pools.vertical:ReleaseAll()
@@ -724,3 +730,13 @@ events:SetScript("OnEvent", function(_, event, addon)
 		SetDragging(false)
 	end
 end)
+
+-- TEMPORARY (Profile.lua)
+Grids = ns.Timed("Grids", Grids)
+UpdateShownButtons = ns.Timed("Bar UpdateShownButtons", UpdateShownButtons)
+UpdateDividers = ns.Timed("Bar UpdateDividers", UpdateDividers)
+Apply = ns.Timed("Bar Apply", Apply)
+ApplyAll = ns.Timed("Bars ApplyAll", ApplyAll)
+ns.LayoutChanged = ApplyAll
+SetDragging = ns.Timed("SetDragging", SetDragging)
+events:SetScript("OnEvent", ns.Timed("Bars event", events:GetScript("OnEvent"), true))

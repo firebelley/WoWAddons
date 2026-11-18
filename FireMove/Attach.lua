@@ -459,3 +459,7 @@ events:SetScript("OnEvent", function()
 	if pending then Attach.Apply() end
 	Refresh()
 end)
+
+-- TEMPORARY (Profile.lua)
+Attach.Apply = ns.Timed("Attach.Apply", Attach.Apply)
+events:SetScript("OnEvent", ns.Timed("Attach event", events:GetScript("OnEvent"), true))

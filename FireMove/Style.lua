@@ -187,3 +187,6 @@ function Style.CreateRow(parent, getFrame, width)
 	r.Refresh()
 	return row, r
 end
+
+-- TEMPORARY (Profile.lua)
+Style.Apply = ns.Timed("Style.Apply", Style.Apply)
