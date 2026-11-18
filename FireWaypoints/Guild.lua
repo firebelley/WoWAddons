@@ -31,6 +31,7 @@ local members = {} -- [name] = { map, x, y, class, level, t }
 local last         -- what you last sent: { map, x, y, t }, or nil (nothing, or that you'd stopped)
 
 function Guild.On() return ns.db ~= nil and ns.db.guild ~= false end
+function Guild.Scale() return ns.db and ns.db.guildScale or 1 end
 
 local function Redraw()
 	if ns.Map and ns.Map.Refresh then ns.Map.Refresh() end
@@ -197,6 +198,7 @@ local mapPool, minimapPool = {}, {}
 -- On the world map's canvas (scale and level as its pins have them).
 function Guild.DrawMap(canvas, map, scale, level)
 	local w, h = canvas:GetWidth(), canvas:GetHeight()
+	local size = MAP_SIZE * Guild.Scale()
 	local n = 0
 	if map then
 		Guild.ForEach(function(name, m)
@@ -209,6 +211,7 @@ function Guild.DrawMap(canvas, map, scale, level)
 				mapPool[n] = f
 			end
 			SetDot(f, name, m)
+			f:SetSize(size, size)
 			f:SetScale(scale)
 			f:SetFrameLevel(level)
 			f:ClearAllPoints()
@@ -221,10 +224,10 @@ end
 
 -- On the minimap: only those on it (no edge dots). map nil: hide them all.
 -- cos, sin: the minimap's turn; perYard, half: its scale and radius.
-function Guild.DrawMinimap(holder, map, px, py, perYard, cos, sin, half, scale)
+function Guild.DrawMinimap(holder, map, px, py, perYard, cos, sin, half)
 	local n = 0
 	if map then
-		local size = MINIMAP_SIZE * (scale or 1)
+		local size = MINIMAP_SIZE * Guild.Scale()
 		local edge = half - size / 2
 		Guild.ForEach(function(name, m)
 			local dx, dy = ns.Offset(m, map, px, py)

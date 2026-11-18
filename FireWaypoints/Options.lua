@@ -58,9 +58,9 @@ local function Build()
 		function() ns.Guild.Changed() end)
 	y = y - 10
 
-	-- How big pins are on the minimap (the classic options slider look).
-	do
-		local key, label, min, max, step = "minimapScale", "Minimap pin size", 0.5, 3, 0.1
+	-- A size slider (the classic options slider look).
+	local function Slider(key, label, tooltip, onChange)
+		local min, max, step = 0.5, 3, 0.1
 		local function Format(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
 		local ok, s = pcall(CreateFrame, "Slider", nil, panel, "BackdropTemplate")
 		if not ok then s = CreateFrame("Slider", nil, panel) end
@@ -91,7 +91,7 @@ local function Build()
 			value:SetText(Format(v))
 			if loading or db[key] == v then return end
 			db[key] = v
-			ns.Changed()
+			onChange()
 		end)
 		s:SetScript("OnMouseWheel", function(self, delta)
 			self:SetValue(math.max(min, math.min(max, self:GetValue() + delta * step)))
@@ -99,7 +99,7 @@ local function Build()
 		s:SetScript("OnEnter", function(self)
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 			GameTooltip:SetText(label, 1, 1, 1)
-			GameTooltip:AddLine("How big pins are on the minimap, nearby and on its edge.", nil, nil, nil, true)
+			GameTooltip:AddLine(tooltip, nil, nil, nil, true)
 			GameTooltip:Show()
 		end)
 		s:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -111,6 +111,9 @@ local function Build()
 		end
 		y = y - 48
 	end
+
+	Slider("minimapScale", "Minimap pin size", "How big pins are on the minimap, nearby and on its edge.", ns.Changed)
+	Slider("guildScale", "Guild dot size", "How big guild members' dots are on the map and minimap.", ns.Changed)
 
 	local clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	clear:SetSize(140, 22)

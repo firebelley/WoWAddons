@@ -17,7 +17,7 @@ local PREFIX = "FireWP"
 local MAX_MESSAGE = 240
 local MAX_PER_PLAYER = 100
 local RETRY = 5           -- seconds before resending pins the game wouldn't send
-local DEFAULTS = { minimap = true, share = true, minimapScale = 1, guild = true }
+local DEFAULTS = { minimap = true, share = true, minimapScale = 1, guild = true, guildScale = 1 }
 
 ns.mine = {}   -- [id] = pin, your pins (saved)
 ns.shared = {} -- [owner] = { [id] = pin }, other players' pins

@@ -97,7 +97,7 @@ local function Update()
 	end)
 	HideAll(n + 1)
 	if not showArrow then arrow:Hide() end
-	if ns.Guild then ns.Guild.DrawMinimap(holder, map, px, py, perYard, cos, sin, half, scale) end
+	if ns.Guild then ns.Guild.DrawMinimap(holder, map, px, py, perYard, cos, sin, half) end
 end
 
 function Minimap_.Refresh()
