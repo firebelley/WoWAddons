@@ -147,21 +147,14 @@ local function BuildMain()
 
 	Header("Announcements")
 	Button("Test", "Show a sample announcement.", function() ns.Display.Test() end)
-	Button("Unlock / Lock", "Unlock, close this window and drag the announcements, then lock again.",
-		function()
-			local moving = ns.Display.ToggleMove()
-			if moving then ns.Display.Test() end
-			ns.Print(moving and "drag the blue box, then press Unlock / Lock again (or type /fprocs move)." or "position saved.")
-		end)
-	Button("Reset position", "Put the announcements back above your character.", function()
-		ns.Display.ResetPosition()
-	end)
 	EndButtons()
-	Slider("scale", "Size", "How big the announcements are.", 0.5, 2, 0.05,
-		function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end,
-		function() ns.Display.ApplyScale(true) end)
+	local where = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	where:SetPoint("TOPLEFT", 20, y + 6)
+	where:SetText("Move, size or hide them in Edit Mode.")
+	y = y - 18
 	Slider("hold", "Duration", "How long each announcement stays on screen before it fades.", 0.5, 5, 0.25,
 		function(v) return ("%.2g sec"):format(v) end)
+	if sliderX ~= 0 then sliderX, y = 0, y - 48 end -- a slider on its own
 	Checkbox("sound", "Play a sound", "Play the proc chime with each announcement.")
 	Checkbox("showIcons", "Show active proc icons",
 		"Show an icon with a timer below the announcements for as long as a proc buff lasts.", RefreshAuras)

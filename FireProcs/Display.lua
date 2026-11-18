@@ -26,10 +26,15 @@ holder:SetPoint("CENTER", UIParent, "CENTER", 0, DEFAULT_Y)
 ---------------------------------------------------------------------------
 -- Announcement lines
 ---------------------------------------------------------------------------
+local previewing -- in Edit Mode: a sample that stays until it closes
+
 local function LineOnUpdate(self, elapsed)
 	self.t = self.t + elapsed
 	local t, c = self.t, self.content
 	local HOLD = ns.db.hold or 1.5
+	if previewing and t >= POP then
+		self.t = POP -- (fades as usual once Edit Mode closes)
+	end
 	if t < POP then
 		local p = t / POP
 		c:SetScale(1.6 - 0.6 * p)
@@ -99,18 +104,18 @@ local function PickLine(key)
 	return oldest
 end
 
-local function Play(line)
+local function Play(line, silent)
 	line.t = 0
 	line.content:SetAlpha(0)
 	line:Show()
 	local now = GetTime()
-	if ns.db.sound and now - lastSound > 0.3 then
+	if ns.db.sound and not silent and now - lastSound > 0.3 then
 		lastSound = now
 		API.PlayAlertSound()
 	end
 end
 
-function Display.Alert(name, icon)
+function Display.Alert(name, icon, silent)
 	local line = PickLine(name)
 	line.key = name
 	local c = line.content
@@ -122,7 +127,7 @@ function Display.Alert(name, icon)
 		c.icon:Hide()
 	end
 	LayoutLine(c, icon ~= nil)
-	Play(line)
+	Play(line, silent)
 end
 
 ---------------------------------------------------------------------------
@@ -279,33 +284,26 @@ function Display.SetMissing(list)
 end
 
 ---------------------------------------------------------------------------
--- Moving
+-- Placed, sized and turned on or off in Edit Mode (EditMode.lua)
 ---------------------------------------------------------------------------
-local box = holder:CreateTexture(nil, "BACKGROUND")
-box:SetAllPoints()
-box:SetColorTexture(0.1, 0.4, 1, 0.35)
-box:Hide()
-local boxLabel = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-boxLabel:SetPoint("CENTER")
-boxLabel:SetText("FireProcs: drag to move, /fprocs move when done")
-boxLabel:Hide()
+Display.frame = holder
 
-holder:RegisterForDrag("LeftButton")
-holder:SetScript("OnDragStart", function(self) self:StartMoving() end)
-holder:SetScript("OnDragStop", function(self)
-	self:StopMovingOrSizing()
-	self:SetUserPlaced(false) -- we save the position ourselves
-	local point, _, relPoint, x, y = self:GetPoint()
-	ns.db.position = { point, relPoint, x, y }
-end)
+function Display.ApplyShown()
+	holder:SetShown(not ns.db.hidden)
+end
 
-local moving = false
-function Display.ToggleMove()
-	moving = not moving
-	holder:EnableMouse(moving)
-	box:SetShown(moving)
-	boxLabel:SetShown(moving)
-	return moving
+-- What it looks like, while Edit Mode is open.
+local SAMPLE = { name = "Clearcasting", icon = "Interface\\Icons\\Spell_Shadow_ManaBurn" }
+function Display.Preview(on)
+	previewing = on
+	if on then
+		Display.Alert(SAMPLE.name, SAMPLE.icon, true)
+		Display.SetAuras({ { name = SAMPLE.name, icon = SAMPLE.icon, count = 0 } })
+		Display.SetMissing({ { name = "Demon Armor", icon = "Interface\\Icons\\Spell_Shadow_RagingScream" } })
+	else
+		ns.SafeCall(ns.Auras.Update)
+		ns.SafeCall(ns.SelfBuffs.Update)
+	end
 end
 
 function Display.ApplyPosition()
@@ -359,4 +357,5 @@ end
 ns.On("PLAYER_LOGIN", function()
 	Display.ApplyScale(false)
 	Display.ApplyPosition()
+	Display.ApplyShown()
 end)

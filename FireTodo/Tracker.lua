@@ -114,6 +114,7 @@ local function Build()
 	more.text = more:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	more.text:SetPoint("LEFT", 20, 0)
 	more:SetScript("OnClick", function() ns.Window.Show() end)
+	tracker:Hide() -- until Refresh (it may be off)
 end
 
 function Tracker.Frame()

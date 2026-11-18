@@ -15,7 +15,6 @@ local function Help()
 	print("  /fprocs procs - open the list of procs (turn each on/off)")
 	print("  /fprocs buffs - open the list of buff reminders (turn each on/off)")
 	print("  /fprocs test - show a sample announcement")
-	print("  /fprocs move - unlock/lock the announcement position")
 	print("  /fprocs reset - put the announcements back in the default spot")
 	print("  /fprocs sound - turn the sound on/off (now " .. (ns.db.sound and "on" or "off") .. ")")
 	print("  /fprocs mute - stop announcing the last proc shown")
@@ -59,11 +58,10 @@ SlashCmdList.FIREPROCS = function(input)
 	elseif cmd == "test" then
 		ns.Display.Test()
 	elseif cmd == "move" then
-		local moving = ns.Display.ToggleMove()
-		if moving then ns.Display.Test() end
-		ns.Print(moving and "drag the blue box, then type /fprocs move again." or "position saved.")
+		ns.Print("move them in Edit Mode.")
 	elseif cmd == "reset" then
 		ns.Display.ResetPosition()
+		if ns.editMode then FireEditMode.Changed(ns.editMode) end
 		ns.Print("position reset.")
 	elseif cmd == "sound" then
 		db.sound = not db.sound

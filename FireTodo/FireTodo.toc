@@ -6,6 +6,7 @@
 ## Version: 0.1.0
 ## SavedVariables: FireTodoDB
 
+FireEditMode.lua
 Core.lua
 Window.lua
 Tracker.lua

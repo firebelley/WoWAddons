@@ -7,6 +7,7 @@
 ## SavedVariables: FireProcsDB
 ## SavedVariablesPerCharacter: FireProcsCharDB
 
+FireEditMode.lua
 Init.lua
 API.lua
 Spells.lua
@@ -20,4 +21,5 @@ Changes.lua
 Casts.lua
 Drain.lua
 Options.lua
+EditMode.lua
 Core.lua
