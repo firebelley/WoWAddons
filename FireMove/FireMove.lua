@@ -222,13 +222,53 @@ local function Snapshot()
 	for i, info in ipairs(Layouts() or {}) do names[i] = LayoutKey(info) end
 end
 
--- Every frame ever layered: on this layout's layer, or back on its own.
-local function ApplyLayers()
+local function Depth(frame)
+	local d, parent = 0, frame:GetParent()
+	while parent and d < 50 do
+		d, parent = d + 1, parent:GetParent()
+	end
+	return d
+end
+
+local ApplyLayers
+
+-- The game puts action bars back on their usual layer whenever the button
+-- grid shows or hides (on top while dragging a spell: left alone, it puts
+-- them back after). Then: ours again.
+local watched = {}
+local function Reapply(bar)
+	if bar:GetFrameStrata() ~= "TOOLTIP" then ApplyLayers() end
+end
+
+local function Watch(frame)
+	while frame and frame ~= UIParent and not watched[frame] do
+		watched[frame] = true
+		if frame.UpdateFrameStrata then hooksecurefunc(frame, "UpdateFrameStrata", Reapply) end
+		frame = frame:GetParent()
+	end
+end
+
+-- Every frame ever layered: on this layout's layer, or back on its own. A
+-- frame's layer carries to the frames inside it (the end caps are inside the
+-- main action bar): so the ones on their own first, then the layered ones,
+-- outer before inner.
+function ApplyLayers()
 	if not (LDB and layers) then return end
+	local list = {}
 	for key, own in pairs(LDB.own) do
 		local frame = Find(key)
-		if Usable(frame) then SetStrata(frame, layers[key] or own) end
+		if Usable(frame) then
+			Watch(frame)
+			if frame:GetFrameStrata() ~= "TOOLTIP" then
+				list[#list + 1] = { frame = frame, strata = layers[key] or own, set = layers[key] ~= nil, depth = Depth(frame) }
+			end
+		end
 	end
+	table.sort(list, function(a, b)
+		if a.set ~= b.set then return not a.set end
+		return a.depth < b.depth
+	end)
+	for _, e in ipairs(list) do SetStrata(e.frame, e.strata) end
 end
 
 -- The frame Edit Mode has selected (its settings are open).
@@ -278,10 +318,22 @@ end
 
 local function SetLayer(frame, strata)
 	local key = Key(frame)
-	local own = LDB.own[key] or frame:GetFrameStrata()
-	LDB.own[key] = own
-	layers[key] = strata ~= own and strata or nil
-	SetStrata(frame, strata)
+	-- The layered frame it's inside, if any: without a layer of its own, it has that one's.
+	local outer
+	local parent = frame:GetParent()
+	while parent and parent ~= UIParent do
+		local k = Usable(parent) and Key(parent)
+		if k and layers[k] and LDB.own[k] then
+			outer = k
+			break
+		end
+		parent = parent:GetParent()
+	end
+	-- Its own: what it has, unless that's from the layered frame it's inside.
+	LDB.own[key] = LDB.own[key] or (outer and LDB.own[outer]) or frame:GetFrameStrata()
+	local natural = outer and layers[outer] or LDB.own[key]
+	layers[key] = strata ~= natural and strata or nil
+	ApplyLayers()
 	UpdateBox()
 end
 
@@ -295,7 +347,11 @@ end
 local function Default()
 	local frame = Selected()
 	local key = frame and Key(frame)
-	if key and layers and layers[key] then SetLayer(frame, LDB.own[key]) end
+	if key and layers and layers[key] then
+		layers[key] = nil
+		ApplyLayers()
+		UpdateBox()
+	end
 end
 
 local function LayerButton(text, width, onClick, tip)
@@ -420,7 +476,8 @@ layerEvents:SetScript("OnEvent", function(_, event, addon)
 			HookEditMode()
 		end
 	elseif event == "PLAYER_REGEN_ENABLED" then
-		for frame, strata in pairs(layerPending) do SetStrata(frame, strata) end
+		wipe(layerPending)
+		ApplyLayers()
 		UpdateBox()
 	else
 		HookEditMode()
