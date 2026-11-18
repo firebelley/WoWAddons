@@ -6,8 +6,8 @@
 -- minute or more, plus spells of yours the game credits to your pet (Soul
 -- Link, which has no timer and drops when the pet dies or is dismissed), plus
 -- long buffs a spell of yours gives under another name (Demonic Sacrifice:
--- Touch of Shadow, Burning Wish... - alternatives to each other, and not
--- reminded when they go as you cast a spell, like summoning a demon). They're
+-- Touch of Shadow, Burning Wish... - alternatives to each other; gone as you
+-- cast a spell, like summoning a demon, just the icon, no alert). They're
 -- learned as you cast them, and each can be turned off in Options > AddOns >
 -- FireProcs > Buffs (or /fprocs buffs).
 --
@@ -395,9 +395,11 @@ local function Lost(name, info, old)
 		end
 	end
 	-- One a spell gave under another name, gone as you cast a spell (summoning
-	-- a demon ends Demonic Sacrifice's): on purpose.
+	-- a demon ends Demonic Sacrifice's): you did that, so no alert - but the
+	-- icon stays up until you have it again.
 	if from and Spells.RecentBookCast and Spells.RecentBookCast() then
-		return ns.Trace(("%s went as you cast %s: not reminding"):format(name, Spells.RecentBookCast()))
+		ns.Trace(("%s went as you cast %s: icon only"):format(name, Spells.RecentBookCast()))
+		return Remind(name, false)
 	end
 	if info.enchant then
 		if GetInventoryItemID("player", info.enchant) ~= info.item then
@@ -599,7 +601,10 @@ local function CheckAtLogin()
 	for name in pairs(ns.db.selfBuffs) do
 		local g = GroupOf(name)
 		-- Only your own spells: settings copied from another character can list theirs.
-		local yours = Spells.active[name] or (Entry(name).tracking and trackingKnown[name]) or Entry(name).enchant
+		-- (A buff a spell gives under another name: yours if that spell is.)
+		local e = Entry(name)
+		local yours = Spells.active[name] or (e.from and Spells.active[e.from])
+			or (e.tracking and trackingKnown[name]) or e.enchant
 		if Wants(name, false) and yours and not GroupPresent(g) and not groups[g] then
 			groups[g] = true
 			Remind(name, false)
