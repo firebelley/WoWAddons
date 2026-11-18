@@ -430,6 +430,35 @@ end
 -- What one of itemID is worth crafted into something (break-even price):
 -- { price = copper, output = itemID } for the best recipe, or nil (no saved
 -- recipe uses it, prices are missing, or crafting it never pays).
+-- What one costs to craft from a saved recipe of yours that makes it: each
+-- reagent at its cheapest (vendor or lowest buyout), per one made. nil if no
+-- recipe makes it, or a reagent has no price.
+function Crafting.CraftCost(itemID)
+	local best
+	for _, recipe in pairs(ns.db.recipes or {}) do
+		if recipe.o == itemID then
+			local total = 0
+			for _, slot in ipairs(recipe.r or {}) do
+				local cheapest
+				for i = 2, #slot do
+					local cost = ReagentCost(slot[i])
+					if cost and (not cheapest or cost < cheapest) then cheapest = cost end
+				end
+				if not cheapest then
+					total = nil
+					break
+				end
+				total = total + slot[1] * cheapest
+			end
+			if total then
+				local each = total / math.max(1, recipe.m or 1)
+				if not best or each < best then best = each end
+			end
+		end
+	end
+	return best
+end
+
 function Crafting.CraftWorth(itemID)
 	local best = Crafting.Uses(itemID)[1]
 	if best and best.worth and best.worth > 0 then return { price = best.worth, output = best.output } end
