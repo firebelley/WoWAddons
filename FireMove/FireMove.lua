@@ -9,6 +9,9 @@
 local DB -- FireMoveDB: [frame name] = { point, relativePoint, x, y }
 
 local made, waiting = {}, {}
+local home = {} -- [frame] = its points before any moving, for a reset
+-- Never moved: the Escape menu (too easy to drag by accident).
+local SKIP = { GameMenuFrame = true }
 
 local function Locked(frame)
 	return frame:IsProtected() and InCombatLockdown()
@@ -65,13 +68,16 @@ local function Grip(handle, frame)
 end
 
 local function Make(frame)
-	if made[frame] or not frame.GetName or not frame:GetName() then return end
+	if made[frame] or not frame.GetName or not frame:GetName() or SKIP[frame:GetName()] then return end
 	if frame.IsForbidden and frame:IsForbidden() then return end
 	if Locked(frame) then
 		waiting[frame] = true
 		return
 	end
 	made[frame] = true
+	local points = {}
+	for i = 1, frame:GetNumPoints() do points[i] = { frame:GetPoint(i) } end
+	home[frame] = points
 	frame:SetMovable(true)
 	frame:SetClampedToScreen(true)
 	frame:EnableMouse(true)
@@ -106,6 +112,7 @@ events:SetScript("OnEvent", function(_, event, addon)
 	if event == "ADDON_LOADED" and addon == "FireMove" then
 		FireMoveDB = FireMoveDB or {}
 		DB = FireMoveDB
+		for name in pairs(SKIP) do DB[name] = nil end
 	elseif event == "PLAYER_REGEN_ENABLED" then
 		-- Ones that couldn't be set up during combat.
 		for frame in pairs(waiting) do
@@ -119,12 +126,50 @@ events:SetScript("OnEvent", function(_, event, addon)
 	if DB then MakeAll() end
 end)
 
+-- Every window back where the game puts it, open ones too.
+local function Reset()
+	if not DB then return end
+	wipe(DB)
+	for frame, points in pairs(home) do
+		if #points > 0 and not Locked(frame) then
+			frame:ClearAllPoints()
+			for _, p in ipairs(points) do frame:SetPoint(unpack(p)) end
+		end
+	end
+	if UpdateUIPanelPositions then UpdateUIPanelPositions() end
+	print("|cffff8030FireMove|r: windows are back in their usual places.")
+end
+
+-- Options > AddOns > FireMove.
+local function BuildOptions()
+	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
+	local panel = CreateFrame("Frame")
+	panel:Hide()
+	local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", 16, -16)
+	title:SetText("FireMove")
+	local about = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	about:SetPoint("TOPLEFT", 16, -40)
+	about:SetPoint("RIGHT", -16, 0)
+	about:SetJustifyH("LEFT")
+	about:SetText("Drag any Blizzard window by an empty spot. It stays where you put it.")
+	local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	reset:SetSize(180, 22)
+	reset:SetPoint("TOPLEFT", 20, -70)
+	reset:SetText("Reset window positions")
+	reset:SetScript("OnClick", Reset)
+	local category = Settings.RegisterCanvasLayoutCategory(panel, "FireMove")
+	Settings.RegisterAddOnCategory(category)
+end
+
+local options = CreateFrame("Frame")
+options:RegisterEvent("PLAYER_LOGIN")
+options:SetScript("OnEvent", BuildOptions)
+
 SLASH_FIREMOVE1 = "/firemove"
 SlashCmdList.FIREMOVE = function(msg)
 	if msg and msg:lower():match("reset") then
-		wipe(DB)
-		if UpdateUIPanelPositions then UpdateUIPanelPositions() end
-		print("|cffff8030FireMove|r: windows go back to their usual places as they open (a /reload puts back any open now).")
+		Reset()
 	else
 		print("|cffff8030FireMove|r: drag any Blizzard window by an empty spot. /firemove reset puts them all back.")
 	end
