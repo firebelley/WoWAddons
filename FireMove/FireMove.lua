@@ -6,6 +6,10 @@
 -- shown with ShowUIPanel - including ones that load later). The game places
 -- panels itself whenever one opens or closes; a moved one is put back where
 -- you left it right after.
+--
+-- Layers: in Edit Mode, a box under the selected frame's settings brings it
+-- forward or sends it back, kept with the Edit Mode layout. /firemove layers
+-- puts this layout's back.
 local DB -- FireMoveDB: [frame name] = { point, relativePoint, x, y }
 
 local made, waiting = {}, {}
@@ -140,6 +144,290 @@ local function Reset()
 	print("|cffff8030FireMove|r: windows are back in their usual places.")
 end
 
+---------------------------------------------------------------------------
+-- Layers: in Edit Mode, a box under the selected frame's settings puts it in
+-- front of or behind other frames (its frame strata). Kept with the Edit Mode
+-- layout in use: switch layouts and the layers switch too; a new layout starts
+-- with the layers of the one it's made from. Never during combat: then once
+-- it ends.
+---------------------------------------------------------------------------
+local LAYERS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
+local LAYER_NAMES = { BACKGROUND = "Bottom", LOW = "Low", MEDIUM = "Middle", HIGH = "High", DIALOG = "Top" }
+-- FireMoveLayers: profiles = { [layout] = { [frame] = strata } },
+-- own = { [frame] = its own strata, before any change }
+local LDB
+local layers         -- the layout in use's { [frame] = strata }, once known
+local current, previous -- the layout in use, and the one before it
+local names = {}     -- [layout index] = layout key, to follow renames and deletes
+local layerPending = {} -- [frame] = strata, waiting for combat to end
+local box
+
+local function LayerIndex(strata)
+	for i, s in ipairs(LAYERS) do
+		if s == strata then return i end
+	end
+end
+
+-- How a frame is kept: its name, or for unnamed ones (the end caps) its Edit
+-- Mode system and index, "system:index".
+local function Key(frame)
+	local name = frame.GetName and frame:GetName()
+	if name then return name end
+	if type(frame.system) == "number" then return frame.system .. ":" .. (frame.systemIndex or "") end
+end
+
+local function Find(key)
+	local system, index = key:match("^(%d+):(%d*)$")
+	if not system then return _G[key] end
+	local manager = EditModeManagerFrame
+	if not (manager and manager.GetRegisteredSystemFrame) then return end
+	return manager:GetRegisteredSystemFrame(tonumber(system), tonumber(index))
+end
+
+local function Usable(frame)
+	return type(frame) == "table" and frame.SetFrameStrata and Key(frame)
+		and not (frame.IsForbidden and frame:IsForbidden())
+end
+
+local function SetStrata(frame, strata)
+	if Locked(frame) then
+		layerPending[frame] = strata
+		return
+	end
+	layerPending[frame] = nil
+	frame:SetFrameStrata(strata)
+end
+
+-- How a layout is kept: account-wide ones and presets by name, a character's
+-- own by character and name.
+local function LayoutKey(info)
+	if not (info and info.layoutName) then return end
+	local types = Enum and Enum.EditModeLayoutType or {}
+	if types.Character and info.layoutType == types.Character then
+		local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName and GetRealmName()) or ""
+		return "char:" .. (UnitName("player") or "") .. "-" .. realm .. ":" .. info.layoutName
+	elseif types.Preset and info.layoutType == types.Preset then
+		return "preset:" .. info.layoutName
+	end
+	return "account:" .. info.layoutName
+end
+
+local function Layouts()
+	local manager = EditModeManagerFrame
+	return manager and manager.layoutInfo and manager.layoutInfo.layouts
+end
+
+local function Snapshot()
+	wipe(names)
+	for i, info in ipairs(Layouts() or {}) do names[i] = LayoutKey(info) end
+end
+
+-- Every frame ever layered: on this layout's layer, or back on its own.
+local function ApplyLayers()
+	if not (LDB and layers) then return end
+	for key, own in pairs(LDB.own) do
+		local frame = Find(key)
+		if Usable(frame) then SetStrata(frame, layers[key] or own) end
+	end
+end
+
+-- The frame Edit Mode has selected (its settings are open).
+local function Selected()
+	local dialog = EditModeSystemSettingsDialog
+	local frame = dialog and dialog:IsShown() and dialog.attachedToSystem
+	if frame and Usable(frame) then return frame end
+end
+
+local function Strata(frame)
+	return layerPending[frame] or frame:GetFrameStrata()
+end
+
+local function UpdateBox()
+	if not box then return end
+	local frame = Selected()
+	if not (frame and layers) then return box:Hide() end
+	local strata = Strata(frame)
+	local i = LayerIndex(strata)
+	box.value:SetText("Layer: " .. (LAYER_NAMES[strata] or strata))
+	box.back:SetEnabled(i ~= nil and i > 1)
+	box.forward:SetEnabled(i ~= nil and i < #LAYERS)
+	box.default:SetEnabled(layers[Key(frame)] ~= nil)
+	box:Show()
+end
+
+-- The layout in use (Edit Mode just applied one): its layers.
+local function Switch()
+	if not LDB then return end
+	Snapshot()
+	local manager = EditModeManagerFrame
+	local key = LayoutKey(manager and manager.GetActiveLayoutInfo and manager:GetActiveLayoutInfo())
+	if not key then return end
+	if key ~= current then previous, current = current, key end
+	LDB.profiles[key] = LDB.profiles[key] or {}
+	layers = LDB.profiles[key]
+	-- Layers from before they were kept per layout: the first layout seen gets them.
+	if LDB.legacy then
+		for frame, strata in pairs(LDB.legacy) do
+			if layers[frame] == nil then layers[frame] = strata end
+		end
+		LDB.legacy = nil
+	end
+	ApplyLayers()
+	UpdateBox()
+end
+
+local function SetLayer(frame, strata)
+	local key = Key(frame)
+	local own = LDB.own[key] or frame:GetFrameStrata()
+	LDB.own[key] = own
+	layers[key] = strata ~= own and strata or nil
+	SetStrata(frame, strata)
+	UpdateBox()
+end
+
+local function Step(delta)
+	local frame = Selected()
+	local i = frame and layers and LayerIndex(Strata(frame))
+	local to = i and LAYERS[i + delta]
+	if to then SetLayer(frame, to) end
+end
+
+local function Default()
+	local frame = Selected()
+	local key = frame and Key(frame)
+	if key and layers and layers[key] then SetLayer(frame, LDB.own[key]) end
+end
+
+local function LayerButton(text, width, onClick, tip)
+	local b = CreateFrame("Button", nil, box, "UIPanelButtonTemplate")
+	b:SetSize(width, 22)
+	b:SetText(text)
+	b:SetScript("OnClick", onClick)
+	b:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+		GameTooltip:SetText(tip, 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	return b
+end
+
+local function CreateBox(dialog)
+	box = CreateFrame("Frame", "FireMoveLayerBox", UIParent, "BackdropTemplate")
+	box:SetSize(220, 64)
+	box:SetFrameStrata("DIALOG")
+	box:SetFrameLevel((dialog:GetFrameLevel() or 200) + 10)
+	box:SetClampedToScreen(true)
+	box:SetPoint("TOP", dialog, "BOTTOM", 0, -2)
+	box:SetBackdrop({
+		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+		tile = true, tileSize = 32, edgeSize = 16,
+		insets = { left = 4, right = 4, top = 4, bottom = 4 },
+	})
+	box.value = box:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	box.value:SetPoint("TOPLEFT", 14, -12)
+	box.default = LayerButton("Default", 70, Default, "Back to its usual layer")
+	box.default:SetPoint("TOPRIGHT", -10, -8)
+	box.back = LayerButton("Send back", 98, function() Step(-1) end, "Behind more frames")
+	box.back:SetPoint("BOTTOMLEFT", 10, 10)
+	box.forward = LayerButton("Bring forward", 98, function() Step(1) end, "In front of more frames")
+	box.forward:SetPoint("BOTTOMRIGHT", -10, 10)
+	box:Hide()
+end
+
+-- A layout renamed: its layers go with it.
+local function Renamed(_, index)
+	local old, new = names[index], LayoutKey((Layouts() or {})[index])
+	if old and new and old ~= new and LDB.profiles[old] then
+		LDB.profiles[new] = LDB.profiles[old]
+		LDB.profiles[old] = nil
+		if current == old then current = new end
+	end
+	Snapshot()
+end
+
+-- A layout deleted: its layers too.
+local function Deleted(_, index)
+	local old = names[index]
+	if old and LDB.profiles[old] and old ~= current then LDB.profiles[old] = nil end
+	Snapshot()
+end
+
+-- A new layout: the layers of the one it was made from (not for imports).
+local function Made(_, _, layoutType, layoutName, imported)
+	local key = LayoutKey({ layoutType = layoutType, layoutName = layoutName })
+	local from = current == key and previous or current
+	local source = from and LDB.profiles[from]
+	if imported or not key or not source or (LDB.profiles[key] and next(LDB.profiles[key])) then return end
+	local copy = {}
+	for frame, strata in pairs(source) do copy[frame] = strata end
+	LDB.profiles[key] = copy
+	if current == key then
+		layers = copy
+		ApplyLayers()
+		UpdateBox()
+	end
+end
+
+local hooked
+local function HookEditMode()
+	local dialog, manager = EditModeSystemSettingsDialog, EditModeManagerFrame
+	if hooked or not (dialog and dialog.AttachToSystemFrame and manager and manager.UpdateLayoutInfo) then return end
+	hooked = true
+	CreateBox(dialog)
+	hooksecurefunc(dialog, "AttachToSystemFrame", UpdateBox)
+	dialog:HookScript("OnHide", function() box:Hide() end)
+	hooksecurefunc(manager, "UpdateLayoutInfo", Switch)
+	if manager.RenameLayout then hooksecurefunc(manager, "RenameLayout", Renamed) end
+	if manager.DeleteLayout then hooksecurefunc(manager, "DeleteLayout", Deleted) end
+	if manager.MakeNewLayout then hooksecurefunc(manager, "MakeNewLayout", Made) end
+end
+
+-- This layout's frames back on their usual layers.
+local function ResetLayers()
+	if not layers then return end
+	wipe(layers)
+	ApplyLayers()
+	UpdateBox()
+	print("|cffff8030FireMove|r: frames are back on their usual layers in this layout.")
+end
+
+local layerEvents = CreateFrame("Frame")
+layerEvents:RegisterEvent("ADDON_LOADED")
+layerEvents:RegisterEvent("PLAYER_LOGIN")
+layerEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+layerEvents:RegisterEvent("PLAYER_REGEN_ENABLED")
+layerEvents:SetScript("OnEvent", function(_, event, addon)
+	if event == "ADDON_LOADED" then
+		if addon == "FireMove" then
+			FireMoveLayers = FireMoveLayers or {}
+			LDB = FireMoveLayers
+			-- Before layouts: { [frame] = { strata, own } }.
+			local old = {}
+			for key, saved in pairs(LDB) do
+				if type(saved) == "table" and type(saved[1]) == "string" then old[key] = saved end
+			end
+			LDB.profiles = LDB.profiles or {}
+			LDB.own = LDB.own or {}
+			for key, saved in pairs(old) do
+				LDB.legacy = LDB.legacy or {}
+				LDB.legacy[key] = saved[1]
+				LDB.own[key] = LDB.own[key] or saved[2]
+				LDB[key] = nil
+			end
+		elseif addon == "Blizzard_EditMode" then
+			HookEditMode()
+		end
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		for frame, strata in pairs(layerPending) do SetStrata(frame, strata) end
+		UpdateBox()
+	else
+		HookEditMode()
+		Switch()
+	end
+end)
+
 -- Options > AddOns > FireMove.
 local function BuildOptions()
 	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
@@ -152,12 +440,18 @@ local function BuildOptions()
 	about:SetPoint("TOPLEFT", 16, -40)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Drag any Blizzard window by an empty spot. It stays where you put it.")
+	about:SetText("Drag any Blizzard window by an empty spot. It stays where you put it. In Edit Mode, the Layer box "
+		.. "under a frame's settings puts it in front of or behind others, saved with the layout.")
 	local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	reset:SetSize(180, 22)
-	reset:SetPoint("TOPLEFT", 20, -70)
+	reset:SetPoint("TOPLEFT", 20, -76)
 	reset:SetText("Reset window positions")
 	reset:SetScript("OnClick", Reset)
+	local resetLayers = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	resetLayers:SetSize(180, 22)
+	resetLayers:SetPoint("LEFT", reset, "RIGHT", 8, 0)
+	resetLayers:SetText("Reset layers")
+	resetLayers:SetScript("OnClick", ResetLayers)
 	local category = Settings.RegisterCanvasLayoutCategory(panel, "FireMove")
 	Settings.RegisterAddOnCategory(category)
 end
@@ -168,9 +462,13 @@ options:SetScript("OnEvent", BuildOptions)
 
 SLASH_FIREMOVE1 = "/firemove"
 SlashCmdList.FIREMOVE = function(msg)
-	if msg and msg:lower():match("reset") then
+	msg = msg and msg:lower() or ""
+	if msg:match("layers") then
+		ResetLayers()
+	elseif msg:match("reset") then
 		Reset()
 	else
-		print("|cffff8030FireMove|r: drag any Blizzard window by an empty spot. /firemove reset puts them all back.")
+		print("|cffff8030FireMove|r: drag any Blizzard window by an empty spot. /firemove reset puts them all back; "
+			.. "/firemove layers puts this Edit Mode layout's frames back on their usual layers.")
 	end
 end
