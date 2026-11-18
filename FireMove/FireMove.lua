@@ -10,12 +10,17 @@
 -- Layers: in Edit Mode, a box under the selected frame's settings brings it
 -- forward or sends it back, kept with the Edit Mode layout. /firemove layers
 -- puts this layout's back.
+--
+-- Extra action bars: see Bars.lua.
+local _, ns = ...
 local DB -- FireMoveDB: [frame name] = { point, relativePoint, x, y }
 
 local made, waiting = {}, {}
 local home = {} -- [frame] = its points before any moving, for a reset
--- Never moved: the Escape menu (too easy to drag by accident).
-local SKIP = { GameMenuFrame = true }
+-- Never moved: the Escape menu (too easy to drag by accident), and Edit
+-- Mode's window (the game moves it itself; placing it from an addon taints
+-- leaving Edit Mode, and the game blocks that).
+local SKIP = { GameMenuFrame = true, EditModeManagerFrame = true }
 
 local function Locked(frame)
 	return frame:IsProtected() and InCombatLockdown()
@@ -154,7 +159,8 @@ end
 local LAYERS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
 local LAYER_NAMES = { BACKGROUND = "Bottom", LOW = "Low", MEDIUM = "Middle", HIGH = "High", DIALOG = "Top" }
 -- FireMoveLayers: profiles = { [layout] = { [frame] = strata } },
--- own = { [frame] = its own strata, before any change }
+-- own = { [frame] = its own strata, before any change },
+-- bars = { [layout] = { [bar] = its settings } } (Bars.lua)
 local LDB
 local layers         -- the layout in use's { [frame] = strata }, once known
 local current, previous -- the layout in use, and the one before it
@@ -314,7 +320,11 @@ local function Switch()
 	end
 	ApplyLayers()
 	UpdateBox()
+	if ns.LayoutChanged then ns.LayoutChanged() end
 end
+
+-- The layout in use, as it's kept (nil until known).
+function ns.Layout() return current end
 
 local function SetLayer(frame, strata)
 	local key = Key(frame)
@@ -335,6 +345,7 @@ local function SetLayer(frame, strata)
 	layers[key] = strata ~= natural and strata or nil
 	ApplyLayers()
 	UpdateBox()
+	ns.Changed()
 end
 
 local function Step(delta)
@@ -351,6 +362,7 @@ local function Default()
 		layers[key] = nil
 		ApplyLayers()
 		UpdateBox()
+		ns.Changed()
 	end
 end
 
@@ -392,37 +404,195 @@ local function CreateBox(dialog)
 	box:Hide()
 end
 
--- A layout renamed: its layers go with it.
+local function DeepCopy(t)
+	local copy = {}
+	for k, v in pairs(t) do copy[k] = type(v) == "table" and DeepCopy(v) or v end
+	return copy
+end
+
+---------------------------------------------------------------------------
+-- Unsaved changes: as with the game's own frames, what's changed in Edit
+-- Mode (layers, the extra bars) is kept by Save, and put back by Revert All
+-- Changes or by leaving without saving. Changes made outside Edit Mode are
+-- kept at once.
+---------------------------------------------------------------------------
+local saved -- as last saved: { profiles, bars, char }
+local stash -- as it was just before a revert (a new layout made from unsaved changes gets them)
+local dirty
+
+local function Editing()
+	local manager = EditModeManagerFrame
+	return manager and manager.IsEditModeActive and manager:IsEditModeActive() and true or false
+end
+
+local function Now()
+	return {
+		profiles = DeepCopy(LDB.profiles),
+		bars = DeepCopy(LDB.bars),
+		char = DeepCopy(ns.CharBars and ns.CharBars() or {}),
+	}
+end
+
+-- The game's Save and Revert buttons: on while anything's unsaved, ours too.
+local function SyncButtons()
+	local manager = EditModeManagerFrame
+	if not (manager and manager.HasActiveChanges) then return end
+	local on = dirty or manager:HasActiveChanges() and true or false
+	if manager.SaveChangesButton then manager.SaveChangesButton:SetEnabled(on) end
+	if manager.RevertAllChangesButton then manager.RevertAllChangesButton:SetEnabled(on) end
+end
+
+-- Saved: what's there now. Presets can't be saved: theirs stay as they were.
+local function Commit()
+	if not LDB then return end
+	local now = Now()
+	if saved then
+		for _, name in ipairs({ "profiles", "bars" }) do
+			for key in pairs(now[name]) do
+				if key:match("^preset:") then now[name][key] = nil end
+			end
+			for key, value in pairs(saved[name]) do
+				if key:match("^preset:") then now[name][key] = DeepCopy(value) end
+			end
+		end
+	end
+	saved = now
+	dirty = false
+	SyncButtons()
+end
+
+local function Restore(from)
+	LDB.profiles = DeepCopy(from.profiles)
+	LDB.bars = DeepCopy(from.bars)
+	if ns.SetCharBars then ns.SetCharBars(DeepCopy(from.char)) end
+	layers = nil
+	Switch()
+end
+
+-- Something of ours changed: unsaved while in Edit Mode, else kept.
+function ns.Changed()
+	if Editing() then
+		dirty = true
+		SyncButtons()
+	else
+		Commit()
+	end
+end
+
+-- A bar's settings in this layout as last saved.
+function ns.SavedBar(n)
+	local layout = saved and current and saved.bars[current]
+	return layout and layout[n]
+end
+
+-- Left Edit Mode with only our changes unsaved (the game didn't ask): ask.
+-- Our own box, not the game's popups: writing to those taints the Escape key.
+local ask
+local function Ask(unsaved)
+	if not ask then
+		ask = CreateFrame("Frame", "FireMoveUnsaved", UIParent, "BackdropTemplate")
+		ask:SetSize(330, 96)
+		ask:SetPoint("TOP", 0, -135)
+		ask:SetFrameStrata("DIALOG")
+		ask:EnableMouse(true)
+		ask:SetBackdrop({
+			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+			tile = true, tileSize = 32, edgeSize = 32,
+			insets = { left = 11, right = 12, top = 12, bottom = 11 },
+		})
+		local text = ask:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		text:SetPoint("TOP", 0, -22)
+		text:SetWidth(290)
+		text:SetText("Save your changes to FireMove's action bars and layers?")
+		local save = CreateFrame("Button", nil, ask, "UIPanelButtonTemplate")
+		save:SetSize(120, 22)
+		save:SetPoint("BOTTOMRIGHT", ask, "BOTTOM", -6, 18)
+		save:SetText(SAVE or "Save")
+		save:SetScript("OnClick", function()
+			ask:Hide()
+			Restore(ask.unsaved)
+			Commit()
+		end)
+		local discard = CreateFrame("Button", nil, ask, "UIPanelButtonTemplate")
+		discard:SetSize(120, 22)
+		discard:SetPoint("BOTTOMLEFT", ask, "BOTTOM", 6, 18)
+		discard:SetText("Discard")
+		discard:SetScript("OnClick", function() ask:Hide() end)
+	end
+	ask.unsaved = unsaved
+	ask:Show()
+end
+
+-- Revert All Changes, or leaving Edit Mode (the game reverts what's unsaved).
+local function Reverted()
+	if not (LDB and saved) then return end
+	local exiting = not Editing()
+	local before = dirty and Now()
+	stash = before or nil
+	if stash then C_Timer.After(0, function() stash = nil end) end
+	local unsavedDialog = EditModeUnsavedChangesDialog
+	local asking = exiting and before and not (unsavedDialog and unsavedDialog:IsShown())
+	dirty = false
+	Restore(saved)
+	SyncButtons()
+	if asking then Ask(before) end
+end
+
+-- What's kept per layout: layers, and the extra bars' settings (as they are, and as saved).
+local function Stores()
+	local list = { LDB.profiles, LDB.bars }
+	if saved then
+		list[#list + 1] = saved.profiles
+		list[#list + 1] = saved.bars
+	end
+	return list
+end
+
+-- A layout renamed: its layers and bars go with it.
 local function Renamed(_, index)
 	local old, new = names[index], LayoutKey((Layouts() or {})[index])
-	if old and new and old ~= new and LDB.profiles[old] then
-		LDB.profiles[new] = LDB.profiles[old]
-		LDB.profiles[old] = nil
+	if old and new and old ~= new then
+		for _, store in ipairs(Stores()) do
+			if store[old] then
+				store[new] = store[old]
+				store[old] = nil
+			end
+		end
 		if current == old then current = new end
 	end
 	Snapshot()
 end
 
--- A layout deleted: its layers too.
+-- A layout deleted: its layers and bars too.
 local function Deleted(_, index)
 	local old = names[index]
-	if old and LDB.profiles[old] and old ~= current then LDB.profiles[old] = nil end
+	if old and old ~= current then
+		for _, store in ipairs(Stores()) do store[old] = nil end
+	end
 	Snapshot()
 end
 
--- A new layout: the layers of the one it was made from (not for imports).
+-- A new layout: the layers and bars of the one it was made from, unsaved
+-- changes and all (not for imports). It's saved.
 local function Made(_, _, layoutType, layoutName, imported)
 	local key = LayoutKey({ layoutType = layoutType, layoutName = layoutName })
 	local from = current == key and previous or current
-	local source = from and LDB.profiles[from]
-	if imported or not key or not source or (LDB.profiles[key] and next(LDB.profiles[key])) then return end
-	local copy = {}
-	for frame, strata in pairs(source) do copy[frame] = strata end
-	LDB.profiles[key] = copy
-	if current == key then
-		layers = copy
+	if imported or not key or not from then return end
+	local changed
+	for _, name in ipairs({ "profiles", "bars" }) do
+		local source = (stash or LDB)[name][from]
+		if source and not (LDB[name][key] and next(LDB[name][key])) then
+			LDB[name][key] = DeepCopy(source)
+			if saved then saved[name][key] = DeepCopy(source) end
+			changed = true
+		end
+	end
+	if changed and current == key then
+		layers = LDB.profiles[key] or layers
 		ApplyLayers()
 		UpdateBox()
+		if ns.LayoutChanged then ns.LayoutChanged() end
 	end
 end
 
@@ -438,6 +608,12 @@ local function HookEditMode()
 	if manager.RenameLayout then hooksecurefunc(manager, "RenameLayout", Renamed) end
 	if manager.DeleteLayout then hooksecurefunc(manager, "DeleteLayout", Deleted) end
 	if manager.MakeNewLayout then hooksecurefunc(manager, "MakeNewLayout", Made) end
+	if manager.PrepareSystemsForSave then hooksecurefunc(manager, "PrepareSystemsForSave", Commit) end
+	if manager.RevertAllChanges then hooksecurefunc(manager, "RevertAllChanges", Reverted) end
+	if manager.SetHasActiveChanges then hooksecurefunc(manager, "SetHasActiveChanges", SyncButtons) end
+	if EventRegistry then
+		EventRegistry:RegisterCallback("EditMode.Enter", function() if ask then ask:Hide() end end, {})
+	end
 end
 
 -- This layout's frames back on their usual layers.
@@ -446,6 +622,7 @@ local function ResetLayers()
 	wipe(layers)
 	ApplyLayers()
 	UpdateBox()
+	ns.Changed()
 	print("|cffff8030FireMove|r: frames are back on their usual layers in this layout.")
 end
 
@@ -466,6 +643,8 @@ layerEvents:SetScript("OnEvent", function(_, event, addon)
 			end
 			LDB.profiles = LDB.profiles or {}
 			LDB.own = LDB.own or {}
+			LDB.bars = LDB.bars or {}
+			LDB.dump = nil -- from a one-off look at the buttons' frames
 			for key, saved in pairs(old) do
 				LDB.legacy = LDB.legacy or {}
 				LDB.legacy[key] = saved[1]
@@ -482,6 +661,7 @@ layerEvents:SetScript("OnEvent", function(_, event, addon)
 	else
 		HookEditMode()
 		Switch()
+		if not saved then Commit() end -- as loaded: saved
 	end
 end)
 
@@ -498,7 +678,8 @@ local function BuildOptions()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Drag any Blizzard window by an empty spot. It stays where you put it. In Edit Mode, the Layer box "
-		.. "under a frame's settings puts it in front of or behind others, saved with the layout.")
+		.. "under a frame's settings puts it in front of or behind others, saved with the layout. "
+		.. "\"New action bar\" under the Edit Mode window adds more bars.")
 	local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	reset:SetSize(180, 22)
 	reset:SetPoint("TOPLEFT", 20, -76)

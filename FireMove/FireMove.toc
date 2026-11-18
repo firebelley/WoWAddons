@@ -1,9 +1,13 @@
 ## Interface: 16001
 ## Title: FireMove
-## Notes: Drag Blizzard's windows anywhere. They stay where you put them. In Edit Mode, bring frames forward or send them back.
+## Notes: Drag Blizzard's windows anywhere. They stay where you put them. In Edit Mode, bring frames forward or send them back, and add more action bars.
 ## IconTexture: Interface\Icons\Ability_Rogue_Sprint
 ## Author: Firebelley
 ## Version: 0.1.0
 ## SavedVariables: FireMoveDB, FireMoveLayers
+## SavedVariablesPerCharacter: FireMoveBarsChar
 
 FireMove.lua
+Bars.xml
+Buttons.lua
+Bars.lua

@@ -1,0 +1,18 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- An extra action bar: the game's bar, and buttons with the game's look (Bars.lua, Buttons.lua).
+	     Not the game's full action button: that one registers in lists the game's bars share.
+	     The secure template last: its click (use the action) over the look's (open a flyout). -->
+	<CheckButton name="FireMoveActionButtonTemplate" inherits="ActionButtonTemplate, SecureActionButtonTemplate" virtual="true"/>
+
+	<Frame name="FireMoveBarTemplate" inherits="ActionBarTemplate" frameStrata="MEDIUM" virtual="true">
+		<Size x="454" y="45"/>
+		<KeyValues>
+			<KeyValue key="buttonTemplate" value="FireMoveActionButtonTemplate" type="string"/>
+			<KeyValue key="numButtons" value="12" type="number"/>
+			<KeyValue key="numRows" value="1" type="number"/>
+			<KeyValue key="isHorizontal" value="true" type="boolean"/>
+			<KeyValue key="addButtonsToRight" value="true" type="boolean"/>
+			<KeyValue key="addButtonsToTop" value="true" type="boolean"/>
+		</KeyValues>
+	</Frame>
+</Ui>
