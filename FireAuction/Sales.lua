@@ -77,6 +77,42 @@ local function ItemName(id)
 end
 
 ---------------------------------------------------------------------------
+-- Deposits: each listing's, per item, as what comes back when it sells (its
+-- share, with the sale's mail). The game's, from when you post it; one you
+-- didn't post here: what the game would ask for it, at the shortest time it
+-- can have been listed for. c.deposits[auctionID] = { each, at }.
+---------------------------------------------------------------------------
+local DEPOSIT_KEEP = 4 * 86400
+local COMMODITY = Enum and Enum.ItemCommodityStatus and Enum.ItemCommodityStatus.Commodity or 2
+
+local function NoteDeposit(c, auctionID, each)
+	if not (auctionID and type(each) == "number") then return end
+	c.deposits = c.deposits or {}
+	c.deposits[auctionID] = { each = each, at = time() }
+end
+
+-- What comes back with qty of it sold; nil if unknown.
+local function Back(c, auctionID, qty)
+	local d = c.deposits and auctionID and c.deposits[auctionID]
+	if not (d and qty) then return nil end
+	return math.floor(d.each * qty + 0.5)
+end
+
+local function GuessEach(id, qty, left)
+	if not (id and qty and qty > 0 and AH and AH.CalculateCommodityDeposit) then return nil end
+	if AH.GetItemCommodityStatus then
+		local ok, status = pcall(AH.GetItemCommodityStatus, id)
+		if not (ok and status == COMMODITY) then return nil end
+	elseif qty < 2 then
+		return nil
+	end
+	local index = 1
+	while left and index < 3 and ns.DurationSeconds(index) < left do index = index + 1 end
+	local ok, d = pcall(AH.CalculateCommodityDeposit, id, index, qty)
+	return ok and type(d) == "number" and d / qty or nil
+end
+
+---------------------------------------------------------------------------
 -- Your listings
 ---------------------------------------------------------------------------
 local STATUS_SOLD = Enum and Enum.AuctionStatus and Enum.AuctionStatus.Sold or 1
@@ -89,11 +125,15 @@ local BANDS = { [0] = { 0, 1800 }, [1] = { 1800, 7200 }, [2] = { 7200, 43200 }, 
 -- stack), and adds ones FireAuction didn't see. Each row is used once.
 local function ReadSold(c, rows, now, house)
 	for _, r in ipairs(rows) do
-		local used = false
+		local used
 		for _, s in ipairs(c.sales) do
-			if s.soldKey == r.key then used = true break end
+			if s.soldKey == r.key then used = s break end
 		end
-		if not used then
+		if used then
+			-- Read before its deposit was known.
+			local back = not used.exact and used.net and not used.back and Back(c, r.auction, r.qty)
+			if back then used.back, used.net = back, used.net + back end
+		else
 			-- The sale it belongs to: one with the count unknown at that price,
 			-- then the same count, then any with the count unknown.
 			local match
@@ -116,7 +156,8 @@ local function ReadSold(c, rows, now, house)
 			if r.total and r.total > 0 then
 				s.unit = math.floor(r.total / r.qty + 0.5)
 				s.gross = r.total
-				s.net = math.floor(r.total * (1 - AH_CUT))
+				s.back = Back(c, r.auction, r.qty)
+				s.net = math.floor(r.total * (1 - AH_CUT)) + (s.back or 0)
 			end
 			ns.Debug(("sold row: %s x%d %s"):format(r.name, r.qty, match and "(filled in a sale)" or "(new sale)"))
 		end
@@ -135,8 +176,9 @@ local function ReadOwned()
 			local id = a.itemKey and a.itemKey.itemID
 			local link = a.itemLink
 			local qty = a.quantity or 1
+			if not Back(c, a.auctionID, qty) then NoteDeposit(c, a.auctionID, GuessEach(id, qty)) end
 			sold[#sold + 1] = {
-				key = a.auctionID .. ":" .. qty, qty = qty, id = id, link = link,
+				key = a.auctionID .. ":" .. qty, qty = qty, id = id, link = link, auction = a.auctionID,
 				name = (link and link:match("%[(.-)%]")) or ItemName(id),
 				total = (a.buyoutAmount and a.buyoutAmount > 0 and a.buyoutAmount) or a.bidAmount,
 			}
@@ -155,6 +197,9 @@ local function ReadOwned()
 			elseif band then
 				entry.endsMin, entry.endsMax = now + band[1], now + band[2]
 			end
+			if not Back(c, a.auctionID, 1) then
+				NoteDeposit(c, a.auctionID, GuessEach(id, entry.qty, a.timeLeftSeconds or (band and band[1])))
+			end
 			fresh[a.auctionID] = entry
 		end
 	end
@@ -167,6 +212,9 @@ local function ReadOwned()
 		end
 	end
 	for k, v in pairs(fresh) do c.owned[k] = v end
+	for k, d in pairs(c.deposits or {}) do
+		if now - (d.at or 0) > DEPOSIT_KEEP then c.deposits[k] = nil end
+	end
 	ReadSold(c, sold, now, house)
 	-- A sale from here with no Sold row left: its mail has been sent.
 	if full then
@@ -209,18 +257,25 @@ end)
 -- What you just posted, so a listing is remembered even if you close the
 -- auction house before it's listed for you again.
 local lastPost
-local function Posted(item, duration, quantity, unit)
+local function Posted(item, duration, quantity, unit, commodity)
 	lastPost = nil
 	local ok, id, link = pcall(function()
 		return C_Item.GetItemID(item), C_Item.GetItemLink(item)
 	end)
 	if not (ok and id and quantity and unit) then return end
-	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = ns.DurationSeconds(duration), at = time() }
+	local okD, deposit
+	if commodity then
+		okD, deposit = pcall(AH.CalculateCommodityDeposit, id, duration, quantity)
+	elseif AH.CalculateItemDeposit then
+		okD, deposit = pcall(AH.CalculateItemDeposit, item, duration, quantity)
+	end
+	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = ns.DurationSeconds(duration), at = time(),
+		each = okD and type(deposit) == "number" and quantity > 0 and deposit / quantity or nil }
 end
 if AH and hooksecurefunc then
 	if AH.PostCommodity then
 		hooksecurefunc(AH, "PostCommodity", function(item, duration, quantity, unitPrice)
-			Posted(item, duration, quantity, unitPrice)
+			Posted(item, duration, quantity, unitPrice, true)
 			-- Read your auctions again shortly: the game doesn't always say
 			-- the auction was created (AUCTION_HOUSE_AUCTION_CREATED, below).
 			QueryOwned(2)
@@ -240,6 +295,7 @@ end
 ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	local c, p = Char(), lastPost
 	lastPost = nil
+	if c and auctionID and p and time() - p.at < 60 then NoteDeposit(c, auctionID, p.each) end
 	if c and auctionID and p and not c.owned[auctionID] and time() - p.at < 60 then
 		local now = time()
 		c.owned[auctionID] = {
@@ -275,11 +331,12 @@ end
 
 -- Your listings still for sale, soonest to end first. Ones past their end
 -- have expired (back to you by mail) and are forgotten. Returns the list,
--- the buyout total, and when the auction house last showed them.
+-- the buyout total, when the auction house last showed them, and the
+-- deposits that come back if they sell.
 function Sales.Listings()
 	local c = Char()
-	local list, total, seen = {}, 0, nil
-	if not c then return list, 0 end
+	local list, total, seen, back = {}, 0, nil, 0
+	if not c then return list, 0, nil, 0 end
 	local now = time()
 	for auctionID, a in pairs(c.owned) do
 		local left = EndsIn(a, now)
@@ -288,6 +345,7 @@ function Sales.Listings()
 		else
 			list[#list + 1] = a
 			total = total + (ListingPrice(a) or 0)
+			back = back + (Back(c, auctionID, a.qty or 1) or 0)
 			if a.seen and (not seen or a.seen < seen) then seen = a.seen end
 		end
 	end
@@ -296,7 +354,7 @@ function Sales.Listings()
 		if la ~= lb then return la < lb end
 		return (a.name or "") < (b.name or "")
 	end)
-	return list, total, seen
+	return list, total, seen, back
 end
 
 local function Duration(sec)
@@ -329,13 +387,13 @@ local function ListingRight(a, now)
 	return right
 end
 
--- Returns what they'd bring in if all sold (after the cut), or nil if nothing's listed.
+-- Returns what they'd bring in if all sold (after the cut, deposits back), or nil if nothing's listed.
 function Sales.AddListings(tooltip, max)
-	local list, total = Sales.Listings()
+	local list, total, _, back = Sales.Listings()
 	local n = #list
 	if n == 0 then return nil end
 	local now = time()
-	local net = math.floor(total * (1 - AH_CUT))
+	local net = math.floor(total * (1 - AH_CUT)) + back
 	local partSold = false
 	for _, a in ipairs(list) do if a.partSold then partSold = true end end
 	tooltip:AddLine(" ")
@@ -349,14 +407,14 @@ function Sales.AddListings(tooltip, max)
 end
 
 function Sales.PrintListings()
-	local list, total, seen = Sales.Listings()
+	local list, total, seen, back = Sales.Listings()
 	if #list == 0 then
 		ns.Print("you have nothing listed (as of your last visit to the auction house).")
 		return
 	end
 	local now = time()
 	ns.Print(("%d auction%s listed, %s if all sell%s:"):format(#list, #list == 1 and "" or "s",
-		ns.Money(math.floor(total * (1 - AH_CUT))),
+		ns.Money(math.floor(total * (1 - AH_CUT)) + back),
 		seen and (" |cff999999(as of the auction house " .. ns.TimeAgo(seen) .. ")|r") or ""))
 	for _, a in ipairs(list) do
 		print("  " .. ListingText(a) .. " - " .. ListingRight(a, now))
@@ -523,7 +581,8 @@ local function Sold(name, auctionID, auction)
 			s.qty = 1
 			if unit and unit > 0 then
 				s.gross = unit
-				s.net = math.floor(unit * (1 - AH_CUT))
+				s.back = Back(c, auctionID, 1)
+				s.net = math.floor(unit * (1 - AH_CUT)) + (s.back or 0)
 			end
 		end
 	end
