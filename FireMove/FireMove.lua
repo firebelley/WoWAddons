@@ -11,7 +11,8 @@
 -- forward or sends it back, kept with the Edit Mode layout. /firemove layers
 -- puts this layout's back.
 --
--- Extra action bars: see Bars.lua.
+-- Extra action bars: see Bars.lua. Attaching elements to each other: Attach.lua.
+-- The main bar's look for the game's other bars: Style.lua.
 local _, ns = ...
 local DB -- FireMoveDB: [frame name] = { point, relativePoint, x, y }
 
@@ -160,7 +161,9 @@ local LAYERS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
 local LAYER_NAMES = { BACKGROUND = "Bottom", LOW = "Low", MEDIUM = "Middle", HIGH = "High", DIALOG = "Top" }
 -- FireMoveLayers: profiles = { [layout] = { [frame] = strata } },
 -- own = { [frame] = its own strata, before any change },
--- bars = { [layout] = { [bar] = its settings } } (Bars.lua)
+-- bars = { [layout] = { [bar] = its settings } } (Bars.lua),
+-- attach = { [layout] = { [frame] = { to, side, off, gap } } } (Attach.lua),
+-- style = { [layout] = { [bar] = "main" } } (Style.lua)
 local LDB
 local layers         -- the layout in use's { [frame] = strata }, once known
 local current, previous -- the layout in use, and the one before it
@@ -182,6 +185,8 @@ local function Key(frame)
 	if type(frame.system) == "number" then return frame.system .. ":" .. (frame.systemIndex or "") end
 end
 
+ns.Key = Key
+
 local function Find(key)
 	local system, index = key:match("^(%d+):(%d*)$")
 	if not system then return _G[key] end
@@ -189,6 +194,8 @@ local function Find(key)
 	if not (manager and manager.GetRegisteredSystemFrame) then return end
 	return manager:GetRegisteredSystemFrame(tonumber(system), tonumber(index))
 end
+
+ns.Find = Find
 
 local function Usable(frame)
 	return type(frame) == "table" and frame.SetFrameStrata and Key(frame)
@@ -298,7 +305,10 @@ local function UpdateBox()
 	box.back:SetEnabled(i ~= nil and i > 1)
 	box.forward:SetEnabled(i ~= nil and i < #LAYERS)
 	box.default:SetEnabled(layers[Key(frame)] ~= nil)
+	local styled = ns.Style and box.style and box.style.Refresh()
+	box:SetHeight(styled and 148 or 118)
 	box:Show()
+	if ns.Attach then ns.Attach.Refresh() end
 end
 
 -- The layout in use (Edit Mode just applied one): its layers.
@@ -321,6 +331,8 @@ local function Switch()
 	ApplyLayers()
 	UpdateBox()
 	if ns.LayoutChanged then ns.LayoutChanged() end
+	if ns.Style then ns.Style.Apply() end
+	if ns.Attach then ns.Attach.Apply() end
 end
 
 -- The layout in use, as it's kept (nil until known).
@@ -382,7 +394,7 @@ end
 
 local function CreateBox(dialog)
 	box = CreateFrame("Frame", "FireMoveLayerBox", UIParent, "BackdropTemplate")
-	box:SetSize(220, 64)
+	box:SetSize(240, 118)
 	box:SetFrameStrata("DIALOG")
 	box:SetFrameLevel((dialog:GetFrameLevel() or 200) + 10)
 	box:SetClampedToScreen(true)
@@ -397,10 +409,19 @@ local function CreateBox(dialog)
 	box.value:SetPoint("TOPLEFT", 14, -12)
 	box.default = LayerButton("Default", 70, Default, "Back to its usual layer")
 	box.default:SetPoint("TOPRIGHT", -10, -8)
-	box.back = LayerButton("Send back", 98, function() Step(-1) end, "Behind more frames")
-	box.back:SetPoint("BOTTOMLEFT", 10, 10)
-	box.forward = LayerButton("Bring forward", 98, function() Step(1) end, "In front of more frames")
-	box.forward:SetPoint("BOTTOMRIGHT", -10, 10)
+	box.back = LayerButton("Send back", 106, function() Step(-1) end, "Behind more frames")
+	box.back:SetPoint("TOPLEFT", 10, -36)
+	box.forward = LayerButton("Bring forward", 106, function() Step(1) end, "In front of more frames")
+	box.forward:SetPoint("TOPRIGHT", -10, -36)
+	if ns.Attach then
+		box.attach = ns.Attach.CreateRow(box, Selected, 216)
+		box.attach:SetPoint("BOTTOM", 0, 10)
+	end
+	if ns.Style then
+		local row
+		row, box.style = ns.Style.CreateRow(box, Selected, 216)
+		row:SetPoint("TOP", 0, -64)
+	end
 	box:Hide()
 end
 
@@ -429,6 +450,8 @@ local function Now()
 	return {
 		profiles = DeepCopy(LDB.profiles),
 		bars = DeepCopy(LDB.bars),
+		attach = DeepCopy(LDB.attach),
+		style = DeepCopy(LDB.style),
 		char = DeepCopy(ns.CharBars and ns.CharBars() or {}),
 	}
 end
@@ -447,11 +470,11 @@ local function Commit()
 	if not LDB then return end
 	local now = Now()
 	if saved then
-		for _, name in ipairs({ "profiles", "bars" }) do
+		for _, name in ipairs({ "profiles", "bars", "attach", "style" }) do
 			for key in pairs(now[name]) do
 				if key:match("^preset:") then now[name][key] = nil end
 			end
-			for key, value in pairs(saved[name]) do
+			for key, value in pairs(saved[name] or {}) do
 				if key:match("^preset:") then now[name][key] = DeepCopy(value) end
 			end
 		end
@@ -464,6 +487,8 @@ end
 local function Restore(from)
 	LDB.profiles = DeepCopy(from.profiles)
 	LDB.bars = DeepCopy(from.bars)
+	LDB.attach = DeepCopy(from.attach or {})
+	LDB.style = DeepCopy(from.style or {})
 	if ns.SetCharBars then ns.SetCharBars(DeepCopy(from.char)) end
 	layers = nil
 	Switch()
@@ -541,10 +566,11 @@ end
 
 -- What's kept per layout: layers, and the extra bars' settings (as they are, and as saved).
 local function Stores()
-	local list = { LDB.profiles, LDB.bars }
+	local list = { LDB.profiles, LDB.bars, LDB.attach, LDB.style }
 	if saved then
-		list[#list + 1] = saved.profiles
-		list[#list + 1] = saved.bars
+		for _, name in ipairs({ "profiles", "bars", "attach", "style" }) do
+			if saved[name] then list[#list + 1] = saved[name] end
+		end
 	end
 	return list
 end
@@ -580,11 +606,11 @@ local function Made(_, _, layoutType, layoutName, imported)
 	local from = current == key and previous or current
 	if imported or not key or not from then return end
 	local changed
-	for _, name in ipairs({ "profiles", "bars" }) do
-		local source = (stash or LDB)[name][from]
+	for _, name in ipairs({ "profiles", "bars", "attach", "style" }) do
+		local source = ((stash or LDB)[name] or {})[from]
 		if source and not (LDB[name][key] and next(LDB[name][key])) then
 			LDB[name][key] = DeepCopy(source)
-			if saved then saved[name][key] = DeepCopy(source) end
+			if saved and saved[name] then saved[name][key] = DeepCopy(source) end
 			changed = true
 		end
 	end
@@ -593,6 +619,8 @@ local function Made(_, _, layoutType, layoutName, imported)
 		ApplyLayers()
 		UpdateBox()
 		if ns.LayoutChanged then ns.LayoutChanged() end
+		if ns.Style then ns.Style.Apply() end
+		if ns.Attach then ns.Attach.Apply() end
 	end
 end
 
@@ -611,6 +639,10 @@ local function HookEditMode()
 	if manager.PrepareSystemsForSave then hooksecurefunc(manager, "PrepareSystemsForSave", Commit) end
 	if manager.RevertAllChanges then hooksecurefunc(manager, "RevertAllChanges", Reverted) end
 	if manager.SetHasActiveChanges then hooksecurefunc(manager, "SetHasActiveChanges", SyncButtons) end
+	-- The game re-stacks its bars (one shown or hidden...): attached ones go back next to theirs.
+	for _, fn in ipairs({ "UpdateBottomActionBarPositions", "UpdateRightActionBarPositions" }) do
+		if manager[fn] then hooksecurefunc(manager, fn, function() if ns.Attach then ns.Attach.Soon() end end) end
+	end
 	if EventRegistry then
 		EventRegistry:RegisterCallback("EditMode.Enter", function() if ask then ask:Hide() end end, {})
 	end
@@ -644,6 +676,8 @@ layerEvents:SetScript("OnEvent", function(_, event, addon)
 			LDB.profiles = LDB.profiles or {}
 			LDB.own = LDB.own or {}
 			LDB.bars = LDB.bars or {}
+			LDB.attach = LDB.attach or {}
+			LDB.style = LDB.style or {}
 			LDB.dump = nil -- from a one-off look at the buttons' frames
 			for key, saved in pairs(old) do
 				LDB.legacy = LDB.legacy or {}

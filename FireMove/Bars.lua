@@ -281,6 +281,7 @@ function Apply(n)
 	Grids(bar)
 	if not dragging and bar:GetFrameStrata() == "TOOLTIP" then bar:UpdateFrameStrata(false) end
 	Place(n)
+	if ns.Attach and ns.Attach.Of(bar) then ns.Attach.Apply() end
 	if editing then
 		UnregisterStateDriver(bar, "visibility")
 		bar:Show()
@@ -329,6 +330,7 @@ local function Snap(bar)
 end
 
 local function Dropped(bar)
+	if ns.Attach then ns.Attach.Detach(bar, true) end
 	local dx, dy = Snap(bar)
 	local x, y = bar:GetCenter()
 	local ux, uy = UIParent:GetCenter()
@@ -402,6 +404,7 @@ local function RefreshDialog()
 	dialog.title:SetText("Action Bar " .. selected)
 	for _, c in ipairs(controls) do c.Refresh() end
 	dialog.revert:SetEnabled(ns.BarChanged(selected))
+	if ns.Attach then ns.Attach.Refresh() end
 	loading = false
 end
 
@@ -470,7 +473,7 @@ local Deselect, Delete
 
 local function CreateDialog()
 	dialog = CreateFrame("Frame", "FireMoveBarDialog", UIParent)
-	dialog:SetSize(380, 436)
+	dialog:SetSize(380, 486)
 	dialog:SetFrameStrata("DIALOG")
 	dialog:SetFrameLevel(200)
 	dialog:SetClampedToScreen(true)
@@ -520,6 +523,10 @@ local function CreateDialog()
 	DialogButton("Delete Bar", -386, function()
 		if selected then Delete(selected) end
 	end)
+	if ns.Attach then
+		local row = ns.Attach.CreateRow(dialog, function() return selected and bars[selected] end, 330)
+		row:SetPoint("TOP", 0, -418)
+	end
 	dialog:Hide()
 end
 
@@ -636,6 +643,15 @@ local function ApplyAll()
 	UpdateNewBox()
 end
 ns.LayoutChanged = ApplyAll
+
+-- The extra bars there are (for attaching one element to another, Attach.lua).
+function ns.BarFrames()
+	local list = {}
+	for n, bar in pairs(bars) do
+		if Live(n) then list[#list + 1] = bar end
+	end
+	return list
+end
 
 local function SetEditing(on)
 	editing = on
