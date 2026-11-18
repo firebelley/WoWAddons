@@ -458,11 +458,19 @@ local function Now()
 	}
 end
 
+-- The Fire addons' unsaved Edit Mode changes: { [addon] = true }. Shared, so
+-- each one keeps the game's Save and Revert buttons on for the others' too.
+FireEditModeUnsaved = FireEditModeUnsaved or {}
+
 -- The game's Save and Revert buttons: on while anything's unsaved, ours too.
 local function SyncButtons()
+	FireEditModeUnsaved.FireMove = dirty or nil
 	local manager = EditModeManagerFrame
 	if not (manager and manager.HasActiveChanges) then return end
 	local on = dirty or manager:HasActiveChanges() and true or false
+	for _, v in pairs(FireEditModeUnsaved) do
+		if v then on = true end
+	end
 	if manager.SaveChangesButton then manager.SaveChangesButton:SetEnabled(on) end
 	if manager.RevertAllChangesButton then manager.RevertAllChangesButton:SetEnabled(on) end
 end

@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: FireTodo
+## Notes: A todo list with checkboxes. Link items in a todo, drag to reorder, and track todos on screen like quests (placed in Edit Mode). /todo
+## IconTexture: Interface\Icons\INV_Misc_Note_01
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariables: FireTodoDB
+
+Core.lua
+Window.lua
+Tracker.lua
+EditMode.lua

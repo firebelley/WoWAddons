@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="FIRETODO_TOGGLE" header="FIRETODO">
+		FireTodo_Toggle()
+	</Binding>
+</Bindings>
