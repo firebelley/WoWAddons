@@ -2,7 +2,8 @@
 -- The header: the list button (or click the header) opens the list, the -/+
 -- collapses it. A todo: click for it in the list, right-click to untrack it.
 -- Placed, sized and turned on or off in Edit Mode (EditMode.lua): it's as wide
--- as set there, and as tall as its todos up to the height set there.
+-- as set there, as tall as its todos up to the height set there, and its text
+-- the size set there.
 local _, ns = ...
 local Todo = ns.Todo
 
@@ -12,10 +13,12 @@ ns.Tracker = Tracker
 local HEADER = 20
 Tracker.WIDTH, Tracker.HEIGHT = 230, 300 -- defaults
 Tracker.MIN_W, Tracker.MAX_W, Tracker.MIN_H, Tracker.MAX_H = 150, 600, 60, 900
+Tracker.MIN_TEXT, Tracker.MAX_TEXT = 8, 20
 local POINT = { "TOPRIGHT", "TOPRIGHT", -90, -300 }
 
 local tracker, header, collapse, more
 local lines = {}
+local fonts -- each text's font as the game gives it: { line, header, more } = { file, size, flags }
 local editing = false
 
 function Tracker.Enabled() return ns.db.trackerShown ~= false end
@@ -32,6 +35,21 @@ function Tracker.Place()
 end
 
 -- Kept from its top left, so it grows downward wherever it is.
+-- The todos' text size (the header's and "N more"'s follow it).
+function Tracker.TextSize()
+	local size = ns.db.trackerTextSize or (fonts and fonts.line[2]) or 10
+	return math.floor(size + 0.5)
+end
+
+local function SetFont(text, base, size)
+	if base[1] then text:SetFont(base[1], size, base[3]) end
+end
+
+local function Font(text)
+	local file, size, flags = text:GetFont()
+	return { file, size or 10, flags }
+end
+
 function Tracker.Pin()
 	local x, y = tracker:GetLeft(), tracker:GetTop()
 	if not (x and y) then return end
@@ -114,6 +132,9 @@ local function Build()
 	more.text = more:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	more.text:SetPoint("LEFT", 20, 0)
 	more:SetScript("OnClick", function() ns.Window.Show() end)
+	local probe = tracker:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	fonts = { line = Font(probe), header = Font(header.text), more = Font(more.text) }
+	probe:Hide()
 	tracker:Hide() -- until Refresh (it may be off)
 end
 
@@ -137,6 +158,15 @@ function Tracker.Refresh()
 	if not tracker then Build() end
 	local width, maxHeight = Tracker.Size()
 	tracker:SetWidth(width)
+	local size = Tracker.TextSize()
+	local grow = size - fonts.line[2]
+	SetFont(header.text, fonts.header, fonts.header[2] + grow)
+	SetFont(more.text, fonts.more, fonts.more[2] + grow)
+	local headerH = math.max(HEADER, math.ceil(fonts.header[2] + grow) + 8)
+	header:SetHeight(headerH)
+	local box = size + 10 -- each todo's checkbox
+	local moreH = math.ceil(fonts.more[2] + grow) + 4
+	more:SetHeight(moreH)
 	local shown = {}
 	for _, t in ipairs(Todo.List()) do
 		if t.tracked then shown[#shown + 1] = t end
@@ -151,7 +181,7 @@ function Tracker.Refresh()
 	collapse:SetNormalTexture(collapsed and "Interface\\Buttons\\UI-PlusButton-Up" or "Interface\\Buttons\\UI-MinusButton-Up")
 	collapse:SetPushedTexture(collapsed and "Interface\\Buttons\\UI-PlusButton-Down" or "Interface\\Buttons\\UI-MinusButton-Down")
 
-	local y, hidden = HEADER + 2, 0
+	local y, hidden = headerH + 2, 0
 	for i, t in ipairs(shown) do
 		local line = lines[i]
 		if not line then
@@ -161,13 +191,20 @@ function Tracker.Refresh()
 		line:Hide()
 		if not collapsed and hidden == 0 then
 			line.id = t.id
-			line.text:SetWidth(width - 20)
+			if line.size ~= size then
+				line.size = size
+				SetFont(line.text, fonts.line, size)
+				line.check:SetSize(box, box)
+				line.text:ClearAllPoints()
+				line.text:SetPoint("TOPLEFT", box, -2)
+			end
+			line.text:SetWidth(width - box)
 			line.text:SetText(t.text)
 			line.text:SetAlpha(t.done and 0.45 or 1)
 			line.check:SetChecked(t.done == true)
-			local h = math.max(18, math.ceil(line.text:GetStringHeight()) + 6)
+			local h = math.max(box - 2, math.ceil(line.text:GetStringHeight()) + 6)
 			-- Room for it (and for "N more" if others follow)?
-			if y + h + (i < #shown and 14 or 0) <= maxHeight then
+			if y + h + (i < #shown and moreH or 0) <= maxHeight then
 				line:ClearAllPoints()
 				line:SetPoint("TOPLEFT", tracker, "TOPLEFT", 0, -y)
 				line:SetSize(width, h)
@@ -185,9 +222,9 @@ function Tracker.Refresh()
 		more:ClearAllPoints()
 		more:SetPoint("TOPLEFT", tracker, "TOPLEFT", 0, -y)
 		more:SetWidth(width)
-		y = y + 14
+		y = y + moreH
 	end
-	tracker:SetHeight(editing and maxHeight or (collapsed and HEADER or y))
+	tracker:SetHeight(editing and maxHeight or (collapsed and headerH or y))
 	tracker:Show()
 end
 
