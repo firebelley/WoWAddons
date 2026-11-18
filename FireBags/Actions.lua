@@ -133,8 +133,12 @@ local function Update(b)
 		b.icon:SetVertexColor(0.4, 0.4, 0.4)
 	end
 
-	-- Cooldowns turn secret in combat; the buttons are only up out of it.
+	-- Cooldowns turn secret in combat (the buttons are only up out of it, but
+	-- one can come just as it starts): left as they are until it ends.
 	local ok, start, duration, enabled, modRate = pcall(Cooldown, entry)
+	if ok and issecretvalue and (issecretvalue(start) or issecretvalue(duration) or issecretvalue(enabled)) then
+		return
+	end
 	if ok and start and duration and duration > 0 and enabled ~= false and enabled ~= 0 then
 		b.cooldown:SetCooldown(start, duration, modRate)
 	else
@@ -145,7 +149,7 @@ end
 local function UpdateAll()
 	if not (holder and window:IsShown()) then return end
 	for _, b in ipairs(buttons) do
-		if b:IsShown() then Update(b) end
+		if b:IsVisible() then Update(b) end -- (not while they're away for combat)
 	end
 end
 
