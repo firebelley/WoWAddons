@@ -140,14 +140,17 @@ function Window:SetFooter(text)
 	if self.footerText then self.footerText:SetText(text or "") end
 end
 
--- Side tabs: icon buttons sticking out of the window's right edge.
-function Window:AddTab(opts)
-	local tab = CreateFrame("Button", nil, self)
-	tab:SetSize(TAB_SIZE, TAB_SIZE)
-	tab:SetPoint("TOPLEFT", self, "TOPRIGHT", self.metrics.tabX,
-		self.metrics.tabTop - #self.tabs * (TAB_SIZE + TAB_GAP))
+-- Where the side tab at index i (from 0) goes, from the window's top right.
+function Window:TabOffset(i)
+	return self.metrics.tabX, self.metrics.tabTop - i * (TAB_SIZE + TAB_GAP)
+end
+ns.TAB_PITCH = TAB_SIZE + TAB_GAP
 
-	-- The spellbook's side-tab frame art.
+-- The side tabs' look (the action buttons' too, Actions.lua): the spellbook's
+-- side-tab frame, an icon that presses in, a hover highlight.
+function ns.StyleTab(tab)
+	tab:SetSize(TAB_SIZE, TAB_SIZE)
+
 	local art = tab:CreateTexture(nil, "BACKGROUND")
 	art:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
 	art:SetSize(64, 64)
@@ -155,17 +158,35 @@ function Window:AddTab(opts)
 
 	tab.icon = tab:CreateTexture(nil, "ARTWORK")
 	tab.icon:SetAllPoints()
+
+	local highlight = tab:CreateTexture(nil, "HIGHLIGHT")
+	highlight:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+	highlight:SetBlendMode("ADD")
+	highlight:SetAllPoints()
+
+	tab:HookScript("OnMouseDown", function(self)
+		self.icon:ClearAllPoints()
+		self.icon:SetPoint("TOPLEFT", 1, -1)
+		self.icon:SetPoint("BOTTOMRIGHT", 1, -1)
+	end)
+	tab:HookScript("OnMouseUp", function(self)
+		self.icon:ClearAllPoints()
+		self.icon:SetAllPoints()
+	end)
+end
+
+-- Side tabs: icon buttons sticking out of the window's right edge.
+function Window:AddTab(opts)
+	local tab = CreateFrame("Button", nil, self)
+	ns.StyleTab(tab)
+	tab:SetPoint("TOPLEFT", self, "TOPRIGHT", self:TabOffset(#self.tabs))
+
 	if API.AtlasExists(opts.atlas) then
 		tab.icon:SetAtlas(opts.atlas)
 	else
 		tab.icon:SetTexture(opts.icon)
 		tab.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 	end
-
-	local highlight = tab:CreateTexture(nil, "HIGHLIGHT")
-	highlight:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
-	highlight:SetBlendMode("ADD")
-	highlight:SetAllPoints()
 
 	tab.selected = tab:CreateTexture(nil, "OVERLAY")
 	tab.selected:SetTexture("Interface\\Buttons\\CheckButtonHilight")
@@ -176,15 +197,6 @@ function Window:AddTab(opts)
 	function tab:SetSelected(on) self.selected:SetShown(on) end
 	function tab:SetEnabledLook(on) self.icon:SetDesaturated(not on) end
 
-	tab:SetScript("OnMouseDown", function(self)
-		self.icon:ClearAllPoints()
-		self.icon:SetPoint("TOPLEFT", 1, -1)
-		self.icon:SetPoint("BOTTOMRIGHT", 1, -1)
-	end)
-	tab:SetScript("OnMouseUp", function(self)
-		self.icon:ClearAllPoints()
-		self.icon:SetAllPoints()
-	end)
 	tab:SetScript("OnClick", opts.onClick)
 	tab:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")

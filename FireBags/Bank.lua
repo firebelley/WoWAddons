@@ -15,6 +15,7 @@ ns.atBank = false
 local function CharacterKey()
 	return (UnitName("player") or "?") .. " - " .. (GetRealmName() or "?")
 end
+ns.CharacterKey = CharacterKey
 
 local function GetSnapshot()
 	local char = ns.db.chars[CharacterKey()]

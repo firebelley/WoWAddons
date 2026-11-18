@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: FireBags
-## Notes: All bags in one movable window, with special bags in their own sections, sorting, new item glow, and a bank you can browse from anywhere.
+## Notes: All bags in one movable window, with special bags in their own sections, sorting, new item glow, a bank you can browse from anywhere, and buttons for spells you use on items.
 ## IconTexture: Interface\Icons\INV_Misc_Bag_08
 ## Author: Firebelley
 ## Version: 0.2.0
@@ -18,5 +18,6 @@ Bank.lua
 Junk.lua
 Counts.lua
 Crafting.lua
+Actions.lua
 Options.lua
 Core.lua
