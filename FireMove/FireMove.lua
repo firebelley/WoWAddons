@@ -60,7 +60,7 @@ local function Grip(handle, frame)
 		if point then DB[frame:GetName()] = { point, relativePoint, x, y } end
 	end)
 	for _, child in ipairs({ handle:GetChildren() }) do
-		if Covers(child, handle) and not (child.IsForbidden and child:IsForbidden()) then Grip(child, frame) end
+		if not (child.IsForbidden and child:IsForbidden()) and Covers(child, handle) then Grip(child, frame) end
 	end
 end
 
