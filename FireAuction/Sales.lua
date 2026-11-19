@@ -573,7 +573,7 @@ local function Sold(name, auctionID, auction)
 	if auction then
 		s.link, s.id, s.house = auction.link, auction.id, auction.house
 		if stack then
-			s.part = true
+			s.part, s.auction = true, auctionID
 			if unit and unit > 0 then s.unit = unit end
 			auction.partSold = true
 		else
@@ -636,6 +636,22 @@ end)
 -- The mailbox
 ---------------------------------------------------------------------------
 local atMailbox = false
+
+-- Once the mail says how many of a stack sold, that many come off its listing
+-- (unless the auction house has listed it for you since, already without them).
+local function Shrink(c, s)
+	if s.shrunk or not s.qty then return end
+	local auctionID, a = s.auction, s.auction and c.owned[s.auction]
+	if not a then
+		for k, o in pairs(c.owned) do
+			if o.partSold and o.name == s.name and UnitPrice(o) == s.unit then auctionID, a = k, o break end
+		end
+	end
+	if not a or (s.t or 0) <= (a.seen or 0) then return end
+	s.shrunk = true
+	a.qty = (a.qty or 1) - s.qty
+	if a.qty <= 0 then c.owned[auctionID] = nil end
+end
 
 -- The first unused entry for this sale: same item, and the same amount (or,
 -- for part of a stack, the same price each) when known.
@@ -720,7 +736,11 @@ local function ReadInbox()
 		if m then
 			s.net, s.exact, s.inMail = m.money, true, true
 			if m.gross and m.gross > 0 then s.gross = m.gross end
-			if m.qty and m.qty > 0 then s.qty, s.part = m.qty, nil end
+			if m.qty and m.qty > 0 then
+				local part = s.part
+				s.qty, s.part = m.qty, nil
+				if part then Shrink(c, s) end
+			end
 			keep[#keep + 1] = s
 		elseif s.inMail or s.delivered then
 			-- It was here (or was sent), and now it's gone: you took the money.
