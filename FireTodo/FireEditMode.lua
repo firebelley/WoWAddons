@@ -37,7 +37,7 @@
 -- Other frames can snap the same way (FireMove's bars):
 --   FireEditMode.Preview(frame) as it starts moving, FireEditMode.StopPreview()
 --   when it stops, then FireEditMode.SnapMove(frame) for how far to move it.
-local VERSION = 2
+local VERSION = 3
 local lib = _G.FireEditMode
 if lib and (lib.version or 0) >= VERSION then return end
 lib = lib or {}
@@ -737,6 +737,13 @@ end
 
 function lib.Hook()
 	local m = Manager()
+	-- The Revert All Changes button calls the game's own function directly
+	-- (bound when Edit Mode loaded), not through the hook below: its click too.
+	-- (Reverting twice does nothing more.)
+	if m and m.RevertAllChangesButton and not lib.revertButtonHooked then
+		lib.revertButtonHooked = true
+		m.RevertAllChangesButton:HookScript("OnClick", function() lib.Reverted() end)
+	end
 	if lib.hooked or not m then return end
 	lib.hooked = true
 	-- (Through lib, so a newer copy's code is the one that runs.)

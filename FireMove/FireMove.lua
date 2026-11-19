@@ -658,6 +658,9 @@ local function HookEditMode()
 	if manager.MakeNewLayout then hooksecurefunc(manager, "MakeNewLayout", Made) end
 	if manager.PrepareSystemsForSave then hooksecurefunc(manager, "PrepareSystemsForSave", Commit) end
 	if manager.RevertAllChanges then hooksecurefunc(manager, "RevertAllChanges", Reverted) end
+	-- Its Revert All Changes button calls the game's own function directly (bound
+	-- when Edit Mode loaded), not through the hook above: its click too.
+	if manager.RevertAllChangesButton then manager.RevertAllChangesButton:HookScript("OnClick", Reverted) end
 	if manager.SetHasActiveChanges then hooksecurefunc(manager, "SetHasActiveChanges", SyncButtons) end
 	-- The game re-stacks its bars (one shown or hidden...): attached ones go back next to theirs.
 	for _, fn in ipairs({ "UpdateBottomActionBarPositions", "UpdateRightActionBarPositions" }) do
