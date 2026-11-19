@@ -15,6 +15,9 @@
 --        when more than one)
 --   dq = { [day] = listed } - how many were listed that day: the average of
 --        the same scans (days from before it was kept have none)
+--   dr = { [day] = "low,high,listed low,listed high" } - the day's range: the
+--        lowest and highest market price of its scans, and the fewest and
+--        most listed (days from before it was kept have none)
 --   (td, n = the latest scan's day and its scans: how dn used to be kept)
 --   l  = the latest scan's listings: "n,buyout,stack,bid;..." where n is how
 --        many identical auctions there were (bid only for bid-only ones)
@@ -143,9 +146,31 @@ function Data.SetDay(rec, day, price, scans, listed)
 	end
 end
 
+-- The day's range: lowest and highest market price, fewest and most listed
+-- (listed ones nil when not known); nil without one.
+function Data.Range(rec, day)
+	local s = rec.dr and rec.dr[day]
+	if not s then return nil end
+	local pl, ph, ql, qh = s:match("^(%d+),(%d+),(%d*),(%d*)$")
+	if not pl then return nil end
+	return tonumber(pl), tonumber(ph), tonumber(ql), tonumber(qh)
+end
+
+-- Widens the day's range to take these in (any may be nil).
+function Data.MergeRange(rec, day, pl, ph, ql, qh)
+	local opl, oph, oql, oqh = Data.Range(rec, day)
+	local function Low(a, b) if a and b then return math.min(a, b) end return a or b end
+	local function High(a, b) if a and b then return math.max(a, b) end return a or b end
+	pl, ph, ql, qh = Low(opl, pl), High(oph, ph), Low(oql, ql), High(oqh, qh)
+	if not (pl and ph) then return end
+	rec.dr = rec.dr or {}
+	rec.dr[day] = ("%.0f,%.0f,%s,%s"):format(pl, ph, ql and ("%.0f"):format(ql) or "", qh and ("%.0f"):format(qh) or "")
+end
+
 -- One more scan's market price (and how many were listed), into the day's
--- averages.
+-- averages and range.
 function Data.AddScan(rec, day, price, listed)
+	Data.MergeRange(rec, day, price, price, listed, listed)
 	local n = Data.Scans(rec, day)
 	local old = rec.d[day]
 	if old then price = math.floor(old + (price - old) / (n + 1) + 0.5) end
@@ -172,6 +197,7 @@ function Data.Prune(house)
 				if rec.dn then rec.dn[day] = nil end
 				if rec.dq then rec.dq[day] = nil end
 				if rec.ds then rec.ds[day] = nil end
+				if rec.dr then rec.dr[day] = nil end
 			else
 				any = true
 			end
@@ -179,6 +205,7 @@ function Data.Prune(house)
 		if rec.dn and not next(rec.dn) then rec.dn = nil end
 		if rec.dq and not next(rec.dq) then rec.dq = nil end
 		if rec.ds and not next(rec.ds) then rec.ds = nil end
+		if rec.dr and not next(rec.dr) then rec.dr = nil end
 		if not any then realm.items[id] = nil end
 	end
 end

@@ -32,13 +32,18 @@
 --   E stream messages records                the stream is over
 -- summary = newest-scan today K checksum*K (3 characters per day, the last K
 --   days; 0 for a day without prices)
--- record  = id-gap mask [price qty age market] (dayprice scans listed)...
+-- record  = id-gap mask [price qty age market] (dayprice scans listed low high
+--           listedlow listedhigh)...
 --   (mask bit 1: the latest prices follow - lowest, how many, how old, and the
 --   market price; bit j+1: a price for the stream's day j - the day's market
---   price, how many scans it averages, and how many were listed (0: not known))
+--   price, how many scans it averages, how many were listed, and the day's
+--   range: lowest and highest market price, fewest and most listed (0: not
+--   known))
 --
 -- Version 2 added the market price, version 3 the scans per day, version 4
--- how many were listed each day. Versions
+-- how many were listed each day, version 5 each day's range. A day's range
+-- from someone else widens yours (lower low, higher high), so everyone ends
+-- up with the same. Versions
 -- don't mix: messages from another version are ignored, and you're told once
 -- (per member) that someone needs to update.
 local _, ns = ...
@@ -47,7 +52,7 @@ local Sync = {}
 ns.Sync = Sync
 
 local PREFIX = "FireAH"
-local VERSION = 4
+local VERSION = 5
 local MAX_LEN = 250      -- characters per message (the game allows 255)
 local MAX_DAYS = 60      -- days of history compared and shared
 local HELLO_DELAY = 12   -- seconds after logging in
@@ -184,6 +189,12 @@ function Reader:Price12()
 	return Decode(self:Digit() * 64 + self:Digit())
 end
 
+-- The same, nil for 0 (not known).
+function Reader:Price12OrNil()
+	local code = self:Digit() * 64 + self:Digit()
+	return code > 0 and Decode(code) or nil
+end
+
 function Reader:Days()
 	local first, span = self:Num(), self:Num()
 	if span > 2 * MAX_DAYS then error("too many days") end
@@ -231,8 +242,9 @@ local function WindowDays() return math.min(ns.db.historyDays or 30, MAX_DAYS) e
 -- its price, how many scans that averages and how many were listed. 18 bits
 -- (3 characters).
 local HASH = 2 ^ 18
-local function ItemHash(id, price, scans, listed)
-	local v = (id * 7919 + Quantize(price) * 104729 + scans * 1299709 + (listed or 0) * 15485863) % 1000003
+local function ItemHash(id, price, scans, listed, pl, ph, ql, qh)
+	local v = (id * 7919 + Quantize(price) * 104729 + scans * 1299709 + (listed or 0) * 15485863
+		+ (pl and Quantize(pl) or 0) * 3 + (ph and Quantize(ph) or 0) * 7 + (ql or 0) * 11 + (qh or 0) * 13) % 1000003
 	return (v * v + id) % HASH
 end
 
@@ -246,7 +258,8 @@ local function Summary(house)
 	for id, rec in pairs(realm.items) do
 		for day, price in pairs(rec.d) do
 			if day >= from and day <= today then
-				hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day), ns.Data.Listed(rec, day))) % HASH
+				hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day), ns.Data.Listed(rec, day),
+					ns.Data.Range(rec, day))) % HASH
 			end
 		end
 	end
@@ -397,7 +410,9 @@ local function RecordText(s, rec, gap)
 		local p = rec.d[day]
 		if p then
 			flags[j + 1] = true
+			local pl, ph, ql, qh = ns.Data.Range(rec, day)
 			prices[#prices + 1] = Price12(p) .. Num(ns.Data.Scans(rec, day)) .. Num(ns.Data.Listed(rec, day) or 0)
+				.. Price12(pl) .. Price12(ph) .. Num(ql or 0) .. Num(qh or 0)
 		end
 	end
 	if not latest and #prices == 0 then return nil end
@@ -584,6 +599,12 @@ local function Merge(st, realm, id, p, q, s, m, dayPrices)
 				ns.Data.SetDay(rec, day, theirs[1], theirs[2], theirs[3])
 				st.filled = st.filled + 1
 			end
+			-- Their range widens ours.
+			if theirs[4] and theirs[5] then
+				local before = rec.dr and rec.dr[day]
+				ns.Data.MergeRange(rec, day, theirs[4], theirs[5], theirs[6], theirs[7])
+				if ours ~= 0 and rec.dr and rec.dr[day] ~= before then st.filled = st.filled + 1 end
+			end
 		end
 	end
 	if new then
@@ -633,7 +654,10 @@ local function OnData(r, from)
 					local price = r:Price12()
 					local scans = math.max(1, r:Num())
 					local listed = r:Num()
-					dayPrices[day] = { price, scans, listed > 0 and listed < 1e7 and listed or nil }
+					local pl, ph = r:Price12OrNil(), r:Price12OrNil()
+					local ql, qh = r:Num(), r:Num()
+					dayPrices[day] = { price, scans, listed > 0 and listed < 1e7 and listed or nil,
+						pl, ph, ql > 0 and ql < 1e7 and ql or nil, qh > 0 and qh < 1e7 and qh or nil }
 				end
 			end
 			-- Sanity: skip anything that can't be a real price.

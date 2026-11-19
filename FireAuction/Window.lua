@@ -231,7 +231,8 @@ local function DrawGraph(rec)
 
 	local low, high = math.huge, 0
 	for _, h in ipairs(history) do
-		low, high = math.min(low, h[2]), math.max(high, h[2])
+		local pl, ph = ns.Data.Range(rec, h[1])
+		low, high = math.min(low, h[2], pl or h[2]), math.max(high, h[2], ph or h[2])
 	end
 	if slope then
 		local start = now - slope * trendDays
@@ -308,12 +309,24 @@ local function DrawGraph(rec)
 		end
 	end
 
+	-- Each day's range, lowest to highest price: a bar behind the line.
+	local rangeWidth = math.max(2, math.min(6, w / math.max(1, last - first) * 0.25))
+	for _, p in ipairs(history) do
+		local pl, ph = ns.Data.Range(rec, p[1])
+		if pl and ph and ph > pl then
+			local l = Line(PRICE_COLOR[1], PRICE_COLOR[2], PRICE_COLOR[3], 0.35, rangeWidth)
+			l:SetStartPoint("BOTTOMLEFT", graph, X(p[1]), Y(pl))
+			l:SetEndPoint("BOTTOMLEFT", graph, X(p[1]), Y(ph))
+		end
+	end
+
 	-- The prices.
 	local points = {}
 	for i, p in ipairs(history) do
 		local x, y = X(p[1]), Y(p[2])
+		local pl, ph, ql, qh = ns.Data.Range(rec, p[1])
 		points[i] = { x = x, y = y, day = p[1], price = p[2], listed = ns.Data.Listed(rec, p[1]),
-			sold = sold[p[1]], cover = cover[p[1]] }
+			sold = sold[p[1]], cover = cover[p[1]], pl = pl, ph = ph, ql = ql, qh = qh }
 		if i > 1 then
 			local l = Line(PRICE_COLOR[1], PRICE_COLOR[2], PRICE_COLOR[3], 1, 2)
 			l:SetStartPoint("BOTTOMLEFT", graph, points[i - 1].x, points[i - 1].y)
@@ -363,8 +376,13 @@ local function GraphHover(self)
 		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
 		GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(best.day)), 1, 1, 1)
 		GameTooltip:AddLine(ns.Money(best.price), 1, 1, 1)
+		if best.pl and best.ph and best.ph > best.pl then
+			GameTooltip:AddLine(("Range: %s - %s"):format(ns.Money(best.pl), ns.Money(best.ph)),
+				PRICE_COLOR[1], PRICE_COLOR[2], PRICE_COLOR[3])
+		end
 		if best.listed then
-			GameTooltip:AddLine(("%d listed"):format(best.listed), LISTED_COLOR[1], LISTED_COLOR[2], LISTED_COLOR[3])
+			local range = best.ql and best.qh and best.qh > best.ql and ("  |cff999999(%d - %d)|r"):format(best.ql, best.qh) or ""
+			GameTooltip:AddLine(("%d listed"):format(best.listed) .. range, LISTED_COLOR[1], LISTED_COLOR[2], LISTED_COLOR[3])
 		end
 		if best.sold then
 			GameTooltip:AddLine(("~%d sold  |cff999999(estimate from %d min of scans)|r"):format(best.sold, best.cover),
