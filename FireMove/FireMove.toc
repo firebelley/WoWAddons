@@ -7,7 +7,6 @@
 ## SavedVariables: FireMoveDB, FireMoveLayers
 ## SavedVariablesPerCharacter: FireMoveBarsChar
 
-Profile.lua
 FireMove.lua
 Attach.lua
 Bars.xml

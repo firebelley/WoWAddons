@@ -385,9 +385,3 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
 		Each(Update)
 	end
 end)
-
--- TEMPORARY (Profile.lua)
-Update = ns.Timed("Button Update", Update)
-Slot = ns.Timed("Button Slot", Slot)
-flasher:SetScript("OnUpdate", ns.Timed("Button flash", flasher:GetScript("OnUpdate")))
-events:SetScript("OnEvent", ns.Timed("Buttons event", events:GetScript("OnEvent"), true))

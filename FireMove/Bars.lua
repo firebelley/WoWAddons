@@ -730,13 +730,3 @@ events:SetScript("OnEvent", function(_, event, addon)
 		SetDragging(false)
 	end
 end)
-
--- TEMPORARY (Profile.lua)
-Grids = ns.Timed("Grids", Grids)
-UpdateShownButtons = ns.Timed("Bar UpdateShownButtons", UpdateShownButtons)
-UpdateDividers = ns.Timed("Bar UpdateDividers", UpdateDividers)
-Apply = ns.Timed("Bar Apply", Apply)
-ApplyAll = ns.Timed("Bars ApplyAll", ApplyAll)
-ns.LayoutChanged = ApplyAll
-SetDragging = ns.Timed("SetDragging", SetDragging)
-events:SetScript("OnEvent", ns.Timed("Bars event", events:GetScript("OnEvent"), true))

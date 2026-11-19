@@ -41,8 +41,6 @@ local function PlaceShown()
 		if frame:IsShown() then Place(frame) end
 	end
 end
-Place = ns.Timed("Place", Place)
-PlaceShown = ns.Timed("PlaceShown", PlaceShown)
 
 -- A child laid over the whole window (like the group finder's tabs) takes the
 -- clicks, so it drags the window too.
@@ -754,11 +752,3 @@ SlashCmdList.FIREMOVE = function(msg)
 			.. "/firemove layers puts this Edit Mode layout's frames back on their usual layers.")
 	end
 end
-
--- TEMPORARY (Profile.lua)
-ApplyLayers = ns.Timed("ApplyLayers", ApplyLayers)
-Reapply = ns.Timed("Reapply", Reapply)
-UpdateBox = ns.Timed("UpdateBox", UpdateBox)
-Switch = ns.Timed("Switch", Switch)
-events:SetScript("OnEvent", ns.Timed("FireMove event", events:GetScript("OnEvent"), true))
-layerEvents:SetScript("OnEvent", ns.Timed("Layers event", layerEvents:GetScript("OnEvent"), true))
