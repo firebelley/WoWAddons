@@ -31,6 +31,7 @@ local TOP = -66
 local ROW = 15
 local C_PROFIT, C_CHANCE, C_SELLS, C_AHEAD = 80, 34, 52, 44
 local GREY = "|cff999999"
+local CUSTOM = "|cff66bbff" -- your own resale price, as in the tracker
 
 ns.Ladder = {}
 local Ladder = ns.Ladder
@@ -178,8 +179,9 @@ local cache = {}
 -- The ladder for id: { rows = { { price, ahead, hours (math.huge: not
 -- going), perHour }, ... }, trend, seen (seconds watched), age } or nil
 -- without listings. count: how many you'd list; floor: in Quick buy, your
--- Up to (what's at or under it you'd buy, so it isn't ahead).
-function Ladder.Work(id, count, floor)
+-- Up to (what's at or under it you'd buy, so it isn't ahead); custom: your
+-- own resale price, a row of its own (custom = true) where it sorts.
+function Ladder.Work(id, count, floor, custom)
 	local list = History(id)
 	local c = cache[id]
 	if not (c and c.n == #list and c.last == (list[#list] and list[#list].at)) then
@@ -190,30 +192,47 @@ function Ladder.Work(id, count, floor)
 	if not book then return nil end
 	local prior = Prior(id)
 	local out = { rows = {}, trend = c.trend, age = age, seen = 0 }
+	local function Row(p)
+		local sp = c.speed[p]
+		if not sp then
+			local drained, seen = Speed(list, p)
+			sp = { drained, seen }
+			c.speed[p] = sp
+		end
+		local drained, seen = sp[1], sp[2]
+		out.seen = math.max(out.seen, seen)
+		local rate -- units a second
+		if prior then
+			rate = (drained + prior * PRIOR_WEIGHT) / (seen + PRIOR_WEIGHT)
+		elseif seen >= MIN_SEEN then
+			rate = drained / seen
+		end
+		local ahead = Under(book, p, floor)
+		local hours
+		if rate then hours = rate > 0 and (ahead + math.max(1, count)) / rate / 3600 or math.huge end
+		return { price = p, ahead = ahead, hours = hours, perHour = rate and rate * 3600 }
+	end
 	local last
 	for i = 1, #book, 2 do
 		local p = book[i] - 1
 		if p > 0 and p ~= last and (not floor or p > floor) then
 			last = p
-			local sp = c.speed[p]
-			if not sp then
-				local drained, seen = Speed(list, p)
-				sp = { drained, seen }
-				c.speed[p] = sp
-			end
-			local drained, seen = sp[1], sp[2]
-			out.seen = math.max(out.seen, seen)
-			local rate -- units a second
-			if prior then
-				rate = (drained + prior * PRIOR_WEIGHT) / (seen + PRIOR_WEIGHT)
-			elseif seen >= MIN_SEEN then
-				rate = drained / seen
-			end
-			local ahead = Under(book, p, floor)
-			local hours
-			if rate then hours = rate > 0 and (ahead + math.max(1, count)) / rate / 3600 or math.huge end
-			out.rows[#out.rows + 1] = { price = p, ahead = ahead, hours = hours, perHour = rate and rate * 3600 }
+			local r = Row(p)
+			r.custom = p == custom or nil
+			out.rows[#out.rows + 1] = r
 			if #out.rows >= LEVELS then break end
+		end
+	end
+	if custom and custom > 0 then
+		local at = #out.rows + 1
+		for i, r in ipairs(out.rows) do
+			if r.price == custom then at = nil break end
+			if r.price > custom then at = i break end
+		end
+		if at then
+			local r = Row(custom)
+			r.custom = true
+			table.insert(out.rows, at, r)
 		end
 	end
 	-- Dearer can't sell sooner: whatever sells before the cheaper price does
@@ -344,9 +363,10 @@ function Ladder.Show(anchor, id, info)
 	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
 	ns.SideWindowIcon(frame, texture or "Interface\\Icons\\INV_Misc_QuestionMark")
 	local count = info.left or 0
-	local key = id .. ":" .. count .. ":" .. tostring(info.floor)
+	local custom = ns.QuickBuy and ns.QuickBuy.Target and ns.QuickBuy.Target(id)
+	local key = id .. ":" .. count .. ":" .. tostring(info.floor) .. ":" .. tostring(custom)
 	if key ~= workedKey or not workedAt or GetTime() - workedAt >= RECALC then
-		worked, workedAt, workedKey = Ladder.Work(id, count, info.floor), GetTime(), key
+		worked, workedAt, workedKey = Ladder.Work(id, count, info.floor, custom), GetTime(), key
 	end
 	local w = worked
 	local cut = 1 - ns.Cut()
@@ -390,7 +410,7 @@ function Ladder.Show(anchor, id, info)
 		for _, r in ipairs(w.rows) do
 			i = i + 1
 			local v = {
-				price = ns.Money(r.price),
+				price = r.custom and (CUSTOM .. ns.Money(r.price) .. "|r") or ns.Money(r.price),
 				ahead = tostring(r.ahead),
 				sells = Duration(r.hours),
 				profit = count > 0 and Signed(math.floor(r.price * cut * count) - (info.short or 0)) or nil,
@@ -401,7 +421,8 @@ function Ladder.Show(anchor, id, info)
 			local speed = not r.perHour and "Not enough data yet."
 				or r.perHour > 0 and ("~%d sell an hour."):format(math.floor(r.perHour + 0.5))
 				or "More listed than sold."
-			Line(i, y, "GameFontHighlightSmall", v, { ns.Money(r.price), ("%d listed cheaper."):format(r.ahead), speed })
+			Line(i, y, "GameFontHighlightSmall", v, { r.custom and ("Your resale price: " .. ns.Money(r.price)) or ns.Money(r.price),
+				("%d listed cheaper."):format(r.ahead), speed })
 			y = y - ROW
 		end
 	end
