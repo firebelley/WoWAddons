@@ -13,3 +13,4 @@ Bars.xml
 Buttons.lua
 Bars.lua
 Style.lua
+Loot.lua

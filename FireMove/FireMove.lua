@@ -12,7 +12,7 @@
 -- puts this layout's back.
 --
 -- Extra action bars: see Bars.lua. Attaching elements to each other: Attach.lua.
--- The main bar's look for the game's other bars: Style.lua.
+-- The main bar's look for the game's other bars: Style.lua. Loot rolls: Loot.lua.
 local _, ns = ...
 local DB -- FireMoveDB: [frame name] = { point, relativePoint, x, y }
 
@@ -163,7 +163,8 @@ local LAYER_NAMES = { BACKGROUND = "Bottom", LOW = "Low", MEDIUM = "Middle", HIG
 -- own = { [frame] = its own strata, before any change },
 -- bars = { [layout] = { [bar] = its settings } } (Bars.lua),
 -- attach = { [layout] = { [frame] = { to, side, off, gap } } } (Attach.lua),
--- style = { [layout] = { [bar] = "main" } } (Style.lua)
+-- style = { [layout] = { [bar] = "main" } } (Style.lua),
+-- loot = { [layout] = { x, y } } (Loot.lua)
 local LDB
 local layers         -- the layout in use's { [frame] = strata }, once known
 local current, previous -- the layout in use, and the one before it
@@ -333,6 +334,7 @@ local function Switch()
 	if ns.LayoutChanged then ns.LayoutChanged() end
 	if ns.Style then ns.Style.Apply() end
 	if ns.Attach then ns.Attach.Apply() end
+	if ns.Loot then ns.Loot.Apply() end
 end
 
 -- The layout in use, as it's kept (nil until known).
@@ -452,6 +454,7 @@ local function Now()
 		bars = DeepCopy(LDB.bars),
 		attach = DeepCopy(LDB.attach),
 		style = DeepCopy(LDB.style),
+		loot = DeepCopy(LDB.loot),
 		char = DeepCopy(ns.CharBars and ns.CharBars() or {}),
 	}
 end
@@ -478,7 +481,7 @@ local function Commit()
 	if not LDB then return end
 	local now = Now()
 	if saved then
-		for _, name in ipairs({ "profiles", "bars", "attach", "style" }) do
+		for _, name in ipairs({ "profiles", "bars", "attach", "style", "loot" }) do
 			for key in pairs(now[name]) do
 				if key:match("^preset:") then now[name][key] = nil end
 			end
@@ -497,6 +500,7 @@ local function Restore(from)
 	LDB.bars = DeepCopy(from.bars)
 	LDB.attach = DeepCopy(from.attach or {})
 	LDB.style = DeepCopy(from.style or {})
+	LDB.loot = DeepCopy(from.loot or {})
 	if ns.SetCharBars then ns.SetCharBars(DeepCopy(from.char)) end
 	layers = nil
 	Switch()
@@ -537,7 +541,7 @@ local function Ask(unsaved)
 		local text = ask:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
 		text:SetPoint("TOP", 0, -22)
 		text:SetWidth(290)
-		text:SetText("Save your changes to FireMove's action bars and layers?")
+		text:SetText("Save your FireMove changes?")
 		local save = CreateFrame("Button", nil, ask, "UIPanelButtonTemplate")
 		save:SetSize(120, 22)
 		save:SetPoint("BOTTOMRIGHT", ask, "BOTTOM", -6, 18)
@@ -574,9 +578,9 @@ end
 
 -- What's kept per layout: layers, and the extra bars' settings (as they are, and as saved).
 local function Stores()
-	local list = { LDB.profiles, LDB.bars, LDB.attach, LDB.style }
+	local list = { LDB.profiles, LDB.bars, LDB.attach, LDB.style, LDB.loot }
 	if saved then
-		for _, name in ipairs({ "profiles", "bars", "attach", "style" }) do
+		for _, name in ipairs({ "profiles", "bars", "attach", "style", "loot" }) do
 			if saved[name] then list[#list + 1] = saved[name] end
 		end
 	end
@@ -614,7 +618,7 @@ local function Made(_, _, layoutType, layoutName, imported)
 	local from = current == key and previous or current
 	if imported or not key or not from then return end
 	local changed
-	for _, name in ipairs({ "profiles", "bars", "attach", "style" }) do
+	for _, name in ipairs({ "profiles", "bars", "attach", "style", "loot" }) do
 		local source = ((stash or LDB)[name] or {})[from]
 		if source and not (LDB[name][key] and next(LDB[name][key])) then
 			LDB[name][key] = DeepCopy(source)
@@ -629,6 +633,7 @@ local function Made(_, _, layoutType, layoutName, imported)
 		if ns.LayoutChanged then ns.LayoutChanged() end
 		if ns.Style then ns.Style.Apply() end
 		if ns.Attach then ns.Attach.Apply() end
+		if ns.Loot then ns.Loot.Apply() end
 	end
 end
 
@@ -686,6 +691,7 @@ layerEvents:SetScript("OnEvent", function(_, event, addon)
 			LDB.bars = LDB.bars or {}
 			LDB.attach = LDB.attach or {}
 			LDB.style = LDB.style or {}
+			LDB.loot = LDB.loot or {}
 			LDB.dump = nil -- from a one-off look at the buttons' frames
 			for key, saved in pairs(old) do
 				LDB.legacy = LDB.legacy or {}

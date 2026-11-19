@@ -48,6 +48,7 @@ local SELECTION = {
 	RightEdge = { atlas = "!%s-NineSlice-EdgeRight" },
 	Center = { atlas = "%s-NineSlice-Center", x = -8, y = 8, x1 = 8, y1 = -8 },
 }
+ns.SELECTION = SELECTION
 
 local CDB           -- FireMoveBarsChar: { [bar] = page }
 local bars = {}     -- [bar] = frame, once made (a deleted one is kept, hidden)
@@ -556,6 +557,7 @@ function Select(n)
 		if manager and manager.ClearSelectedSystem and theirs and theirs:IsShown() then
 			manager:ClearSelectedSystem()
 		end
+		if ns.Loot then ns.Loot.Deselect() end
 		for _, bar in pairs(bars) do Paint(bar) end
 	end
 	ShowDialog()
@@ -567,6 +569,7 @@ function Deselect()
 	selected = nil
 	for _, bar in pairs(bars) do Paint(bar) end
 end
+ns.DeselectBar = function() Deselect() end
 
 ---------------------------------------------------------------------------
 -- New and deleted bars
