@@ -386,6 +386,13 @@ function ns.Seed.Sold(name, auctionID)
 	end
 end
 
+-- The seed price: your live seed's, else what you'd list one at; nil if none.
+function ns.Seed.Price(id)
+	local seed = LiveSeed(id)
+	if seed then return seed.price end
+	return (Price(id))
+end
+
 -- What seeding did in the item's purchase session: how many sold, what they
 -- brought in (after the cut), what was lost (deposits, cancel costs), how
 -- many are up now, and how many came back unsold (cancelled or expired).

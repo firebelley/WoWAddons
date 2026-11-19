@@ -17,6 +17,7 @@ Crafting.lua
 QuickBuy.lua
 SideWindows.lua
 BuyInfo.lua
+Ladder.lua
 Seed.lua
 Listings.lua
 Ledger.lua

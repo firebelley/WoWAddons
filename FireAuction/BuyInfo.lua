@@ -12,6 +12,7 @@
 --   Next buy          the profit per item at your "Up to" price, and how many
 --                     more to buy per 1g of it.
 --   Recent            the last few purchases.
+--   More              opens Listing prices under it (Ladder.lua).
 --
 -- Selling (SellLines), with how much is paid back on the bar:
 --   So far            spent, sold, up, and how many are left (mail too).
@@ -20,6 +21,8 @@
 --   Break even        the lowest price for what's left; at the price, how
 --                     many to sell and how many are then yours for free.
 --   If all sell       the profit if everything left sells at the price.
+--
+-- Under So far, on both: how many to buy for 1g profit at what they cost you.
 --
 -- Everything after the auction house's cut (5%, the neutral one's 15%). Hover a line for how it's
 -- worked out.
@@ -43,7 +46,7 @@ local GREY = "|cff999999"
 local CUSTOM = "|cff66bbff" -- your own resale price, wherever it's used
 local LIST_MAX = 12 -- sessions named in the End all popup
 
-local frame, rows, summary, bar, clearAll
+local frame, rows, summary, bar, clearAll, moreButton
 local autoButton, customButton
 local shownID -- the item the window shows
 local elapsed = 0
@@ -108,6 +111,16 @@ local function BreakEvenRows(Add, short, net, have, label)
 	end
 end
 
+-- How many to buy for 1g profit at what they've cost you on average,
+-- resold at net each (after the cut).
+local function PerGoldRow(Add, bought, spent, net)
+	if bought <= 0 or not net then return end
+	local avg = spent / bought
+	local each = net - avg
+	Add("Buy per 1g profit", nil, each > 0 and tostring(math.ceil(10000 / each)) or (GREY .. "no profit|r"), nil,
+		Tip("Buy per 1g profit", ("At your average cost (%s)."):format(ns.Money(math.floor(avg + 0.5)))))
+end
+
 -- The sell page's lines (see Lines): what you've put in and got back, what
 -- the listing on the sell page would do, and where selling everything leaves
 -- you. Priced at the sell page's Unit Price, else your own, else the cheapest
@@ -149,7 +162,7 @@ local function SellLines(id)
 				Add("Deposits lost", nil, Signed(-seedLost), nil, Tip("Deposits lost", "On cancelled or expired seeds."))
 			end
 		end
-		return lines, summaryText, nil
+		return lines, summaryText, nil, { left = have + seedUp, short = cover - upIncome }
 	end
 
 	local paid = spent + lost
@@ -160,6 +173,7 @@ local function SellLines(id)
 	-- So far
 	Add("So far", nil, nil, "header", Tip("So far", "Since you pressed Start session."))
 	Add(("Bought %d at %s"):format(bought, ns.Money(math.floor(spent / bought + 0.5))), nil, Signed(-spent))
+	PerGoldRow(Add, bought, spent, sell and sell * cut)
 	if soldN > 0 then
 		Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", AfterCut(),
 			seedSold > 0 and listSold > 0 and ("Seeds %d, listings %d."):format(seedSold, listSold) or nil))
@@ -207,7 +221,7 @@ local function SellLines(id)
 			Add("Profit", nil, Signed(total), nil, Tip("Profit", AfterCut()), ns.Percent(total / spent * 100))
 		end
 	end
-	return lines, summaryText, progress
+	return lines, summaryText, progress, { left = left, short = cover - upIncome }
 end
 
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
@@ -248,6 +262,7 @@ local function Lines(id, selling)
 	if bought > 0 then
 		Add("So far", nil, nil, "header", Tip("So far", "Since you pressed Start session."))
 		Add(("Bought %d at %s"):format(bought, ns.Money(math.floor(spent / bought + 0.5))), nil, Signed(-spent))
+		PerGoldRow(Add, bought, spent, net)
 		if seededN > 0 then
 			Add("Bought per seed", nil, ("%.1f"):format(bought / seededN), nil, Tip("Bought per seed",
 				("%d bought for %d seeded."):format(bought, seededN)))
@@ -306,20 +321,25 @@ local function Lines(id, selling)
 		Add("No price to go by yet", nil, nil, "note")
 	end
 
-	-- Next buy, at "Up to": is it worth it.
-	if not max then
-		Add("Next buy", nil, nil, "header")
-		Add("Set \"Up to\" to see", nil, nil, "note")
-	else
-		Add(("Next buy at %s"):format(ns.Money(max)), nil, nil, "header", Tip("Next buy", "At your \"Up to\" price."))
+	-- Next buy, at "Up to": is it worth it. Then at the seed price, the best case.
+	local function NextBuy(at, what)
+		Add(("Next buy at %s"):format(ns.Money(at)), nil, nil, "header", Tip("Next buy", ("At your %s."):format(what)))
 		if sell then
-			local each = net - max
+			local each = net - at
 			Add("Profit each", nil, Signed(each), nil, Tip("Profit each",
-				("Resold %s (%s), less your Up to."):format(CutPhrase(), ns.Money(net))), ns.Percent(each / max * 100))
+				("Resold %s (%s), less your %s."):format(CutPhrase(), ns.Money(net), what)), ns.Percent(each / at * 100))
 			Add("Buy per 1g profit", nil, each > 0 and tostring(math.ceil(10000 / each)) or (GREY .. "no profit|r"))
 		else
 			Add("No price to go by yet", nil, nil, "note")
 		end
+	end
+	if not max then
+		Add("Next buy", nil, nil, "header")
+		Add("Set \"Up to\" to see", nil, nil, "note")
+	else
+		NextBuy(max, "\"Up to\" price")
+		local seedPrice = ns.Seed and ns.Seed.Price and ns.Seed.Price(id)
+		if seedPrice and seedPrice > 0 and seedPrice < max then NextBuy(seedPrice, "seed price") end
 	end
 
 	-- Recent purchases
@@ -331,7 +351,7 @@ local function Lines(id, selling)
 				GREY .. (date and date("%H:%M", entry[3]) or "") .. "|r")
 		end
 	end
-	return lines, summaryText, progress
+	return lines, summaryText, progress, { left = have + seedUp, short = cover - upIncome, floor = max }
 end
 
 ---------------------------------------------------------------------------
@@ -478,7 +498,7 @@ local function Update(id, selling)
 	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
 	ns.SideWindowIcon(frame, texture or "Interface\\Icons\\INV_Misc_QuestionMark")
 
-	local lines, summaryText, progress = Lines(id, selling)
+	local lines, summaryText, progress, info = Lines(id, selling)
 	summary:SetText(summaryText)
 	bar:SetShown(progress ~= nil)
 	if progress then bar:SetValue(progress) end
@@ -540,7 +560,13 @@ local function Update(id, selling)
 		SetLit(autoButton, priceRow.mode == "auto")
 		SetLit(customButton, priceRow.mode == "custom")
 	end
-	frame:SetHeight(-y + PAD)
+	-- More: Listing prices, under the tracker.
+	local open = ns.db.ladderOpen == true
+	moreButton:SetText(open and "Less" or "More")
+	moreButton:ClearAllPoints()
+	moreButton:SetPoint("TOPRIGHT", -PAD + 4, y - 6)
+	frame:SetHeight(-y + 6 + 22 + PAD - 4)
+	if open and ns.Ladder then ns.SafeCall(ns.Ladder.Show, frame, id, info or {}) elseif ns.Ladder then ns.Ladder.Hide() end
 end
 
 ---------------------------------------------------------------------------
@@ -614,6 +640,21 @@ local function CreateWindow()
 			or "Set your own resale price.", nil, nil, nil, true)
 	end)
 
+	moreButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+	moreButton:SetSize(64, 22)
+	moreButton:SetScript("OnClick", function()
+		ns.db.ladderOpen = not ns.db.ladderOpen or nil
+		elapsed = 1
+	end)
+	ns.ClickSound(moreButton)
+	moreButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText("Listing prices", 1, 1, 1)
+		GameTooltip:AddLine("What to list at, and how fast it sells.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	moreButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	f:Hide()
 end
 
@@ -658,7 +699,7 @@ local function Create()
 		local id, selling = Current()
 		clearAll:SetShown(ns.QuickBuy and #ns.QuickBuy.Sessions() > 0)
 		f:SetShown(id ~= nil)
-		if id then ns.SafeCall(Update, id, selling) end
+		if id then ns.SafeCall(Update, id, selling) elseif ns.Ladder then ns.Ladder.Hide() end
 	end)
 	driver:SetScript("OnShow", function() elapsed = 1 end)
 end

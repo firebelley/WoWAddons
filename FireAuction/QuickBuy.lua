@@ -83,6 +83,7 @@ local function Record(id, quantity, total)
 	if (s.bought or 0) == 0 and ns.Listings then ns.Listings.StartSession(s) end
 	s.bought = (s.bought or 0) + quantity
 	s.spent = (s.spent or 0) + total
+	s.boughtEver = (s.boughtEver or 0) + quantity -- never cleared: the market log takes it off (Ladder.lua)
 	s.log = s.log or {}
 	table.insert(s.log, 1, { quantity, total, time() })
 	while #s.log > LOG_SIZE do table.remove(s.log) end
@@ -509,12 +510,12 @@ end)
 -- Market log, for working out a better "Check for" size: the cheapest
 -- listings each time they come in, and every price check (found or not).
 --   ns.db.market = {
---     snaps = { { at, id, max, rows = { price, quantity, ... } } },
+--     snaps = { { at, id, max, mine, rows = { price, quantity, ... } } },
 --     checks = { { at, id, n, max, expected, quoted, hit, age, follow } } }
 --   at: seconds (as time(), to the ms); rows: the cheapest SNAP_ROWS, not
 --   yours; expected: the cheapest n on screen in all; quoted: the game's
 --   price for n (nil: none); age: how old the listings were at the click;
---   follow: a follow-up check.
+--   follow: a follow-up check; mine: how many of it you've bought in all.
 ---------------------------------------------------------------------------
 local SNAPS_KEPT, CHECKS_KEPT, SNAP_ROWS = 4000, 8000, 20
 local clockBase = time() - GetTime()
@@ -549,7 +550,9 @@ local function Snapshot(id)
 			rows[#rows + 1] = open
 		end
 	end
-	Keep(MarketDB().snaps, { at = Stamp(), id = id, max = Settings(id).max, rows = rows }, SNAPS_KEPT)
+	local snap = { at = Stamp(), id = id, max = Settings(id).max, mine = Settings(id).boughtEver or 0, rows = rows }
+	Keep(MarketDB().snaps, snap, SNAPS_KEPT)
+	if ns.Ladder then ns.Ladder.Snapped(id, snap.at, snap.mine, rows) end
 end
 
 local function LogCheck(p, quoted, hit)
