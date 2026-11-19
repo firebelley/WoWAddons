@@ -289,6 +289,21 @@ local function UpdateLive(b)
 	RefreshTooltip(b)
 end
 
+-- A spell waiting for an item (Disenchant...): the cursor shows whether it
+-- can go on the one hovered only once its look is refreshed, which the game
+-- leaves until the cursor crosses the world (so not when the spell came from
+-- a button by the window, or started over a slot). Refreshed here.
+local function RefreshTargetCursor(b) -- b: the slot hovered (else the one under the cursor)
+	if not (SpellIsTargeting and SpellIsTargeting()) then return end
+	if not b then
+		local foci = GetMouseFoci and GetMouseFoci()
+		b = foci and foci[1] or (GetMouseFocus and GetMouseFocus())
+	end
+	if b and b.fbUpdate == UpdateLive then ResetCursor() end
+end
+
+ns.On("CURRENT_SPELL_CAST_CHANGED", function() C_Timer.After(0, RefreshTargetCursor) end)
+
 -- Blizzard's template works out which bag a button belongs to from its
 -- parent's ID, so each bag gets an invisible holder frame per window.
 local function GetHolder(window, bag)
@@ -328,6 +343,7 @@ function IB.AcquireLive(window, bag, slot)
 
 	-- Hovering a new item marks it as seen.
 	b:HookScript("OnEnter", function(self)
+		RefreshTargetCursor(self)
 		if ns.NewItems.IsNew(self.fbBag, self.fbSlot) then
 			ns.NewItems.Clear(self.fbBag, self.fbSlot)
 			SetGlow(self, false)
