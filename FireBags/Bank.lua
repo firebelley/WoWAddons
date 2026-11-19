@@ -98,6 +98,7 @@ end
 local sortTab
 
 local function Refresh(window)
+	if ns.UpdateBankBags then ns.UpdateBankBags() end -- before the layout: it makes room for them
 	if ns.atBank then
 		local sections = ns.GetLiveBankSections()
 		SaveSnapshot(sections)
@@ -130,7 +131,6 @@ local function Refresh(window)
 		end
 	end
 	sortTab:SetEnabledLook(ns.atBank)
-	if ns.UpdateBuyTab then ns.UpdateBuyTab() end
 end
 
 local window = ns.CreateWindow({
@@ -182,63 +182,188 @@ if ns.bankModel == "tabs" then
 end
 
 ---------------------------------------------------------------------------
--- Buying bank tabs (tab-based banks)
+-- Bank bag slots, along the bottom while at a banker, like the game's bank.
+-- On Forever each bank tab after the first is a slot for one of your bags
+-- (its tab holds what fits in that bag). A bought slot shows its bag: click
+-- or drag to take it out or put one in. The next one to buy shows "+": click
+-- to buy it (asked first, with the price). The rest are locked until then.
 ---------------------------------------------------------------------------
+local BagIndex = Enum and Enum.BagIndex or {}
 local BANK_TYPE = Enum and Enum.BankType and Enum.BankType.Character
+local TAB_BAGS = BagIndex.Characterbanktab -- the slots the bags sit in
+local BAG_GAP = 4
+local SLOT = ns.SLOT_SIZE
 
-local function CanBuyTab()
-	if not (ns.atBank and BANK_TYPE and C_Bank and C_Bank.CanPurchaseBankTab) then return false end
-	local ok, can = pcall(C_Bank.CanPurchaseBankTab, BANK_TYPE)
-	return ok and can or false
+local function UsesBags()
+	return ns.bankModel == "tabs" and BANK_TYPE and TAB_BAGS and C_Bank and C_Bank.FetchMaxNumBankTabs
+		and C_Bank.FetchPurchasedBankTabData
+		and (not C_Bank.ShouldUsePlayerBagsInBank or C_Bank.ShouldUsePlayerBagsInBank())
 end
 
--- cost (copper), canAfford — either may be nil if the client doesn't say.
-local function NextTabCost()
-	if C_Bank and C_Bank.FetchNextPurchasableBankTabData then
-		local ok, data = pcall(C_Bank.FetchNextPurchasableBankTabData, BANK_TYPE)
-		if ok and type(data) == "table" then return data.tabCost, data.canAfford end
+local function Call(fn, ...)
+	local ok, a = pcall(fn, ...)
+	if ok then return a end
+end
+
+-- cost (copper), canAfford: the next slot's; nil when there's none to buy.
+local function NextCost()
+	local data = C_Bank.FetchNextPurchasableBankTabData and Call(C_Bank.FetchNextPurchasableBankTabData, BANK_TYPE)
+	if type(data) == "table" and data.tabCost then return data.tabCost, data.canAfford end
+end
+
+-- Only Blizzard's bank window can buy slots: this offers Blizzard's bags and
+-- bank for the next session, until its bank visit ends (Core.lua). Our own
+-- box, not the game's popups.
+local confirm
+local function ConfirmBuy()
+	local cost = NextCost()
+	if not cost then return end
+	if not confirm then
+		confirm = CreateFrame("Frame", "FireBagsBuyBankSlot", UIParent, "BackdropTemplate")
+		confirm:SetSize(340, 112)
+		confirm:SetPoint("TOP", 0, -135)
+		confirm:SetFrameStrata("DIALOG")
+		confirm:EnableMouse(true)
+		confirm:SetBackdrop({
+			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+			tile = true, tileSize = 32, edgeSize = 32,
+			insets = { left = 11, right = 12, top = 12, bottom = 11 },
+		})
+		confirm.text = confirm:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		confirm.text:SetPoint("TOP", 0, -24)
+		confirm.text:SetWidth(280)
+		local yes = CreateFrame("Button", nil, confirm, "UIPanelButtonTemplate")
+		yes:SetSize(110, 22)
+		yes:SetPoint("BOTTOMRIGHT", confirm, "BOTTOM", -6, 18)
+		yes:SetText(YES or "Yes")
+		yes:SetScript("OnClick", function()
+			confirm:Hide()
+			ns.db.blizzardOnce = true
+			window:Hide() -- ends the visit
+			ns.Print("type /reload, then talk to the banker.")
+		end)
+		confirm.yes = yes
+		local no = CreateFrame("Button", nil, confirm, "UIPanelButtonTemplate")
+		no:SetSize(110, 22)
+		no:SetPoint("BOTTOMLEFT", confirm, "BOTTOM", 6, 18)
+		no:SetText(CANCEL or "Cancel")
+		no:SetScript("OnClick", function() confirm:Hide() end)
+		table.insert(UISpecialFrames, "FireBagsBuyBankSlot")
 	end
+	local _, canAfford = NextCost()
+	confirm.text:SetText("Only Blizzard's bank window can buy slots (" .. API.FormatMoney(cost) .. ").\n"
+		.. "Use Blizzard's bags and bank after your next /reload?"
+		.. (canAfford == false and "\n|cffff4040You can't afford it.|r" or ""))
+	confirm.yes:SetEnabled(canAfford ~= false)
+	confirm:Show()
 end
 
--- The client only lets Blizzard's own bank window buy tabs, so this button
--- explains how to do it instead of buying.
-StaticPopupDialogs.FIREBAGS_BUY_BANK_TAB = {
-	text = "Addons can't buy bank tabs.\n\nTo buy one%s, disable FireBags, buy it at a banker, then turn FireBags "
-		.. "back on.",
-	button1 = OKAY,
-	timeout = 0,
-	whileDead = true,
-	hideOnEscape = true,
-	preferredIndex = 3,
-}
+local bagBar = CreateFrame("Frame", nil, window)
+bagBar:SetHeight(SLOT)
+bagBar:Hide()
+window:SetBottomBar(bagBar)
+local bagButtons = {}
 
-local buyTab = window:AddTab({
-	title = "Buy Bank Tab",
-	text = function()
-		local cost, canAfford = NextTabCost()
-		local lines = {}
-		if cost then
-			local price = API.FormatMoney(cost)
-			if canAfford == false then
-				table.insert(lines, "|cffff4040Costs " .. price .. " — you can't afford it yet.|r")
-			else
-				table.insert(lines, "Costs " .. price .. ".")
-			end
+local function Pickup(b)
+	if b.state == "bought" then C_Container.PickupContainerItem(TAB_BAGS, b.slot) end
+end
+
+local function BagTooltip(b)
+	GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+	if b.state == "bought" then
+		if not GameTooltip:SetBagItem(TAB_BAGS, b.slot) then
+			GameTooltip:SetText(BANK_BAG or "Bank bag slot")
+			GameTooltip:AddLine("Put a bag here to add its slots to your bank.", 1, 1, 1, true)
 		end
-		table.insert(lines, "|cff999999Addons can't buy bank tabs; click for how to buy one.|r")
-		return table.concat(lines, "\n")
-	end,
-	atlas = "communities-icon-addchannelplus",
-	icon = "Interface\\Buttons\\UI-PlusButton-Up",
-	onClick = function()
-		local cost = NextTabCost()
-		StaticPopup_Show("FIREBAGS_BUY_BANK_TAB", cost and (" (" .. API.FormatMoney(cost) .. ")") or "")
-	end,
-})
-buyTab:Hide()
+	elseif b.state == "next" then
+		local cost, canAfford = NextCost()
+		GameTooltip:SetText(BANK_BAG_PURCHASE or "Buy bank bag slot")
+		if cost then
+			GameTooltip:AddLine(API.FormatMoney(cost), canAfford == false and 1 or 1, canAfford == false and 0.25 or 1,
+				canAfford == false and 0.25 or 1)
+		end
+		GameTooltip:AddLine("Bought in Blizzard's bank window.", 0.6, 0.6, 0.6)
+	else
+		GameTooltip:SetText(BANK_BAG_PURCHASE or "Buy bank bag slot")
+		GameTooltip:AddLine("Buy the slots before it first.", 0.6, 0.6, 0.6)
+	end
+	GameTooltip:Show()
+end
 
-function ns.UpdateBuyTab()
-	buyTab:SetShown(CanBuyTab())
+local function BagButton(i)
+	local b = CreateFrame("Button", nil, bagBar)
+	b:SetSize(SLOT, SLOT)
+	b:SetPoint("LEFT", (i - 1) * (SLOT + BAG_GAP), 0)
+	local bg = b:CreateTexture(nil, "BACKGROUND")
+	bg:SetAllPoints()
+	if API.AtlasExists("bags-item-slot-blank") then
+		bg:SetAtlas("bags-item-slot-blank")
+	else
+		bg:SetTexture("Interface\\Buttons\\UI-EmptySlot-Disabled")
+		bg:SetTexCoord(0.140625, 0.859375, 0.140625, 0.859375)
+	end
+	b.icon = b:CreateTexture(nil, "ARTWORK")
+	b.icon:SetAllPoints()
+	b.mark = b:CreateTexture(nil, "OVERLAY")
+	b.mark:SetSize(SLOT * 0.5, SLOT * 0.5)
+	b.mark:SetPoint("CENTER")
+	local hl = b:CreateTexture(nil, "HIGHLIGHT")
+	hl:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+	hl:SetBlendMode("ADD")
+	hl:SetAllPoints()
+	b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	b:RegisterForDrag("LeftButton")
+	b:SetScript("OnClick", function(self)
+		if self.state == "next" then ConfirmBuy() else Pickup(self) end
+	end)
+	b:SetScript("OnDragStart", Pickup)
+	b:SetScript("OnReceiveDrag", Pickup)
+	b:SetScript("OnEnter", BagTooltip)
+	b:SetScript("OnLeave", GameTooltip_Hide)
+	bagButtons[i] = b
+	return b
+end
+
+-- Shown (and up to date) while at a banker whose tabs hold bags.
+function ns.UpdateBankBags()
+	local show = ns.atBank and UsesBags() and true or false
+	if show then
+		local max = Call(C_Bank.FetchMaxNumBankTabs, BANK_TYPE) or 0
+		local bought = Call(C_Bank.FetchPurchasedBankTabData, BANK_TYPE) or {}
+		local nextOne = NextCost() and #bought + 1
+		local n = 0
+		-- The first tab is the bank itself: the slots start with the second
+		-- (unless the first isn't bought yet - it's free - then with it).
+		for slot = nextOne == 1 and 1 or 2, max do
+			n = n + 1
+			local b = bagButtons[n] or BagButton(n)
+			b.slot = slot
+			b.state = bought[slot] and "bought" or (slot == nextOne and "next") or "locked"
+			local info = b.state == "bought" and API.GetSlotInfo(TAB_BAGS, slot)
+			b.icon:SetTexture(info and info.iconFileID or nil)
+			b.icon:SetDesaturated(info and info.isLocked or false)
+			b.mark:Show()
+			if info then
+				b.mark:Hide()
+			elseif b.state == "bought" then
+				b.mark:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
+				b.mark:SetVertexColor(0.5, 0.5, 0.5, 0.45)
+			elseif b.state == "next" then
+				b.mark:SetTexture("Interface\\PaperDollInfoFrame\\Character-Plus")
+				b.mark:SetVertexColor(1, 1, 1, 1)
+			else
+				b.mark:SetTexture("Interface\\PetBattles\\PetBattle-LockIcon")
+				b.mark:SetVertexColor(1, 1, 1, 0.6)
+			end
+			b:Show()
+			if GameTooltip:IsOwned(b) then BagTooltip(b) end
+		end
+		for i = n + 1, #bagButtons do bagButtons[i]:Hide() end
+		show = n > 0
+		bagBar:SetWidth(math.max(1, n * (SLOT + BAG_GAP) - BAG_GAP))
+	end
+	bagBar:SetShown(show)
 end
 
 window:HookScript("OnShow", function()
@@ -311,6 +436,10 @@ end
 -- Banker visits
 ---------------------------------------------------------------------------
 local function OnBankOpened()
+	if ns.blizzardBank then -- Blizzard's window this visit (to buy a slot)
+		ns.blizzardBankUsed = true
+		return
+	end
 	if ns.atBank then return end
 	ns.atBank = true
 	if window:IsShown() then
@@ -325,6 +454,24 @@ local function OnBankOpened()
 end
 
 local function OnBankClosed()
+	-- That visit with Blizzard's window is over: ours again, once it's shut.
+	if ns.blizzardBank then
+		if ns.blizzardBankUsed then
+			ns.blizzardBankUsed = nil
+			local tries = 0
+			local function Back()
+				tries = tries + 1
+				if not ns.blizzardBank then return end
+				if BankFrame and BankFrame:IsShown() and tries < 20 then
+					C_Timer.After(0.1, Back)
+				else
+					ns.TakeOver()
+				end
+			end
+			C_Timer.After(0, Back)
+		end
+		return
+	end
 	if not ns.atBank then return end
 	ns.atBank = false
 	CloseAllBags(window)
@@ -358,5 +505,8 @@ ns.On("BAG_UPDATE", function(bag)
 end)
 ns.On("BAG_UPDATE_DELAYED", Relayout)
 ns.On("BAG_CONTAINER_UPDATE", Relayout)
-ns.On("ITEM_LOCK_CHANGED", function(bag, slot) window:UpdateSlot(bag, slot) end)
+ns.On("ITEM_LOCK_CHANGED", function(bag, slot)
+	if TAB_BAGS and bag == TAB_BAGS then Relayout() else window:UpdateSlot(bag, slot) end -- a bank bag picked up
+end)
+ns.On("PLAYER_MONEY", function() if bagBar:IsShown() then ns.UpdateBankBags() end end)
 ns.On("GET_ITEM_INFO_RECEIVED", function() window:RequestButtonUpdate() end)

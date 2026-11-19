@@ -140,6 +140,14 @@ function Window:SetFooter(text)
 	if self.footerText then self.footerText:SetText(text or "") end
 end
 
+-- A row under the slots (the bank's bag slots): room is made for it while
+-- it's shown. Call RequestRefresh after showing or hiding it.
+function Window:SetBottomBar(bar)
+	self.bottomBar = bar
+	bar:ClearAllPoints()
+	bar:SetPoint("BOTTOMLEFT", self, "BOTTOMLEFT", self.metrics.left, self.metrics.bottom)
+end
+
 -- Where the side tab at index i (from 0) goes, from the window's top right.
 function Window:TabOffset(i)
 	return self.metrics.tabX, self.metrics.tabTop - i * (TAB_SIZE + TAB_GAP)
@@ -351,6 +359,11 @@ function Window:LayoutSections(sections, acquire)
 	end
 
 	local height = -y + m.bottom + (self.footerText and FOOTER_HEIGHT or 0)
+	local bar = self.bottomBar
+	if bar and bar:IsShown() then
+		height = height + bar:GetHeight() + SECTION_GAP
+		width = math.max(width, m.left + m.right + bar:GetWidth())
+	end
 	self:SetSize(width, height)
 end
 

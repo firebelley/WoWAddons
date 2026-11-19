@@ -1,5 +1,5 @@
 -- Replaces Blizzard's bag and bank windows, and handles slash commands.
-local _, ns = ...
+local ADDON_NAME, ns = ...
 
 local hiddenParent = CreateFrame("Frame")
 hiddenParent:Hide()
@@ -44,7 +44,7 @@ local function IsBlizzardInventoryOpen()
 end
 
 function ns.CloseBlizzardBags()
-	if not IsBlizzardInventoryOpen() then return end
+	if ns.blizzardBank or not IsBlizzardInventoryOpen() then return end
 	CloseAllBags()
 	-- CloseAllBags only closes bags it opened for a given frame on some
 	-- clients; make sure carried bags are closed too.
@@ -90,8 +90,15 @@ end
 ---------------------------------------------------------------------------
 -- Bank
 --
--- Blizzard's bank window is stopped from reacting to banker visits; Bank.lua
--- listens for those itself.
+-- Blizzard's bank window still opens at every banker visit (the game's own
+-- code does it), but under a hidden parent it never shows; Bank.lua listens
+-- for the visits itself.
+--
+-- Only Blizzard's window can buy bank slots, and only untouched by us: it
+-- opens the bags as it opens, and once we've opened or closed bags ourselves
+-- that taints it. So for that, after asking (Bank.lua), the next session
+-- (you type /reload) leaves Blizzard's bags and bank alone until a bank
+-- visit ends; then we take over again.
 ---------------------------------------------------------------------------
 local function HideBlizzardBank()
 	if not BankFrame then return end
@@ -99,11 +106,35 @@ local function HideBlizzardBank()
 	BankFrame:SetParent(hiddenParent)
 end
 
-ns.On("PLAYER_LOGIN", function()
+local hooked
+local function TakeOver()
+	ns.blizzardBank = false
 	HideBlizzardBags()
-	HookBlizzardBagFunctions()
+	if not hooked then
+		hooked = true
+		HookBlizzardBagFunctions()
+	end
 	HideBlizzardBank()
+	RequestSync()
+end
+ns.TakeOver = TakeOver
+
+ns.On("PLAYER_LOGIN", function()
+	if ns.db and ns.db.blizzardOnce then
+		ns.db.blizzardOnce = nil
+		ns.blizzardBank = true
+		ns.Print("Blizzard's bags and bank until you close the bank.")
+	else
+		TakeOver()
+	end
 end)
+
+-- When the game blocks one of our calls, say which (its popup doesn't).
+local function Blocked(addon, func)
+	if addon == ADDON_NAME then ns.Print("blocked: " .. tostring(func)) end
+end
+ns.On("ADDON_ACTION_FORBIDDEN", Blocked)
+ns.On("ADDON_ACTION_BLOCKED", Blocked)
 
 ---------------------------------------------------------------------------
 -- Trading: open the bags with the trade window, like vendors and the bank do.
@@ -111,10 +142,10 @@ end)
 -- bags if the trade opened them (not if they were already open).
 ---------------------------------------------------------------------------
 ns.On("TRADE_SHOW", function()
-	OpenAllBags(TradeFrame)
+	if not ns.blizzardBank then OpenAllBags(TradeFrame) end
 end)
 ns.On("TRADE_CLOSED", function()
-	CloseAllBags(TradeFrame)
+	if not ns.blizzardBank then CloseAllBags(TradeFrame) end
 end)
 
 ---------------------------------------------------------------------------
@@ -136,7 +167,7 @@ SlashCmdList.FIREBAGS = function(input)
 	local cmd = strtrim(input or ""):lower():match("^(%S*)")
 
 	if cmd == "" then
-		ToggleAllBags()
+		if not ns.blizzardBank then ToggleAllBags() end
 	elseif cmd == "bank" then
 		ns.ToggleBank()
 	elseif cmd == "debugbank" then
