@@ -26,15 +26,18 @@ local KEEP = 14 * 86400
 local last = {} -- [house] = { t, groups } the previous scan
 
 -- groups: { [itemID] = { ["seller|unit price"] = { count, shortest band } } } (Scan.lua)
+-- Returns what went, { [itemID] = units } (items with none left out), and
+-- the seconds since the scan it's compared with; nil without one.
 function Volume.Scanned(house, groups)
 	local now = time()
 	local prev = last[house]
 	last[house] = { t = now, groups = groups }
-	if not prev then return end
+	if not prev then return nil end
 	local gap = now - prev.t
-	if gap <= 0 or gap > MAX_GAP then return end
+	if gap <= 0 or gap > MAX_GAP then return nil end
 	local realm = ns.Realm(house)
-	if not realm then return end
+	if not realm then return nil end
+	local goneByItem = {}
 	local day = ns.Data.Today()
 	realm.vol = realm.vol or {}
 	realm.vol.cover = realm.vol.cover or {}
@@ -61,6 +64,7 @@ function Volume.Scanned(house, groups)
 			end
 		end
 		local rec = realm.items[id]
+		if gone > 0 then goneByItem[id] = gone end
 		if gone > 0 and rec then
 			rec.ds = rec.ds or {}
 			rec.ds[day] = (rec.ds[day] or 0) + gone
@@ -77,6 +81,7 @@ function Volume.Scanned(house, groups)
 		end
 		for _, e in ipairs(checks) do list[#list + 1] = e end
 	end
+	return goneByItem, gap
 end
 
 local function Cover(house, day)

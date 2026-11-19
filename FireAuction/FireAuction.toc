@@ -25,5 +25,6 @@ Profit.lua
 Sales.lua
 Gold.lua
 Volume.lua
+Archive.lua
 Sync.lua
 Options.lua

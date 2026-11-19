@@ -136,7 +136,12 @@ reader:SetScript("OnUpdate", function(self)
 			end
 		end
 		ns.Data.CommitScan(self.prices, true, self.house)
-		if ns.Volume then ns.SafeCall(ns.Volume.Scanned, self.house, self.groups) end
+		local gone, gap
+		if ns.Volume then
+			local ok, g, s = pcall(ns.Volume.Scanned, self.house, self.groups)
+			if ok then gone, gap = g, s else ns.ReportError(g) end
+		end
+		if ns.Archive then ns.SafeCall(ns.Archive.Scanned, self.house, gone, gap) end
 		Finish(("scanned %d auctions: prices for %d items saved."):format(self.read, items))
 		if ns.Sync then ns.Sync.ScanDone(self.house) end
 		if ns.Window then ns.Window.Refresh() end

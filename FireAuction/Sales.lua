@@ -269,6 +269,7 @@ local function Posted(item, duration, quantity, unit, commodity)
 	elseif AH.CalculateItemDeposit then
 		okD, deposit = pcall(AH.CalculateItemDeposit, item, duration, quantity)
 	end
+	if ns.Archive then ns.SafeCall(ns.Archive.Event, "post", id, quantity, unit, ns.house, ns.DurationSeconds(duration)) end
 	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = ns.DurationSeconds(duration), at = time(),
 		each = okD and type(deposit) == "number" and quantity > 0 and deposit / quantity or nil }
 end
@@ -324,7 +325,10 @@ end
 ns.On("AUCTION_CANCELED", function(auctionID)
 	local c = Char()
 	local a = c and auctionID and c.owned[auctionID]
-	if a then Sales.Log(c, "cancelLog", time(), a.qty or 1, a.name) end
+	if a then
+		Sales.Log(c, "cancelLog", time(), a.qty or 1, a.name)
+		if ns.Archive then ns.SafeCall(ns.Archive.Event, "cancel", a.id or a.name, a.qty or 1, UnitPrice(a), a.house) end
+	end
 	QueryOwned(1)
 end)
 
@@ -618,6 +622,8 @@ ns.On("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", function(kind, text, auctionI
 	local c = Char()
 	if not c then return end
 	if kind == EXPIRED then
+		local a = auctionID and c.owned[auctionID]
+		if a and ns.Archive then ns.SafeCall(ns.Archive.Event, "expire", a.id or a.name, a.qty or 1, UnitPrice(a), a.house) end
 		if auctionID then c.owned[auctionID] = nil end
 		return
 	end
@@ -764,6 +770,9 @@ local function ReadInbox()
 			if s.qty and s.t and not s.logged then
 				s.logged = true
 				Sales.Log(c, "soldLog", s.t, s.qty, s.name)
+				if ns.Archive then
+					ns.SafeCall(ns.Archive.Event, "sold", s.id or s.name, s.qty, s.gross and s.gross / s.qty, s.house, nil, s.t)
+				end
 			end
 			keep[#keep + 1] = s
 		elseif s.inMail or s.delivered then
@@ -777,7 +786,13 @@ local function ReadInbox()
 	for _, m in ipairs(mails) do
 		if not m.used then
 			keep[#keep + 1] = { name = m.name, qty = m.qty, gross = m.gross, net = m.money,
-				exact = true, inMail = true, t = now }
+				exact = true, inMail = true, t = now, logged = true }
+			if m.qty and m.qty > 0 then
+				Sales.Log(c, "soldLog", now, m.qty, m.name)
+				if ns.Archive then
+					ns.SafeCall(ns.Archive.Event, "sold", m.name, m.qty, m.gross and m.gross / m.qty, nil, nil, now)
+				end
+			end
 		end
 	end
 	c.sales = keep

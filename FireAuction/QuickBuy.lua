@@ -210,7 +210,8 @@ local CHECK_HISTORY, CHECK_MIN_HISTORY = 50, 3
 local FOLLOW_UP_MIN = 2 -- a follow-up for fewer: a copper or two cheaper, not worth a click
 local bestKey, bestN
 local function BestSize(id, max, cap)
-	local list = ns.db.attempts and ns.db.attempts.list
+	local store = ns.Store and ns.Store() or ns.db
+	local list = store.attempts and store.attempts.list
 	if not (id and list and max and max > 0 and cap >= 1) then return nil end
 	local key = table.concat({ id, max, cap, tostring(resultsAt), consumed and consumed.qty or 0, #list,
 		tostring(list[#list]) }, " ")
@@ -509,7 +510,7 @@ end)
 ---------------------------------------------------------------------------
 -- Market log, for working out a better "Check for" size: the cheapest
 -- listings each time they come in, and every price check (found or not).
---   ns.db.market = {
+--   ns.Store().market = { (the archive, Archive.lua)
 --     snaps = { { at, id, max, mine, rows = { price, quantity, ... } } },
 --     checks = { { at, id, n, max, expected, quoted, hit, age, follow } } }
 --   at: seconds (as time(), to the ms); rows: the cheapest SNAP_ROWS, not
@@ -522,11 +523,14 @@ local clockBase = time() - GetTime()
 
 local function Stamp() return math.floor((clockBase + GetTime()) * 1000 + 0.5) / 1000 end
 
+-- Kept in the archive (Archive.lua), or FireAuctionDB without one.
+local function Store() return ns.Store and ns.Store() or ns.db end
+
 local function MarketDB()
-	local m = ns.db.market
+	local m = Store().market
 	if type(m) ~= "table" then
 		m = { snaps = {}, checks = {} }
-		ns.db.market = m
+		Store().market = m
 	end
 	return m
 end
@@ -609,7 +613,7 @@ end
 ---------------------------------------------------------------------------
 -- Every purchase attempt, for /fah attempts: how old the listings were at the
 -- click, when the price check and the confirmation went out, and how it ended.
---   ns.db.attempts = { since, refreshes, list = { { t, id, q (how many),
+--   ns.Store().attempts = { (the archive, Archive.lua) since, refreshes, list = { { t, id, q (how many),
 --     total, limit, age, qs, qr, cs, r (seconds after the click: price check
 --     sent, quoted, confirmation sent, ended), quoted, how, why }, ... } }
 --   how: "ok", "quote" (gone before the price check), "buy" (gone between it
@@ -620,10 +624,10 @@ local ATTEMPTS_KEPT = 2000
 local attempt -- the one going on
 
 local function AttemptsDB()
-	local a = ns.db.attempts
+	local a = Store().attempts
 	if type(a) ~= "table" then
 		a = { since = time(), refreshes = 0, list = {} }
-		ns.db.attempts = a
+		Store().attempts = a
 	end
 	return a
 end
@@ -714,7 +718,7 @@ function QuickBuy.PrintAttempts()
 end
 
 function QuickBuy.ClearAttempts()
-	ns.db.attempts = nil
+	Store().attempts = nil
 	AttemptsDB()
 end
 

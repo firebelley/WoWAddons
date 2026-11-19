@@ -1,0 +1,3 @@
+-- Only holds FireAuctionHistoryDB, FireAuction's long-term history, so it
+-- isn't read at every login. FireAuction (Archive.lua) loads it, fills it and
+-- reads it; the format is described there.

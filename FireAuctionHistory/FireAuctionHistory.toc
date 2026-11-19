@@ -1,0 +1,11 @@
+## Interface: 16001
+## Title: FireAuction History
+## Notes: FireAuction's long-term price history. Loaded by FireAuction at the auction house.
+## IconTexture: Interface\Icons\INV_Misc_Book_09
+## Author: Firebelley
+## Version: 0.1.0
+## Dependencies: FireAuction
+## LoadOnDemand: 1
+## SavedVariables: FireAuctionHistoryDB
+
+History.lua

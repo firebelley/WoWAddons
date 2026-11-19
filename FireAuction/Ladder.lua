@@ -13,7 +13,7 @@
 local _, ns = ...
 
 local HIST_GAP = 60          -- seconds between kept snapshots
-local HIST_KEEP = 3 * 86400  -- how long they're kept
+local HIST_KEEP = 30 * 86400 -- how long they're kept
 local PAIR_MAX = 86400       -- snapshots further apart than this aren't compared
 local MIN_SEEN = 600         -- seconds of comparisons before a speed is trusted
 local PRIOR_WEIGHT = 3600    -- the scan estimate counts as this much watching
@@ -38,12 +38,13 @@ local Ladder = ns.Ladder
 
 ---------------------------------------------------------------------------
 -- History: the cheapest listings (not yours) at most once a minute per item,
--- for a few days: ns.db.market.hist[itemID] = { { at, mine, rows }, ... }
+-- for a month: ns.Store().market.hist[itemID] = { { at, mine, rows }, ... }
 -- (rows: price, quantity, ...; mine: how many of it you'd bought in all).
 ---------------------------------------------------------------------------
 local function Market()
-	ns.db.market = type(ns.db.market) == "table" and ns.db.market or { snaps = {}, checks = {} }
-	return ns.db.market
+	local store = ns.Store and ns.Store() or ns.db
+	store.market = type(store.market) == "table" and store.market or { snaps = {}, checks = {} }
+	return store.market
 end
 
 local function Add(hist, id, at, mine, rows)
