@@ -557,7 +557,7 @@ function Select(n)
 		if manager and manager.ClearSelectedSystem and theirs and theirs:IsShown() then
 			manager:ClearSelectedSystem()
 		end
-		if ns.Loot then ns.Loot.Deselect() end
+		if ns.Popups then ns.Popups.Deselect() end
 		for _, bar in pairs(bars) do Paint(bar) end
 	end
 	ShowDialog()
