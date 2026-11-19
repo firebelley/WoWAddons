@@ -170,7 +170,7 @@ local function Pricer(id, item)
 			if h[1] <= day then price = h[2] else break end
 		end
 		price = price or (history[1] and history[1][2])
-		if price then return price * (1 - ns.QuickBuy.AH_CUT) end
+		if price then return price * (1 - ns.Cut(item.house or "faction")) end
 		return avgCost or 0
 	end
 end

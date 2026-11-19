@@ -101,7 +101,7 @@ local function Settle(seed, outcome, extra)
 		ns.db.quickBuy[seed.itemID] = s
 	end
 	-- The Profit tab (Ledger.lua): as far as it's items bought in a session.
-	local income = math.floor(seed.price * seed.qty * (1 - ns.QuickBuy.AH_CUT))
+	local income = math.floor(seed.price * seed.qty * (1 - ns.Cut(seed.house or "faction")))
 	if outcome == "sold" then
 		ns.Ledger.Sold(seed.itemID, seed.qty, income)
 	else

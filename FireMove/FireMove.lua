@@ -493,6 +493,7 @@ local function Commit()
 	saved = now
 	dirty = false
 	SyncButtons()
+	if ns.Popups then ns.Popups.Refresh() end
 end
 
 local function Restore(from)
@@ -520,6 +521,12 @@ end
 function ns.SavedBar(n)
 	local layout = saved and current and saved.bars[current]
 	return layout and layout[n]
+end
+
+-- Where a popup box (Popups.lua) is in this layout as last saved (nil: its default).
+function ns.SavedPopup(key)
+	local layout = saved and current and saved.popups and saved.popups[current]
+	return layout and layout[key]
 end
 
 -- Left Edit Mode with only our changes unsaved (the game didn't ask): ask.

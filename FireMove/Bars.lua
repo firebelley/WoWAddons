@@ -31,11 +31,6 @@ local DRIVER = { Always = "show", InCombat = "[combat] show; hide", OutOfCombat 
 local GRID_ALWAYS = ACTION_BUTTON_SHOW_GRID_REASON_CVAR or 1
 local GRID_DRAG = ACTION_BUTTON_SHOW_GRID_REASON_EVENT or 2
 local GRID_EDIT, GRID_BIND = 0x100, 0x200
-local SNAP = 10 -- a bar dropped this near another lines up with it
-local BLIZZARD_BARS = {
-	"MainActionBar", "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft",
-	"MultiBar5", "MultiBar6", "MultiBar7", "StanceBar", "PetActionBar",
-}
 -- The game's look for a frame in Edit Mode.
 local SELECTION = {
 	TopRightCorner = { atlas = "%s-NineSlice-Corner", mirrorLayout = true, x = 8, y = 8 },
@@ -298,47 +293,11 @@ function Apply(n)
 	Paint(bar)
 end
 
--- How far to move a dropped bar to line it up with one it's near: side by
--- side (touching, tops or bottoms even) or stacked (touching, edges even).
-local function Snap(bar)
-	local l, b, w, h = bar:GetRect()
-	if not l then return 0, 0 end
-	local r, t = l + w, b + h
-	local bestX, bestY
-	local function Try(best, d)
-		if math.abs(d) < SNAP and (not best or math.abs(d) < math.abs(best)) then return d end
-		return best
-	end
-	local targets = {}
-	for n, other in pairs(bars) do
-		if other ~= bar and Live(n) then targets[#targets + 1] = other end
-	end
-	for _, name in ipairs(BLIZZARD_BARS) do
-		local f = _G[name]
-		if f and f.IsVisible and f:IsVisible() then targets[#targets + 1] = f end
-	end
-	for _, f in ipairs(targets) do
-		local fl, fb, fw, fh = f:GetRect()
-		if fl then
-			local k = f:GetEffectiveScale() / bar:GetEffectiveScale()
-			fl, fb, fw, fh = fl * k, fb * k, fw * k, fh * k
-			local fr, ft = fl + fw, fb + fh
-			if b < ft + SNAP and t > fb - SNAP then -- side by side
-				bestX = Try(Try(bestX, fr - l), fl - r)
-				bestY = Try(Try(bestY, fb - b), ft - t)
-			end
-			if l < fr + SNAP and r > fl - SNAP then -- stacked
-				bestY = Try(Try(bestY, ft - b), fb - t)
-				bestX = Try(Try(bestX, fl - l), fr - r)
-			end
-		end
-	end
-	return bestX or 0, bestY or 0
-end
-
+-- A dropped bar lines up like the game's elements do (FireEditMode.lua: the
+-- grid, the screen, other elements; red lines show where as it moves).
 local function Dropped(bar)
 	if ns.Attach then ns.Attach.Detach(bar, true) end
-	local dx, dy = Snap(bar)
+	local dx, dy = FireEditMode.SnapMove(bar)
 	local x, y = bar:GetCenter()
 	local ux, uy = UIParent:GetCenter()
 	if not (x and ux) then return end
@@ -367,8 +326,10 @@ local function MakeSelection(bar)
 		if Locked() then return end
 		Select(bar.n)
 		bar:StartMoving()
+		FireEditMode.Preview(bar)
 	end)
 	s:SetScript("OnDragStop", function()
+		FireEditMode.StopPreview()
 		bar:StopMovingOrSizing()
 		Dropped(bar)
 	end)

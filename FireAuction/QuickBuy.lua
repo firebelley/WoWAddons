@@ -36,7 +36,6 @@ local QUOTE_WAIT = 5     -- seconds to wait for the game's price quote
 local QUOTE_TIMEOUT = 10 -- seconds to wait for the purchase itself, once confirmed
 local RECONFIRMS = 3     -- times a purchase is confirmed again when its price changes (still within "Up to")
 local RESENDS = 3        -- times a confirmation the game dropped is sent again
-local AH_CUT = 0.05
 
 local panel, body, start, button, clear, status, wantBox, coinBoxes
 local checkToggle, checkBox, checkHint -- "Check for [N]"
@@ -57,10 +56,11 @@ local resultsAt       -- when the listings on screen came in
 local TAKEN = "|cffff5050Not available|r (someone else bought them)"
 
 -- The lowest price each that sells `count` of them for more than `total`,
--- after the auction house's cut.
+-- after the cut of the auction house you're at.
 local function RelistPrice(total, count)
-	local price = math.floor(total / ((1 - AH_CUT) * count)) + 1
-	while math.floor(price * count * (1 - AH_CUT)) <= total do price = price + 1 end
+	local keep = 1 - ns.Cut()
+	local price = math.floor(total / (keep * count)) + 1
+	while math.floor(price * count * keep) <= total do price = price + 1 end
 	return price
 end
 
@@ -1080,7 +1080,6 @@ end
 -- For the panel on the right (BuyInfo.lua)
 ---------------------------------------------------------------------------
 QuickBuy.RelistPrice = RelistPrice
-QuickBuy.AH_CUT = AH_CUT
 
 -- Your own resale price for an item (copper), or nil: the "Target" you set in
 -- the panel on the right (BuyInfo.lua). Kept through End session, like Want and Up to.

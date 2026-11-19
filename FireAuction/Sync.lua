@@ -32,12 +32,13 @@
 --   E stream messages records                the stream is over
 -- summary = newest-scan today K checksum*K (3 characters per day, the last K
 --   days; 0 for a day without prices)
--- record  = id-gap mask [price qty age market] (dayprice scans)...
+-- record  = id-gap mask [price qty age market] (dayprice scans listed)...
 --   (mask bit 1: the latest prices follow - lowest, how many, how old, and the
 --   market price; bit j+1: a price for the stream's day j - the day's market
---   price, and how many scans it averages)
+--   price, how many scans it averages, and how many were listed (0: not known))
 --
--- Version 2 added the market price, version 3 the scans per day. Versions
+-- Version 2 added the market price, version 3 the scans per day, version 4
+-- how many were listed each day. Versions
 -- don't mix: messages from another version are ignored, and you're told once
 -- (per member) that someone needs to update.
 local _, ns = ...
@@ -46,7 +47,7 @@ local Sync = {}
 ns.Sync = Sync
 
 local PREFIX = "FireAH"
-local VERSION = 3
+local VERSION = 4
 local MAX_LEN = 250      -- characters per message (the game allows 255)
 local MAX_DAYS = 60      -- days of history compared and shared
 local HELLO_DELAY = 12   -- seconds after logging in
@@ -227,10 +228,11 @@ local function Full(realm) return (ns.LastScan(realm)) end
 local function WindowDays() return math.min(ns.db.historyDays or 30, MAX_DAYS) end
 
 -- A day's checksum: the sum of one number per item, worked out from the item,
--- its price and how many scans that averages. 18 bits (3 characters).
+-- its price, how many scans that averages and how many were listed. 18 bits
+-- (3 characters).
 local HASH = 2 ^ 18
-local function ItemHash(id, price, scans)
-	local v = (id * 7919 + Quantize(price) * 104729 + scans * 1299709) % 1000003
+local function ItemHash(id, price, scans, listed)
+	local v = (id * 7919 + Quantize(price) * 104729 + scans * 1299709 + (listed or 0) * 15485863) % 1000003
 	return (v * v + id) % HASH
 end
 
@@ -244,7 +246,7 @@ local function Summary(house)
 	for id, rec in pairs(realm.items) do
 		for day, price in pairs(rec.d) do
 			if day >= from and day <= today then
-				hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day))) % HASH
+				hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day), ns.Data.Listed(rec, day))) % HASH
 			end
 		end
 	end
@@ -395,7 +397,7 @@ local function RecordText(s, rec, gap)
 		local p = rec.d[day]
 		if p then
 			flags[j + 1] = true
-			prices[#prices + 1] = Price12(p) .. Num(ns.Data.Scans(rec, day))
+			prices[#prices + 1] = Price12(p) .. Num(ns.Data.Scans(rec, day)) .. Num(ns.Data.Listed(rec, day) or 0)
 		end
 	end
 	if not latest and #prices == 0 then return nil end
@@ -549,13 +551,16 @@ local function OnBegin(r, from, sender)
 	}
 end
 
--- Theirs replaces ours: more scans, or as many and a higher price.
-local function Better(price, scans, ourPrice, ourScans)
+-- Theirs replaces ours: more scans; or as many and a higher price; or the
+-- same and more listed.
+local function Better(price, scans, listed, ourPrice, ourScans, ourListed)
 	if scans ~= ourScans then return scans > ourScans end
-	return price > Quantize(ourPrice)
+	local q = Quantize(ourPrice)
+	if price ~= q then return price > q end
+	return (listed or 0) > (ourListed or 0)
 end
 
--- dayPrices = { [day] = { price, scans } }
+-- dayPrices = { [day] = { price, scans, listed } }
 local function Merge(st, realm, id, p, q, s, m, dayPrices)
 	local today = Today()
 	local rec = realm.items[id]
@@ -569,14 +574,14 @@ local function Merge(st, realm, id, p, q, s, m, dayPrices)
 			if not new then st.updated = st.updated + 1 end
 			-- A scan you didn't have: it counts toward its day, like yours.
 			local day = floor(s / 86400)
-			if day >= oldest and day <= today then ns.Data.AddScan(rec, day, m) end
+			if day >= oldest and day <= today then ns.Data.AddScan(rec, day, m, q) end
 		end
 	end
 	for day, theirs in pairs(dayPrices) do
 		if day >= oldest and st.okDay[day] then
 			local ours = ns.Data.Scans(rec, day)
-			if ours == 0 or Better(theirs[1], theirs[2], rec.d[day], ours) then
-				ns.Data.SetDay(rec, day, theirs[1], theirs[2])
+			if ours == 0 or Better(theirs[1], theirs[2], theirs[3], rec.d[day], ours, ns.Data.Listed(rec, day)) then
+				ns.Data.SetDay(rec, day, theirs[1], theirs[2], theirs[3])
 				st.filled = st.filled + 1
 			end
 		end
@@ -626,7 +631,9 @@ local function OnData(r, from)
 			for j, day in ipairs(st.days) do
 				if flags[j + 1] then
 					local price = r:Price12()
-					dayPrices[day] = { price, math.max(1, r:Num()) }
+					local scans = math.max(1, r:Num())
+					local listed = r:Num()
+					dayPrices[day] = { price, scans, listed > 0 and listed < 1e7 and listed or nil }
 				end
 			end
 			-- Sanity: skip anything that can't be a real price.

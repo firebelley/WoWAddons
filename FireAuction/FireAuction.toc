@@ -23,5 +23,6 @@ Ledger.lua
 Profit.lua
 Sales.lua
 Gold.lua
+Volume.lua
 Sync.lua
 Options.lua

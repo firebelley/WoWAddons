@@ -202,6 +202,11 @@ end)
 --   your faction's.
 ns.house = nil
 
+-- The auction house's cut of a sale: 5%, the neutral one's 15%.
+function ns.Cut(house)
+	return (house or ns.house) == "neutral" and 0.15 or 0.05
+end
+
 function ns.HouseName(house)
 	house = house or ns.house or "faction"
 	if house == "neutral" then return "Neutral" end

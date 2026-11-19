@@ -165,21 +165,40 @@ for _, e in ipairs(ALL) do
 	s:SetScript("OnDragStart", function()
 		Select(e)
 		box:StartMoving()
+		FireEditMode.Preview(box)
 	end)
 	s:SetScript("OnDragStop", function()
+		FireEditMode.StopPreview()
 		box:StopMovingOrSizing()
+		local dx, dy = FireEditMode.SnapMove(box)
 		local x, y = box:GetCenter()
 		local ux, uy = UIParent:GetCenter()
-		if x and ux then SetPos(e, { math.floor(x - ux + 0.5), math.floor(y - uy + 0.5) }) end
+		if x and ux then SetPos(e, { math.floor(x - ux + dx + 0.5), math.floor(y - uy + dy + 0.5) }) end
 	end)
 	s:SetScript("OnEnter", function() s.hover:Show() end)
 	s:SetScript("OnLeave", function() s.hover:Hide() end)
 	box.selection = s
 end
 
+local function Same(a, b)
+	if a == nil or b == nil then return a == b end
+	return a[1] == b[1] and a[2] == b[2]
+end
+
+-- Laid out as the game's (EditModeSystemSettingsDialog): its title, Revert
+-- Changes, a divider, Reset To Default Position.
+local function DialogButton(width, y, text, onClick)
+	local b = CreateFrame("Button", nil, dialog, "UIPanelButtonTemplate")
+	b:SetSize(width, 28)
+	b:SetPoint("TOPLEFT", 20, y)
+	b:SetText(text)
+	b:SetScript("OnClick", onClick)
+	return b
+end
+
 local function CreateDialog()
 	dialog = CreateFrame("Frame", "FireMovePopupDialog", UIParent)
-	dialog:SetSize(300, 96)
+	dialog:SetSize(383, 150)
 	dialog:SetFrameStrata("DIALOG")
 	dialog:SetFrameLevel(200)
 	dialog:SetClampedToScreen(true)
@@ -207,11 +226,17 @@ local function CreateDialog()
 	local close = CreateFrame("Button", nil, dialog, "UIPanelCloseButton")
 	close:SetPoint("TOPRIGHT")
 	close:SetScript("OnClick", function() Popups.Deselect() end)
-	dialog.reset = CreateFrame("Button", nil, dialog, "UIPanelButtonTemplate")
-	dialog.reset:SetSize(250, 22)
-	dialog.reset:SetPoint("TOP", 0, -50)
-	dialog.reset:SetText("Reset To Default Position")
-	dialog.reset:SetScript("OnClick", function()
+	-- Back where it was last saved.
+	dialog.revert = DialogButton(180, -54, HUD_EDIT_MODE_REVERT_CHANGES or "Revert Changes", function()
+		if not selected then return end
+		local saved = ns.SavedPopup and ns.SavedPopup(selected.key)
+		SetPos(selected, saved and { saved[1], saved[2] })
+	end)
+	local divider = dialog:CreateTexture(nil, "ARTWORK")
+	divider:SetTexture("Interface\\FriendsFrame\\UI-FriendsFrame-OnlineDivider")
+	divider:SetSize(330, 16)
+	divider:SetPoint("TOPLEFT", 20, -84)
+	dialog.reset = DialogButton(330, -102, HUD_EDIT_MODE_RESET_POSITION or "Reset To Default Position", function()
 		if selected then SetPos(selected, nil) end
 	end)
 	dialog:Hide()
@@ -220,6 +245,7 @@ end
 local function RefreshDialog()
 	if not (dialog and selected) then return end
 	dialog.title:SetText(selected.label)
+	dialog.revert:SetEnabled(not Same(Pos(selected), ns.SavedPopup and ns.SavedPopup(selected.key)))
 	dialog.reset:SetEnabled(Pos(selected) ~= nil)
 end
 
@@ -233,6 +259,7 @@ function Select(e)
 			manager:ClearSelectedSystem()
 		end
 		if ns.DeselectBar then ns.DeselectBar() end
+		if FireEditMode and FireEditMode.Deselect then FireEditMode.Deselect() end
 		PaintAll()
 	end
 	if not dialog then CreateDialog() end
@@ -260,6 +287,8 @@ function Popups.Apply()
 	for _, e in ipairs(ALL) do ApplyOne(e) end
 	RefreshDialog()
 end
+
+Popups.Refresh = RefreshDialog -- saved: nothing to revert
 
 function SetPos(e, pos)
 	local all, key = Store()

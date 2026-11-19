@@ -13,6 +13,8 @@
 --        buyouts), yours and your guild's
 --   dn = { [day] = scans } - how many scans a day's price averages (only
 --        when more than one)
+--   dq = { [day] = listed } - how many were listed that day: the average of
+--        the same scans (days from before it was kept have none)
 --   (td, n = the latest scan's day and its scans: how dn used to be kept)
 --   l  = the latest scan's listings: "n,buyout,stack,bid;..." where n is how
 --        many identical auctions there were (bid only for bid-only ones)
@@ -94,7 +96,7 @@ function Data.CommitScan(prices, complete, house)
 			for key, count in pairs(p.list) do parts[#parts + 1] = count .. "," .. key end
 			rec.l = table.concat(parts, ";")
 		end
-		Data.AddScan(rec, today, market)
+		Data.AddScan(rec, today, market, p.qty)
 	end
 	if complete then
 		for id, rec in pairs(realm.items) do
@@ -123,10 +125,15 @@ function Data.Scans(rec, day)
 	return rec.dn and rec.dn[day] or 1
 end
 
--- Sets the day's price and how many scans it averages.
-function Data.SetDay(rec, day, price, scans)
+-- Sets the day's price and how many scans it averages (and how many were
+-- listed, when known: nil leaves it as it was).
+function Data.SetDay(rec, day, price, scans, listed)
 	Upgrade(rec)
 	rec.d[day] = price
+	if listed and listed > 0 then
+		rec.dq = rec.dq or {}
+		rec.dq[day] = listed
+	end
 	if scans > 1 then
 		rec.dn = rec.dn or {}
 		rec.dn[day] = scans
@@ -136,12 +143,20 @@ function Data.SetDay(rec, day, price, scans)
 	end
 end
 
--- One more scan's market price, into the day's average.
-function Data.AddScan(rec, day, price)
+-- One more scan's market price (and how many were listed), into the day's
+-- averages.
+function Data.AddScan(rec, day, price, listed)
 	local n = Data.Scans(rec, day)
 	local old = rec.d[day]
 	if old then price = math.floor(old + (price - old) / (n + 1) + 0.5) end
-	Data.SetDay(rec, day, price, n + 1)
+	local oldListed = rec.dq and rec.dq[day]
+	if listed and oldListed then listed = math.floor(oldListed + (listed - oldListed) / (n + 1) + 0.5) end
+	Data.SetDay(rec, day, price, n + 1, listed)
+end
+
+-- How many were listed on the day (nil when not known).
+function Data.Listed(rec, day)
+	return rec.dq and rec.dq[day]
 end
 
 -- Forget days older than the history setting (and items with nothing left).
@@ -155,11 +170,15 @@ function Data.Prune(house)
 			if day < oldest then
 				rec.d[day] = nil
 				if rec.dn then rec.dn[day] = nil end
+				if rec.dq then rec.dq[day] = nil end
+				if rec.ds then rec.ds[day] = nil end
 			else
 				any = true
 			end
 		end
 		if rec.dn and not next(rec.dn) then rec.dn = nil end
+		if rec.dq and not next(rec.dq) then rec.dq = nil end
+		if rec.ds and not next(rec.ds) then rec.ds = nil end
 		if not any then realm.items[id] = nil end
 	end
 end

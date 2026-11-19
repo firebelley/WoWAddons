@@ -55,8 +55,9 @@ local function ListingKey(buyout, count, bid)
 	return ("%.0f,%d,%.0f"):format(buyout, count, bid)
 end
 
-local function ReadOne(i, prices, bidOnly)
-	local ok, name, _, count, _, _, _, _, minBid, _, buyout, bidAmount, _, _, _, _, _, itemID =
+-- groups: for Volume.lua, { [itemID] = { ["seller|unit price"] = { count, shortest time-left band } } }
+local function ReadOne(i, prices, bidOnly, groups)
+	local ok, name, _, count, _, _, _, _, minBid, _, buyout, bidAmount, _, _, owner, _, _, itemID =
 		pcall(AH.GetReplicateItemInfo, i)
 	if not (ok and type(itemID) == "number" and itemID > 0) then return false end
 	if not (count and count > 0) then return true end
@@ -73,6 +74,21 @@ local function ReadOne(i, prices, bidOnly)
 		if name and name ~= "" then p.name = name end
 		local key = ListingKey(buyout, count, 0)
 		p.list[key] = (p.list[key] or 0) + 1
+		local g = groups[itemID]
+		if not g then
+			g = {}
+			groups[itemID] = g
+		end
+		local gkey = (type(owner) == "string" and owner or "?") .. "|" .. math.floor(unit + 0.5)
+		local e = g[gkey]
+		if not e then
+			e = { 0, 9 }
+			g[gkey] = e
+		end
+		e[1] = e[1] + count
+		local okBand, band = false, nil
+		if AH.GetReplicateItemTimeLeft then okBand, band = pcall(AH.GetReplicateItemTimeLeft, i) end
+		if okBand and type(band) == "number" and band < e[2] then e[2] = band end
 	else
 		-- Bid-only: no buyout, so not part of the price, but still a listing.
 		local bid = (bidAmount and bidAmount > 0) and bidAmount or minBid or 0
@@ -91,7 +107,7 @@ reader:SetScript("OnUpdate", function(self)
 	local ok, err = pcall(function()
 		local stop = math.min(self.index + CHUNK, self.total)
 		for i = self.index, stop do
-			if ReadOne(i, self.prices, self.bidOnly) then self.read = self.read + 1 end
+			if ReadOne(i, self.prices, self.bidOnly, self.groups) then self.read = self.read + 1 end
 		end
 		self.index = stop + 1
 		if self.index > self.total then
@@ -120,6 +136,7 @@ reader:SetScript("OnUpdate", function(self)
 			end
 		end
 		ns.Data.CommitScan(self.prices, true, self.house)
+		if ns.Volume then ns.SafeCall(ns.Volume.Scanned, self.house, self.groups) end
 		Finish(("scanned %d auctions: prices for %d items saved."):format(self.read, items))
 		if ns.Sync then ns.Sync.ScanDone(self.house) end
 		if ns.Window then ns.Window.Refresh() end
@@ -141,7 +158,7 @@ local function StartReading()
 	-- Indices start at 0; reading one past each end costs nothing and works
 	-- either way.
 	reader.index, reader.total, reader.read, reader.done = 0, total, 0, false
-	reader.prices, reader.bidOnly = {}, {}
+	reader.prices, reader.bidOnly, reader.groups = {}, {}, {}
 	reader.house = ns.house or "faction"
 	reader:Show()
 	UpdateBar()

@@ -17,7 +17,6 @@ local AH = C_AuctionHouse
 local Sales = {}
 ns.Sales = Sales
 
-local AH_CUT = 0.05
 -- A sale's mail is sent an hour after it sells; one with no mail (or "sale
 -- pending" notice) at the mailbox this long after has been collected.
 local DELIVERY_GRACE = 75 * 60
@@ -158,7 +157,7 @@ local function ReadSold(c, rows, now, house)
 				s.unit = math.floor(r.total / r.qty + 0.5)
 				s.gross = r.total
 				s.back = Back(c, r.auction, r.qty)
-				s.net = math.floor(r.total * (1 - AH_CUT)) + (s.back or 0)
+				s.net = math.floor(r.total * (1 - ns.Cut(house))) + (s.back or 0)
 			end
 			ns.Debug(("sold row: %s x%d %s"):format(r.name, r.qty, match and "(filled in a sale)" or "(new sale)"))
 		end
@@ -307,7 +306,27 @@ ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	end
 	QueryOwned(1)
 end)
-ns.On("AUCTION_CANCELED", function() QueryOwned(1) end)
+-- What sold and what you cancelled, when and how many (Volume.lua checks its
+-- estimate against these): c.soldLog / c.cancelLog = { { t, qty, name }, ... },
+-- the last two weeks.
+local LOG_KEEP = 14 * 86400
+function Sales.Log(c, which, t, qty, name)
+	if not (t and qty and qty > 0 and name) then return end
+	local log = c[which] or {}
+	c[which] = log
+	local now = time()
+	for i = #log, 1, -1 do
+		if now - log[i][1] > LOG_KEEP then table.remove(log, i) end
+	end
+	log[#log + 1] = { t, qty, name }
+end
+
+ns.On("AUCTION_CANCELED", function(auctionID)
+	local c = Char()
+	local a = c and auctionID and c.owned[auctionID]
+	if a then Sales.Log(c, "cancelLog", time(), a.qty or 1, a.name) end
+	QueryOwned(1)
+end)
 
 -- One of your listings by item name (for the chat message, which has no ID).
 local function OwnedByName(c, name)
@@ -332,8 +351,8 @@ end
 
 -- Your listings still for sale, soonest to end first. Ones past their end
 -- have expired (back to you by mail) and are forgotten. Returns the list,
--- the buyout total, when the auction house last showed them, and the
--- deposits that come back if they sell.
+-- what they bring in if they sell (each after its auction house's cut), when
+-- the auction house last showed them, and the deposits that come back.
 function Sales.Listings()
 	local c = Char()
 	local list, total, seen, back = {}, 0, nil, 0
@@ -345,7 +364,7 @@ function Sales.Listings()
 			c.owned[auctionID] = nil
 		else
 			list[#list + 1] = a
-			total = total + (ListingPrice(a) or 0)
+			total = total + math.floor((ListingPrice(a) or 0) * (1 - ns.Cut(a.house or "faction")))
 			back = back + (Back(c, auctionID, a.qty or 1) or 0)
 			if a.seen and (not seen or a.seen < seen) then seen = a.seen end
 		end
@@ -394,7 +413,7 @@ function Sales.AddListings(tooltip, max)
 	local n = #list
 	if n == 0 then return nil end
 	local now = time()
-	local net = math.floor(total * (1 - AH_CUT)) + back
+	local net = total + back
 	local partSold = false
 	for _, a in ipairs(list) do if a.partSold then partSold = true end end
 	tooltip:AddLine(" ")
@@ -415,7 +434,7 @@ function Sales.PrintListings()
 	end
 	local now = time()
 	ns.Print(("%d auction%s listed, %s if all sell%s:"):format(#list, #list == 1 and "" or "s",
-		ns.Money(math.floor(total * (1 - AH_CUT)) + back),
+		ns.Money(total + back),
 		seen and (" |cff999999(as of the auction house " .. ns.TimeAgo(seen) .. ")|r") or ""))
 	for _, a in ipairs(list) do
 		print("  " .. ListingText(a) .. " - " .. ListingRight(a, now))
@@ -583,7 +602,7 @@ local function Sold(name, auctionID, auction)
 			if unit and unit > 0 then
 				s.gross = unit
 				s.back = Back(c, auctionID, 1)
-				s.net = math.floor(unit * (1 - AH_CUT)) + (s.back or 0)
+				s.net = math.floor(unit * (1 - ns.Cut(s.house or "faction"))) + (s.back or 0)
 			end
 		end
 	end
@@ -741,6 +760,10 @@ local function ReadInbox()
 				local part = s.part
 				s.qty, s.part = m.qty, nil
 				if part then Shrink(c, s) end
+			end
+			if s.qty and s.t and not s.logged then
+				s.logged = true
+				Sales.Log(c, "soldLog", s.t, s.qty, s.name)
 			end
 			keep[#keep + 1] = s
 		elseif s.inMail or s.delivered then

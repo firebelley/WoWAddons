@@ -21,9 +21,15 @@
 --                     many to sell and how many are then yours for free.
 --   If all sell       the profit if everything left sells at the price.
 --
--- Everything after the auction house's 5% cut. Hover a line for how it's
+-- Everything after the auction house's cut (5%, the neutral one's 15%). Hover a line for how it's
 -- worked out.
 local _, ns = ...
+
+-- "after the 5% cut" (15% at the neutral auction house).
+local function CutPhrase()
+	return ("after the %d%% cut"):format(math.floor(ns.Cut() * 100 + 0.5))
+end
+local function AfterCut() return "A" .. CutPhrase():sub(2) .. "." end
 
 local WIDTH = 360
 local PAD = 14
@@ -108,7 +114,7 @@ end
 -- listing.
 local function SellLines(id)
 	local QB = ns.QuickBuy
-	local cut = 1 - QB.AH_CUT
+	local cut = 1 - ns.Cut()
 	local lines = {}
 	local function Add(left, mid, right, kind, tip, pct) lines[#lines + 1] = { left, mid, right, kind, tip, pct } end
 
@@ -137,7 +143,7 @@ local function SellLines(id)
 			Add("Seeds", nil, nil, "header")
 			if seedUp > 0 then Add("Up now", nil, tostring(seedUp)) end
 			if seedSold > 0 then
-				Add(("Sold %d"):format(seedSold), nil, Signed(seedIncome), nil, Tip("Sold", "After the 5% cut."))
+				Add(("Sold %d"):format(seedSold), nil, Signed(seedIncome), nil, Tip("Sold", AfterCut()))
 			end
 			if seedLost > 0 then
 				Add("Deposits lost", nil, Signed(-seedLost), nil, Tip("Deposits lost", "On cancelled or expired seeds."))
@@ -155,7 +161,7 @@ local function SellLines(id)
 	Add("So far", nil, nil, "header", Tip("So far", "Since you pressed Start session."))
 	Add(("Bought %d at %s"):format(bought, ns.Money(math.floor(spent / bought + 0.5))), nil, Signed(-spent))
 	if soldN > 0 then
-		Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", "After the 5% cut.",
+		Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", AfterCut(),
 			seedSold > 0 and listSold > 0 and ("Seeds %d, listings %d."):format(seedSold, listSold) or nil))
 	end
 	if lost > 0 then
@@ -175,7 +181,7 @@ local function SellLines(id)
 		local thisIncome = math.floor(typed * cut * qty)
 		local result = upIncome + thisIncome - cover
 		Add(("This listing: %d at %s"):format(qty, ns.Money(typed)), nil, nil, "header")
-		Add("Brings in", nil, Signed(thisIncome), nil, Tip("Brings in", "After the 5% cut."))
+		Add("Brings in", nil, Signed(thisIncome), nil, Tip("Brings in", AfterCut()))
 		Add("Then you're at", GREY .. ("%d left"):format(math.max(0, have - qty)) .. "|r", Signed(result), nil,
 			Tip("Then you're at", listUp > 0 and "If this and what's up sell." or "If it sells."))
 	end
@@ -190,7 +196,7 @@ local function SellLines(id)
 		local short = cover - upIncome
 		Add("Break even", nil, nil, "header", Tip("Break even", "Making back what you spent, with what's sold and up."))
 		Add("Lowest price", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
-			nil, Tip("Lowest price", ("For the %d left, after the 5%% cut."):format(left)))
+			nil, Tip("Lowest price", ("For the %d left, %s."):format(left, CutPhrase())))
 		if not sell then
 			Add("No price to go by yet", nil, nil, "note")
 		else
@@ -198,7 +204,7 @@ local function SellLines(id)
 			local total = math.floor(sell * cut * left) - short
 			Add(("If all %d sell at %s"):format(left + listUp, money), nil, nil, "header", Tip("Price",
 				typed and "Your Unit Price on the sell page." or target and "Your own price." or AutoSource(approx, true)))
-			Add("Profit", nil, Signed(total), nil, Tip("Profit", "After the 5% cut."), ns.Percent(total / spent * 100))
+			Add("Profit", nil, Signed(total), nil, Tip("Profit", AfterCut()), ns.Percent(total / spent * 100))
 		end
 	end
 	return lines, summaryText, progress
@@ -210,7 +216,7 @@ end
 local function Lines(id, selling)
 	if selling then return SellLines(id) end
 	local QB = ns.QuickBuy
-	local cut = 1 - QB.AH_CUT
+	local cut = 1 - ns.Cut()
 	local lines = {}
 	local function Add(left, mid, right, kind, tip, pct) lines[#lines + 1] = { left, mid, right, kind, tip, pct } end
 
@@ -250,7 +256,7 @@ local function Lines(id, selling)
 	if soldN > 0 or seedUp > 0 or lost > 0 then
 		if bought == 0 then Add("Seeds", nil, nil, "header") end
 		if soldN > 0 then
-			Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", "After the 5% cut.",
+			Add(("Sold %d"):format(soldN), nil, Signed(income), nil, Tip("Sold", AfterCut(),
 				seedSold > 0 and listSold > 0 and ("Seeds %d, listings %d."):format(seedSold, listSold) or nil))
 		end
 		if lost > 0 then
@@ -289,7 +295,7 @@ local function Lines(id, selling)
 		local short = cover - upIncome
 		local total = math.floor(net * left) - short
 		Add(("Profit (all %d)"):format(left + listUp), nil, Signed(total), nil, Tip("Profit",
-			"If all you bought sells: what's left at this price, what's up at its own; after the 5% cut."),
+			"If all you bought sells: what's left at this price, what's up at its own; " .. CutPhrase() .. "."),
 			ns.Percent(total / spent * 100))
 		if left > 0 then
 			Add("Break-even", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
@@ -309,7 +315,7 @@ local function Lines(id, selling)
 		if sell then
 			local each = net - max
 			Add("Profit each", nil, Signed(each), nil, Tip("Profit each",
-				("Resold after the 5%% cut (%s), less your Up to."):format(ns.Money(net))), ns.Percent(each / max * 100))
+				("Resold %s (%s), less your Up to."):format(CutPhrase(), ns.Money(net))), ns.Percent(each / max * 100))
 			Add("Buy per 1g profit", nil, each > 0 and tostring(math.ceil(10000 / each)) or (GREY .. "no profit|r"))
 		else
 			Add("No price to go by yet", nil, nil, "note")

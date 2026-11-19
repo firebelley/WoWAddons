@@ -49,7 +49,8 @@ local function Session(id)
 	return nil
 end
 
-local function Cut() return 1 - ns.QuickBuy.AH_CUT end
+-- What's left of a listing's price after its auction house's cut.
+local function Cut(l) return 1 - ns.Cut(l.house or "faction") end
 
 -- What's sold of a listing into the Profit tab (Ledger.lua) as it sells,
 -- not when it ends: l.lgSold = how many of it are in already, l.lg = { { day,
@@ -59,7 +60,7 @@ local function LedgerSync(l, id)
 	local sold = l.qty - l.left
 	local new = sold - (l.lgSold or 0)
 	if new <= 0 then return end
-	local n, counted = ns.Ledger.Sold(id, new, math.floor(new * l.price * Cut()))
+	local n, counted = ns.Ledger.Sold(id, new, math.floor(new * l.price * Cut(l)))
 	l.lgSold = sold
 	l.lg = l.lg or {}
 	l.lg[#l.lg + 1] = { ns.Data.Today(), n, counted }
@@ -79,7 +80,7 @@ local function Settle(s, i, how, id)
 	local sold = l.qty - l.left
 	local st = s.sold or { n = 0, income = 0, lost = 0 }
 	s.sold = st
-	local income = math.floor(sold * l.price * Cut())
+	local income = math.floor(sold * l.price * Cut(l))
 	local lost = 0
 	if how ~= "sold" and l.deposit and l.qty > 0 then lost = math.floor(l.deposit * l.left / l.qty + 0.5) end
 	st.n, st.income, st.lost = st.n + sold, st.income + income, st.lost + lost
@@ -361,8 +362,8 @@ function Listings.Stats(id)
 	local up, upIncome = 0, 0
 	for _, l in ipairs(s.listed or {}) do
 		local sold = l.qty - l.left
-		n, income = n + sold, income + math.floor(sold * l.price * Cut())
-		up, upIncome = up + l.left, upIncome + math.floor(l.left * l.price * Cut())
+		n, income = n + sold, income + math.floor(sold * l.price * Cut(l))
+		up, upIncome = up + l.left, upIncome + math.floor(l.left * l.price * Cut(l))
 	end
 	return n, income, lost, up, upIncome
 end

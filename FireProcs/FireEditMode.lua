@@ -5,8 +5,8 @@
 --   In Edit Mode each element shows blue: click it to select it (its settings
 --   open, like the game's), drag it to move it, drag the corner of a sizable
 --   one to size it. Both line up with the grid, the screen and other elements
---   when "Snap to Elements" is on. A box under the Edit Mode window turns them
---   on or off.
+--   when "Snap to Elements" is on, with red lines where they will, like the
+--   game's. A box under the Edit Mode window turns them on or off.
 --   Like the game's, changes wait for Edit Mode's Save (its Save and Revert
 --   buttons light up for them); Revert All Changes, or leaving without saving,
 --   puts them back. Left with only ours unsaved (the game doesn't ask then),
@@ -33,7 +33,11 @@
 --     Editing = function(on) end,          -- optional: Edit Mode opened or closed
 --   })
 --   FireEditMode.Changed(e) -- after changing its state another way
-local VERSION = 1
+--
+-- Other frames can snap the same way (FireMove's bars):
+--   FireEditMode.Preview(frame) as it starts moving, FireEditMode.StopPreview()
+--   when it stops, then FireEditMode.SnapMove(frame) for how far to move it.
+local VERSION = 2
 local lib = _G.FireEditMode
 if lib and (lib.version or 0) >= VERSION then return end
 lib = lib or {}
@@ -240,14 +244,16 @@ local function Lines(frame)
 	return xs, ys
 end
 
-local function Best(best, edges, values)
+-- The nearest of edges to one of values (nearer than best): how far to
+-- move, and the line it meets.
+local function Best(best, at, edges, values)
 	for _, e in ipairs(edges) do
 		for _, v in ipairs(values) do
 			local d = v - e
-			if math.abs(d) < SNAP and (not best or math.abs(d) < math.abs(best)) then best = d end
+			if math.abs(d) < SNAP and (not best or math.abs(d) < math.abs(best)) then best, at = d, v end
 		end
 	end
-	return best
+	return best, at
 end
 
 local function SnapOn()
@@ -256,32 +262,34 @@ local function SnapOn()
 end
 
 -- Moved: its edges or middle to a line; beside an element (touching, tops or
--- bottoms even) or above or below one (touching, sides even).
+-- bottoms even) or above or below one (touching, sides even). Returns how far
+-- to move it, and the lines it meets (x, y in its own coordinates; nil for none).
 function lib.SnapMove(frame)
 	if not SnapOn() then return 0, 0 end
 	local l, b, w, h = frame:GetRect()
 	if not l then return 0, 0 end
 	local r, t = l + w, b + h
 	local xs, ys = Lines(frame)
-	local dx = Best(nil, { l, r, l + w / 2 }, xs)
-	local dy = Best(nil, { b, t, b + h / 2 }, ys)
+	local dx, ax = Best(nil, nil, { l, r, l + w / 2 }, xs)
+	local dy, ay = Best(nil, nil, { b, t, b + h / 2 }, ys)
 	for _, f in ipairs(Others(frame)) do
 		local fl, fb, fr, ft = Rect(f, frame)
 		if fl then
 			if b < ft + SNAP and t > fb - SNAP then -- side by side
-				dx = Best(dx, { l, r }, { fr, fl })
-				dy = Best(dy, { b, t }, { fb, ft })
+				dx, ax = Best(dx, ax, { l, r }, { fr, fl })
+				dy, ay = Best(dy, ay, { b, t }, { fb, ft })
 			end
 			if l < fr + SNAP and r > fl - SNAP then -- stacked
-				dy = Best(dy, { b, t }, { ft, fb })
-				dx = Best(dx, { l, r }, { fl, fr })
+				dy, ay = Best(dy, ay, { b, t }, { ft, fb })
+				dx, ax = Best(dx, ax, { l, r }, { fl, fr })
 			end
 		end
 	end
-	return dx or 0, dy or 0
+	return dx or 0, dy or 0, ax, ay
 end
 
--- Sized: its right and bottom edges to a line or an element's edge.
+-- Sized: its right and bottom edges to a line or an element's edge. Returns
+-- as SnapMove.
 function lib.SnapSize(frame)
 	if not SnapOn() then return 0, 0 end
 	local l, b, w = frame:GetRect()
@@ -294,7 +302,69 @@ function lib.SnapSize(frame)
 			ys[#ys + 1], ys[#ys + 2] = fb, ft
 		end
 	end
-	return Best(nil, { l + w }, xs) or 0, Best(nil, { b }, ys) or 0
+	local dw, ax = Best(nil, nil, { l + w }, xs)
+	local dh, ay = Best(nil, nil, { b }, ys)
+	return dw or 0, dh or 0, ax, ay
+end
+
+-- While one moves or is sized: red lines across the screen where it will
+-- snap, like the game's (EditModeManagerFrame:RefreshSnapPreviewLines).
+local function DrawLines(frame, ax, ay)
+	local p = lib.lines
+	if not p then
+		p = CreateFrame("Frame", nil, UIParent)
+		p:SetAllPoints(UIParent)
+		p:SetFrameStrata("HIGH")
+		p.pool = {}
+		lib.lines = p
+	end
+	for _, line in ipairs(p.pool) do line:Hide() end
+	if not (ax or ay) then return end
+	local k = frame:GetEffectiveScale() / p:GetEffectiveScale()
+	local thick = 1.5
+	if PixelUtil and PixelUtil.GetNearestPixelSize then
+		thick = PixelUtil.GetNearestPixelSize(1.5, p:GetEffectiveScale(), 1.5)
+	end
+	local n = 0
+	local function Line(x, y)
+		n = n + 1
+		local line = p.pool[n]
+		if not line then
+			line = p:CreateLine(nil, "OVERLAY")
+			line:SetColorTexture(1, 0, 0, 1)
+			p.pool[n] = line
+		end
+		line:SetThickness(thick)
+		if x then
+			line:SetStartPoint("BOTTOMLEFT", p, x, 0)
+			line:SetEndPoint("TOPLEFT", p, x, 0)
+		else
+			line:SetStartPoint("BOTTOMLEFT", p, 0, y)
+			line:SetEndPoint("BOTTOMRIGHT", p, 0, y)
+		end
+		line:Show()
+	end
+	if ax then Line(ax * k - (p:GetLeft() or 0)) end
+	if ay then Line(nil, ay * k - (p:GetBottom() or 0)) end
+end
+
+function lib.Preview(frame, sizing)
+	DrawLines(frame)
+	lib.lines:SetScript("OnUpdate", function()
+		local _, _, ax, ay
+		if sizing then
+			_, _, ax, ay = lib.SnapSize(frame)
+		else
+			_, _, ax, ay = lib.SnapMove(frame)
+		end
+		DrawLines(frame, ax, ay)
+	end)
+end
+
+function lib.StopPreview()
+	if not lib.lines then return end
+	lib.lines:SetScript("OnUpdate", nil)
+	DrawLines(UIParent)
 end
 
 ---------------------------------------------------------------------------
@@ -379,8 +449,10 @@ function lib.MakeSelection(e)
 	s:SetScript("OnDragStart", function()
 		lib.Select(e)
 		frame:StartMoving()
+		lib.Preview(frame)
 	end)
 	s:SetScript("OnDragStop", function()
+		lib.StopPreview()
 		frame:StopMovingOrSizing()
 		if frame.SetUserPlaced then frame:SetUserPlaced(false) end
 		local dx, dy = lib.SnapMove(frame)
@@ -413,11 +485,13 @@ function lib.MakeSelection(e)
 			grip.sizing = true
 			frame:StartSizing("BOTTOMRIGHT")
 			grip:SetScript("OnUpdate", Size)
+			lib.Preview(frame, true)
 		end)
 		grip:SetScript("OnMouseUp", function()
 			if not grip.sizing then return end
 			grip.sizing = false
 			grip:SetScript("OnUpdate", nil)
+			lib.StopPreview()
 			frame:StopMovingOrSizing()
 			local dw, dh = lib.SnapSize(frame)
 			frame:SetSize(frame:GetWidth() + dw, frame:GetHeight() - dh)
@@ -632,6 +706,7 @@ function lib.SetEditing(on)
 		end
 		lib.UpdateBox()
 	else
+		lib.StopPreview()
 		lib.Deselect()
 		if lib.box then lib.box:Hide() end
 	end

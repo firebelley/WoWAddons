@@ -5,7 +5,7 @@
 --   its tooltip.
 --
 --   Sells for:    market price of the crafted item (latest scan) x how many
---                 one craft makes, minus the auction house's 5% cut - or what
+--                 one craft makes, minus the auction house's cut - or what
 --                 a vendor pays, if that's more.
 --   Reagent cost: each reagent at the cheapest of its lowest buyout and its
 --                 vendor price. Vendor prices are learned from every merchant
@@ -18,7 +18,6 @@ local _, ns = ...
 local Crafting = {}
 ns.Crafting = Crafting
 
-local AH_CUT = 0.05
 
 ---------------------------------------------------------------------------
 -- Vendor prices (copper per item, all characters)
@@ -97,7 +96,7 @@ function Crafting.SellValue(id, made)
 	local rec = ns.Data.Get(id)
 	local market = ns.Data.Market(rec)
 	if market then
-		sell, source, current, scanned = market * made * (1 - AH_CUT), "auction", rec.q ~= 0, rec.s
+		sell, source, current, scanned = market * made * (1 - ns.Cut()), "auction", rec.q ~= 0, rec.s
 	end
 	local vendor = C_Item and C_Item.GetItemInfo and select(11, C_Item.GetItemInfo(id))
 	if type(vendor) == "number" and vendor > 0 and vendor * made > (sell or 0) then
@@ -172,7 +171,7 @@ local function AddBreakdown(tooltip, r)
 	if r.output then
 		local each = r.made ~= 1 and (" (%s made)"):format(r.made % 1 == 0 and r.made or ("~" .. r.made)) or ""
 		if r.sell then
-			local note = r.sellSource == "vendor" and "to a vendor" or "at auction, after the 5% cut"
+			local note = r.sellSource == "vendor" and "to a vendor" or ("at auction, after the %d%% cut"):format(math.floor(ns.Cut() * 100 + 0.5))
 			tooltip:AddDoubleLine("Sells for" .. each, ns.Money(r.sell), 1, 1, 1, 1, 1, 1)
 			tooltip:AddLine("  " .. note, 0.6, 0.6, 0.6)
 		else

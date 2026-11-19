@@ -151,8 +151,26 @@ end
 -- Graph
 ---------------------------------------------------------------------------
 local graph
-local lines, dots, gridLabels = {}, {}, {}
-local nLines, nDots = 0, 0
+local lines, dots, bars, gridLabels = {}, {}, {}, {}
+local nLines, nDots, nBars = 0, 0, 0
+local LISTED_COLOR = { 0.6, 0.65, 0.75 }
+local SOLD_COLOR = { 0.4, 0.85, 0.45 }
+local LISTED_SHARE = 0.3 -- of the graph's height, for the tallest day's bar
+
+-- A day's listings (or sales): a bar up from the bottom.
+local function Bar(x, width, height, color)
+	nBars = nBars + 1
+	local t = bars[nBars]
+	if not t then
+		t = graph:CreateTexture(nil, "BORDER")
+		bars[nBars] = t
+	end
+	t:SetColorTexture(color[1], color[2], color[3], 0.35)
+	t:ClearAllPoints()
+	t:SetPoint("BOTTOMLEFT", graph, "BOTTOMLEFT", x - width / 2, 0)
+	t:SetSize(width, math.max(1, height))
+	t:Show()
+end
 
 local function Line(r, g, b, a, thickness)
 	nLines = nLines + 1
@@ -184,7 +202,8 @@ end
 local function ClearGraph()
 	for i = 1, #lines do lines[i]:Hide() end
 	for i = 1, #dots do dots[i]:Hide() end
-	nLines, nDots = 0, 0
+	for i = 1, #bars do bars[i]:Hide() end
+	nLines, nDots, nBars = 0, 0, 0
 	graph.points, graph.trend, graph.hovered = nil, nil, nil
 	graph.marker:Hide()
 end
@@ -272,11 +291,29 @@ local function DrawGraph(rec)
 		}
 	end
 
+	-- How many were listed each day, and about how many sold (Volume.lua):
+	-- bars side by side along the bottom, on one scale, under the prices.
+	local house = View()
+	local most, sold, cover = 0, {}, {}
+	for _, p in ipairs(history) do
+		if ns.Volume then sold[p[1]], cover[p[1]] = ns.Volume.Day(rec, house, p[1]) end
+		most = math.max(most, ns.Data.Listed(rec, p[1]) or 0, sold[p[1]] or 0)
+	end
+	if most > 0 then
+		local width = math.max(2, math.min(7, w / math.max(1, last - first) * 0.3))
+		for _, p in ipairs(history) do
+			local listed, s = ns.Data.Listed(rec, p[1]), sold[p[1]]
+			if listed then Bar(X(p[1]) - width / 2, width, listed / most * h * LISTED_SHARE, LISTED_COLOR) end
+			if s and s > 0 then Bar(X(p[1]) + width / 2, width, s / most * h * LISTED_SHARE, SOLD_COLOR) end
+		end
+	end
+
 	-- The prices.
 	local points = {}
 	for i, p in ipairs(history) do
 		local x, y = X(p[1]), Y(p[2])
-		points[i] = { x = x, y = y, day = p[1], price = p[2] }
+		points[i] = { x = x, y = y, day = p[1], price = p[2], listed = ns.Data.Listed(rec, p[1]),
+			sold = sold[p[1]], cover = cover[p[1]] }
 		if i > 1 then
 			local l = Line(PRICE_COLOR[1], PRICE_COLOR[2], PRICE_COLOR[3], 1, 2)
 			l:SetStartPoint("BOTTOMLEFT", graph, points[i - 1].x, points[i - 1].y)
@@ -326,6 +363,13 @@ local function GraphHover(self)
 		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
 		GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(best.day)), 1, 1, 1)
 		GameTooltip:AddLine(ns.Money(best.price), 1, 1, 1)
+		if best.listed then
+			GameTooltip:AddLine(("%d listed"):format(best.listed), LISTED_COLOR[1], LISTED_COLOR[2], LISTED_COLOR[3])
+		end
+		if best.sold then
+			GameTooltip:AddLine(("~%d sold  |cff999999(estimate from %d min of scans)|r"):format(best.sold, best.cover),
+				SOLD_COLOR[1], SOLD_COLOR[2], SOLD_COLOR[3])
+		end
 		GameTooltip:Show()
 	end
 end
@@ -575,6 +619,17 @@ local function UpdateDetail()
 	end
 	if low then
 		info[#info + 1] = ("Lowest / highest day: %s / %s"):format(ns.Money(low), ns.Money(high))
+	end
+	-- About how fast it sells (Volume.lua), and how long what's listed would last at that.
+	local perDay, days
+	if ns.Volume then perDay, days = ns.Volume.PerDay(rec, View()) end
+	if perDay then
+		local text = ("Sells ~%d/day"):format(math.floor(perDay + 0.5))
+		if (rec.q or 0) > 0 and perDay > 0 then
+			local supply = math.floor(rec.q / perDay + 0.5)
+			text = text .. (supply < 1 and "   <1 day of supply" or ("   %d day%s of supply"):format(supply, supply == 1 and "" or "s"))
+		end
+		info[#info + 1] = text .. ("  |cff999999(estimate, %d day%s)|r"):format(days, days == 1 and "" or "s")
 	end
 	detail.text:SetText(table.concat(info, "\n"))
 	detail.more:Show()

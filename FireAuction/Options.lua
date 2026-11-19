@@ -236,7 +236,7 @@ local function Build()
 
 	Header("Crafting")
 	Checkbox("craftProfit", "Show crafting profit in profession windows",
-		"Sell price (after the 5% cut) minus reagent costs, under the selected recipe. Hover for the breakdown.",
+		"Sell price (after the auction house's cut) minus reagent costs, under the selected recipe. Hover for the breakdown.",
 		function() ns.Crafting.Refresh() end)
 	Checkbox("craftWorth", "Show crafting profit for reagents in item tooltips",
 		"Profit per reagent bought at the lowest price and crafted with your best recipe. Recipes are saved when "
@@ -306,6 +306,8 @@ SlashCmdList.FIREAUCTION = function(input)
 		ns.Sales.Test()
 	elseif cmd == "sync" then
 		ns.Sync.Now()
+	elseif cmd == "volume" then
+		ns.Volume.Report()
 	elseif cmd == "options" or cmd == "config" or cmd == "settings" then
 		Options.Open()
 	elseif cmd == "debug" then
@@ -334,6 +336,7 @@ SlashCmdList.FIREAUCTION = function(input)
 		print("  /fah auctions - what you have listed, with time left")
 		print("  /fah testsale - show what a sale announcement looks like")
 		print("  /fah sync - get newer prices from your guild now (it also happens by itself)")
+		print("  /fah volume - how the sales estimate compares with your own sales")
 		print("  /fah options - open the settings")
 	else
 		ns.Window.Show()
