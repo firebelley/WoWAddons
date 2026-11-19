@@ -22,5 +22,6 @@ Listings.lua
 Ledger.lua
 Profit.lua
 Sales.lua
+Gold.lua
 Sync.lua
 Options.lua

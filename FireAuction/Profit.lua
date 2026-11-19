@@ -1,7 +1,10 @@
 -- The Profit tab of the price window (Window.lua): what your Quick buy
 -- sessions have made, over time (Ledger.lua). On the left all items together,
 -- then each item; on the right its profit, and a graph of it by day with a
--- projection from your average profit per day.
+-- projection from your average profit per day. With all items, your gold
+-- (Gold.lua) too, to compare. Lines (each turned on or off by its key) show
+-- the change since the start of the range; Daily shows each day's change as
+-- bars, Daily % as a share of your gold the day before.
 --
 -- Profit: what sales brought in (after the cut), less what you paid and the
 -- deposits lost, plus what you still hold at the market price (after the cut).
@@ -15,12 +18,55 @@ local ROWS, ROW_H = 17, 20
 local GRAPH_H = 170
 local TOTAL_COLOR = { 1, 0.82, 0 }
 local CASH_COLOR = { 0.45, 0.65, 1 }
+local GOLD_COLOR = { 0.4, 0.85, 0.45 }
 local GREEN, RED = "|cff40ff40", "|cffff5050"
+
+-- The lines, drawn in this order (the first on top).
+local SERIES = {
+	{ key = "total", label = "Profit", color = TOTAL_COLOR, tip = "Cash, plus what you still hold at market price" },
+	{ key = "cash", label = "Cash", color = CASH_COLOR, tip = "Sales, less purchases and lost deposits" },
+	{ key = "gold", label = "Gold", color = GOLD_COLOR, tip = "Gold on all your characters" },
+}
+local MODES = {
+	{ "total", "Total", "Change since the start of the range" },
+	{ "daily", "Daily", "Each day's change" },
+	{ "pct", "Daily %", "Each day's change, as a share of your gold the day before" },
+}
+local RANGES = { { 7, "7d", "Last 7 days" }, { 30, "30d", "Last 30 days" }, { 0, "All", "Since your first session" } }
+local ZERO = { total = 0, cash = 0, held = 0, value = 0 }
 
 local view, rows, countText, updated, detail, graph = nil, {}, nil, nil, {}, nil
 local entries, offset, selected = {}, 0, nil -- selected: an itemID, or nil for all items
-local lines, dots, gridLabels = {}, {}, {}
-local nLines, nDots = 0, 0
+local lines, dots, bars, gridLabels = {}, {}, {}, {}
+local nLines, nDots, nBars = 0, 0, 0
+local legend, modeButtons, rangeButtons = {}, {}, {}
+
+-- How the graph is shown: mode, range (days, 0 for all), hide[key].
+local function Options()
+	local o = ns.db.profitGraph
+	if type(o) ~= "table" then
+		o = {}
+		ns.db.profitGraph = o
+	end
+	o.mode = o.mode or "total"
+	o.range = o.range or 0
+	o.hide = o.hide or {}
+	return o
+end
+
+-- Gold is for all items together.
+local function Available(s)
+	return s.key ~= "gold" or (selected == nil and ns.Gold.First() ~= nil)
+end
+
+local function Shown()
+	local o, out = Options(), {}
+	for _, s in ipairs(SERIES) do
+		if Available(s) and not o.hide[s.key] then out[#out + 1] = s end
+	end
+	if #out == 0 then out[1] = SERIES[1] end
+	return out
+end
 
 local function Signed(copper)
 	copper = math.floor(copper + 0.5)
@@ -102,12 +148,28 @@ local function Dot(x, y, color)
 	d:Show()
 end
 
+local function Bar(x, width, y1, y2, color)
+	nBars = nBars + 1
+	local t = bars[nBars]
+	if not t then
+		t = graph:CreateTexture(nil, "ARTWORK")
+		bars[nBars] = t
+	end
+	t:SetColorTexture(color[1], color[2], color[3], 0.9)
+	t:ClearAllPoints()
+	t:SetPoint("BOTTOMLEFT", graph, "BOTTOMLEFT", x, math.min(y1, y2))
+	t:SetSize(math.max(1, width), math.max(1, math.abs(y2 - y1)))
+	t:Show()
+end
+
 local function ClearGraph()
 	for i = 1, #lines do lines[i]:Hide() end
 	for i = 1, #dots do dots[i]:Hide() end
-	nLines, nDots = 0, 0
+	for i = 1, #bars do bars[i]:Hide() end
+	nLines, nDots, nBars = 0, 0, 0
 	graph.points, graph.projection, graph.hovered = nil, nil, nil
 	graph.marker:Hide()
+	graph.column:Hide()
 	for _, l in ipairs(gridLabels) do l:SetText("") end
 end
 
@@ -117,119 +179,247 @@ local function Segment(color, a, thickness, x1, y1, x2, y2)
 	l:SetEndPoint("BOTTOMLEFT", graph, x2, y2)
 end
 
-local function DrawGraph(series, perDay, ahead)
+local function Percent(v)
+	local text = ("%+.1f%%"):format(v)
+	if v > 0.05 then return GREEN .. text .. "|r" elseif v < -0.05 then return RED .. text .. "|r" end
+	return text
+end
+
+-- The days to draw, from the day before the range (what it's measured from)
+-- to today: { day, total, cash, gold, p } - p the ledger's day (profit and
+-- cash so far, what's held), gold nil where not known.
+local function Days(series)
+	local o, today = Options(), ns.Data.Today()
+	local pFirst = series[1].day
+	local first = pFirst
+	if o.range > 0 then
+		first = today - o.range + 1
+	elseif Available(SERIES[3]) and not o.hide.gold then
+		first = math.min(first, ns.Gold.First())
+	end
+	local byDay = {}
+	for _, p in ipairs(series) do byDay[p.day] = p end
+	local gold = ns.Gold.Series(first - 1, today)
+	local out = {}
+	for day = first - 1, today do
+		local p = byDay[day] or ZERO
+		out[#out + 1] = { day = day, total = p.total, cash = p.cash, gold = gold[day], p = p }
+	end
+	return out
+end
+
+-- A day's change: copper, and as a share of the gold the day before (nil
+-- when not known).
+local function Change(days, i, key)
+	local r, prev = days[i], days[i - 1]
+	if not (prev and r[key] and prev[key]) then return nil end
+	local d = r[key] - prev[key]
+	return d, prev.gold and prev.gold > 0 and d / prev.gold * 100 or nil
+end
+
+local function DrawGraph(days, perDay, ahead)
 	ClearGraph()
-	local first, today = series[1].day, series[#series].day
-	local now = series[#series].total
-	local last = perDay and (today + ahead) or today
-	if last == first then first = first - 1 end
-	local projected = perDay and (now + perDay * ahead)
+	local o, shown = Options(), Shown()
+	local daily, pct = o.mode ~= "total", o.mode == "pct"
+	local n = #days
+
+	-- What's plotted: each line from 0 at the start, or each day's change.
+	local vals, base, baseAt = {}, {}, {}
+	for _, s in ipairs(shown) do
+		local v = {}
+		vals[s.key] = v
+		for i, r in ipairs(days) do
+			if daily then
+				local d, share = Change(days, i, s.key)
+				v[i] = pct and share or d
+			elseif r[s.key] then
+				if not base[s.key] then base[s.key], baseAt[s.key] = r[s.key], i end
+				v[i] = r[s.key] - base[s.key]
+			end
+		end
+	end
+	local projecting = not daily and perDay and vals.total
+	local now = projecting and vals.total[n]
 
 	local low, high = 0, 0
-	for _, p in ipairs(series) do
-		low, high = math.min(low, p.total, p.cash), math.max(high, p.total, p.cash)
+	for _, v in pairs(vals) do
+		for i = 1, n do
+			if v[i] then low, high = math.min(low, v[i]), math.max(high, v[i]) end
+		end
 	end
-	if projected then low, high = math.min(low, projected), math.max(high, projected) end
-	if high == low then high = low + 10000 end
+	if projecting then
+		local projected = now + perDay * ahead
+		low, high = math.min(low, projected), math.max(high, projected)
+	end
+	if high == low then high = low + (pct and 1 or 10000) end
 	local pad = (high - low) * 0.08
 	high, low = high + pad, low - pad
 
 	local w, h = graph:GetWidth(), graph:GetHeight()
-	local function X(day) return (day - first) / (last - first) * w end
-	local function Y(copper) return (copper - low) / (high - low) * h end
+	-- Lines: day i (and the projection's days past the last) across; bars: a
+	-- slot for each day after the first.
+	local span = math.max(1, (n - 1) + (projecting and ahead or 0))
+	local slot = w / math.max(1, n - 1)
+	local function X(i) return daily and (i - 1.5) * slot or (i - 1) / span * w end
+	local function Y(v) return (v - low) / (high - low) * h end
 
-	-- Grid: three lines with amounts, and nothing made yet (0) when it's in range.
+	-- Grid: three lines with amounts, and 0 when it's in range.
 	for i = 0, 2 do
 		local v = low + (high - low) * i / 2
 		Segment({ 1, 1, 1 }, 0.08, 1, 0, Y(v), w, Y(v))
-		gridLabels[i + 1]:SetText(Signed(v))
+		gridLabels[i + 1]:SetText(pct and Percent(v) or Signed(v))
 		gridLabels[i + 1]:ClearAllPoints()
 		gridLabels[i + 1]:SetPoint("BOTTOMRIGHT", graph, "BOTTOMLEFT", -4, Y(v) - 5)
 	end
 	if low < 0 and high > 0 then Segment({ 1, 1, 1 }, 0.3, 1, 0, Y(0), w, Y(0)) end
-	graph.firstDate:SetText(date("%b %d", ns.Data.DayTime(first)))
-	graph.lastDate:SetText(perDay and ("+%d days"):format(ahead) or "Today")
-	if perDay then
-		Segment({ 1, 1, 1 }, 0.2, 1, X(today), 0, X(today), h)
+	graph.firstDate:SetText(date("%b %d", ns.Data.DayTime(days[daily and 2 or 1].day)))
+	graph.lastDate:SetText(projecting and ("+%d days"):format(ahead) or "Today")
+	if projecting then
+		Segment({ 1, 1, 1 }, 0.2, 1, X(n), 0, X(n), h)
 		graph.todayLabel:ClearAllPoints()
-		graph.todayLabel:SetPoint("TOP", graph, "BOTTOMLEFT", X(today), -4)
+		graph.todayLabel:SetPoint("TOP", graph, "BOTTOMLEFT", X(n), -4)
 		graph.todayLabel:Show()
 	else
 		graph.todayLabel:Hide()
 	end
 
-	-- Cash (sales less purchases and deposits), under the profit.
-	local points = {}
-	for i, p in ipairs(series) do
-		local x = X(p.day)
-		points[i] = { x = x, y = Y(p.total), p = p }
-		if i > 1 then
-			local q = series[i - 1]
-			Segment(CASH_COLOR, 0.6, 1.5, X(q.day), Y(q.cash), x, Y(p.cash))
-			Segment(TOTAL_COLOR, 1, 2, points[i - 1].x, points[i - 1].y, x, points[i].y)
+	if daily then
+		local width = slot * 0.8 / #shown
+		local gap = width > 3 and 1 or 0
+		for i = 2, n do
+			local left = X(i) - slot * 0.4
+			for j, s in ipairs(shown) do
+				local v = vals[s.key][i]
+				if v and v ~= 0 then Bar(left + (j - 1) * width, width - gap, Y(0), Y(v), s.color) end
+			end
+		end
+	else
+		for j = #shown, 1, -1 do
+			local s, v = shown[j], vals[shown[j].key]
+			local main = j == 1
+			local prev
+			for i = 1, n do
+				if v[i] then
+					if prev then
+						Segment(s.color, main and 1 or 0.7, main and 2 or 1.5, X(prev), Y(v[prev]), X(i), Y(v[i]))
+					elseif i == n then
+						Dot(X(i), Y(v[i]), s.color)
+					end
+					prev = i
+				end
+			end
 		end
 	end
-	if #series == 1 then
-		Dot(points[1].x, Y(series[1].cash), CASH_COLOR)
-		Dot(points[1].x, points[1].y, TOTAL_COLOR)
-	end
-	graph.points = points
+
+	graph.points = { days = days, vals = vals, baseAt = baseAt, shown = shown, daily = daily, X = X, Y = Y, slot = slot, n = n }
 
 	-- The projection: dashed, from today on.
-	if perDay then
+	if projecting then
 		local steps = 12
 		for i = 0, steps - 1, 2 do
-			local d1, d2 = today + ahead * i / steps, today + ahead * (i + 1) / steps
-			Segment(TOTAL_COLOR, 0.7, 2, X(d1), Y(now + perDay * (d1 - today)), X(d2), Y(now + perDay * (d2 - today)))
+			local d1, d2 = ahead * i / steps, ahead * (i + 1) / steps
+			Segment(TOTAL_COLOR, 0.7, 2, X(n + d1), Y(now + perDay * d1), X(n + d2), Y(now + perDay * d2))
 		end
-		graph.projection = {
-			today = today, last = last, now = now, perDay = perDay, X = X, Y = Y,
-			Day = function(x) return first + x / w * (last - first) end,
-		}
+		graph.projection = { today = days[n].day, now = now, perDay = perDay, ahead = ahead }
 	end
 end
 
--- Hovering: the nearest day's profit; past today, the projection.
+-- Hovering: the nearest day; past today, the projection.
 local function GraphHover(self)
-	local points = self.points
-	if not points then return end
+	local g = self.points
+	if not g then return end
 	local x = GetCursorPosition() / self:GetEffectiveScale() - self:GetLeft()
-	local best
-	for _, p in ipairs(points) do
-		if not best or math.abs(p.x - x) < math.abs(best.x - x) then best = p end
-	end
+	local n, days = g.n, g.days
+	local i = g.daily and math.floor(x / g.slot + 1.5 + 0.5) or math.floor(x / self:GetWidth() * ((n - 1)
+		+ (self.projection and self.projection.ahead or 0)) + 1.5)
+	i = math.max(g.daily and 2 or 1, i)
 	local pr = self.projection
-	if pr then
-		local day = math.min(pr.last, math.floor(pr.Day(x) + 0.5))
-		if day > pr.today and math.abs(pr.X(day) - x) < math.abs(best.x - x) then
-			if self.hovered == day then return end
-			self.hovered = day
-			local v = pr.now + pr.perDay * (day - pr.today)
-			self.marker:ClearAllPoints()
-			self.marker:SetPoint("CENTER", self, "BOTTOMLEFT", pr.X(day), pr.Y(v))
-			self.marker:Show()
-			GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-			GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(day)), 1, 1, 1)
-			GameTooltip:AddLine("Projected: " .. Signed(v), TOTAL_COLOR[1], TOTAL_COLOR[2], TOTAL_COLOR[3])
-			GameTooltip:Show()
-			return
-		end
-	end
-	if best and best ~= self.hovered then
-		self.hovered = best
+	if pr and i > n then
+		local ahead = math.min(pr.ahead, i - n)
+		if self.hovered == -ahead then return end
+		self.hovered = -ahead
+		local v = pr.now + pr.perDay * ahead
 		self.marker:ClearAllPoints()
-		self.marker:SetPoint("CENTER", self, "BOTTOMLEFT", best.x, best.y)
+		self.marker:SetPoint("CENTER", self, "BOTTOMLEFT", g.X(n + ahead), g.Y(v))
 		self.marker:Show()
-		local p = best.p
 		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-		GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(p.day)), 1, 1, 1)
-		GameTooltip:AddLine("Profit: " .. Signed(p.total), TOTAL_COLOR[1], TOTAL_COLOR[2], TOTAL_COLOR[3])
-		GameTooltip:AddLine("Cash: " .. Signed(p.cash), CASH_COLOR[1], CASH_COLOR[2], CASH_COLOR[3])
-		if p.held > 0 then
-			GameTooltip:AddLine(("Holding %d, worth %s"):format(p.held, ns.Money(math.floor(p.value + 0.5))), 0.8, 0.8, 0.8)
-		end
+		GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(pr.today + ahead)), 1, 1, 1)
+		GameTooltip:AddLine("Projected: " .. Signed(v), TOTAL_COLOR[1], TOTAL_COLOR[2], TOTAL_COLOR[3])
 		GameTooltip:Show()
+		return
 	end
+	i = math.min(n, i)
+	if self.hovered == i then return end
+	self.hovered = i
+	local r = days[i]
+	self.marker:Hide()
+	self.column:Hide()
+	if g.daily then
+		self.column:ClearAllPoints()
+		self.column:SetPoint("BOTTOM", self, "BOTTOMLEFT", g.X(i), 0)
+		self.column:SetSize(g.slot, self:GetHeight())
+		self.column:Show()
+	else
+		local v = g.vals[g.shown[1].key][i]
+		if v then
+			self.marker:ClearAllPoints()
+			self.marker:SetPoint("CENTER", self, "BOTTOMLEFT", g.X(i), g.Y(v))
+			self.marker:Show()
+		end
+	end
+	GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+	GameTooltip:SetText(date("%A, %B %d", ns.Data.DayTime(r.day)), 1, 1, 1)
+	if not g.daily then
+		GameTooltip:AddLine("Since " .. date("%b %d", ns.Data.DayTime(days[1].day)), 0.6, 0.6, 0.6)
+	end
+	for _, s in ipairs(g.shown) do
+		local c, text = s.color, nil
+		if g.daily then
+			local d, share = Change(days, i, s.key)
+			if d then text = Signed(d) .. (share and ("  " .. Percent(share)) or "") end
+		else
+			local v = g.vals[s.key][i]
+			if v then
+				text = Signed(v)
+				if s.key == "gold" then
+					-- Kept from later than the range starts: since then.
+					local at = g.baseAt.gold
+					if at and at > 1 and days[at + 1] then
+						text = text .. " since " .. date("%b %d", ns.Data.DayTime(days[at + 1].day))
+					end
+					text = text .. "  |cffcccccc(" .. ns.Money(r.gold) .. ")|r"
+				end
+			end
+		end
+		if text then GameTooltip:AddLine(s.label .. ": " .. text, c[1], c[2], c[3]) end
+	end
+	if r.p.held > 0 then
+		GameTooltip:AddLine(("Holding %d, worth %s"):format(r.p.held, ns.Money(math.floor(r.p.value + 0.5))), 0.8, 0.8, 0.8)
+	end
+	GameTooltip:Show()
+end
+
+---------------------------------------------------------------------------
+-- What's shown: the keys (click one to show or hide its line), how, how long
+---------------------------------------------------------------------------
+local function UpdateControls()
+	local o, x = Options(), 0
+	for _, s in ipairs(SERIES) do
+		local b = legend[s.key]
+		if Available(s) then
+			local on = not o.hide[s.key]
+			b.swatch:SetAlpha(on and 1 or 0.25)
+			b.text:SetTextColor(on and 1 or 0.5, on and 1 or 0.5, on and 1 or 0.5)
+			b:ClearAllPoints()
+			b:SetPoint("LEFT", x, 0)
+			x = x + b:GetWidth() + 2
+			b:Show()
+		else
+			b:Hide()
+		end
+	end
+	for _, b in ipairs(modeButtons) do b:SetOn(o.mode == b.value) end
+	for _, b in ipairs(rangeButtons) do b:SetOn(o.range == b.value) end
 end
 
 ---------------------------------------------------------------------------
@@ -268,7 +458,8 @@ local function UpdateDetail()
 	end
 	detail.text:SetText(table.concat(info, "\n"))
 	graph:Show()
-	DrawGraph(series, perDay, ahead)
+	UpdateControls()
+	DrawGraph(Days(series), perDay, ahead)
 end
 
 function Profit.Refresh()
@@ -395,12 +586,96 @@ function Profit.Build(parent)
 	graph.marker:SetSize(9, 9)
 	graph.marker:SetColorTexture(1, 1, 1, 1)
 	graph.marker:Hide()
+	graph.column = graph:CreateTexture(nil, "BORDER")
+	graph.column:SetColorTexture(1, 1, 1, 0.1)
+	graph.column:Hide()
+
+	-- Above it: the keys on the left; how, and how long, on the right.
+	local controls = CreateFrame("Frame", nil, graph)
+	controls:SetPoint("BOTTOMLEFT", graph, "TOPLEFT", -64, 6)
+	controls:SetPoint("BOTTOMRIGHT", graph, "TOPRIGHT", 0, 6)
+	controls:SetHeight(16)
+	local function Redraw()
+		graph.hovered = nil
+		ns.SafeCall(UpdateDetail)
+	end
+	for _, s in ipairs(SERIES) do
+		local b = CreateFrame("Button", nil, controls)
+		b:SetHeight(16)
+		b.swatch = b:CreateTexture(nil, "ARTWORK")
+		b.swatch:SetSize(8, 8)
+		b.swatch:SetPoint("LEFT", 3, 0)
+		b.swatch:SetColorTexture(s.color[1], s.color[2], s.color[3], 1)
+		b.text = b:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		b.text:SetPoint("LEFT", b.swatch, "RIGHT", 4, 0)
+		b.text:SetText(s.label)
+		b:SetWidth(b.text:GetStringWidth() + 20)
+		b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+		b:SetScript("OnClick", function()
+			local o = Options()
+			-- Not the last one showing.
+			if not o.hide[s.key] and #Shown() == 1 then return end
+			o.hide[s.key] = not o.hide[s.key] or nil
+			Redraw()
+		end)
+		b:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			GameTooltip:SetText(s.tip, 1, 1, 1, 1, true)
+			GameTooltip:Show()
+		end)
+		b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		ns.ClickSound(b)
+		legend[s.key] = b
+	end
+	-- A row of choices, right to left from `right` (gap: space before it).
+	local function Choice(list, field, store, right, gap)
+		for k = #list, 1, -1 do
+			local value, label = list[k][1], list[k][2]
+			local b = CreateFrame("Button", nil, controls)
+			b:SetHeight(16)
+			b.value = value
+			b.bg = b:CreateTexture(nil, "BACKGROUND")
+			b.bg:SetAllPoints()
+			b.text = b:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+			b.text:SetPoint("CENTER")
+			b.text:SetText(label)
+			b:SetWidth(b.text:GetStringWidth() + 10)
+			b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+			function b:SetOn(on)
+				self.bg:SetColorTexture(1, 0.82, 0, on and 0.3 or 0.08)
+				self.text:SetTextColor(on and 1 or 0.7, on and 0.82 or 0.7, on and 0 or 0.7)
+			end
+			b:SetScript("OnClick", function()
+				Options()[field] = value
+				Redraw()
+			end)
+			if list[k][3] then
+				b:SetScript("OnEnter", function(self)
+					GameTooltip:SetOwner(self, "ANCHOR_TOP")
+					GameTooltip:SetText(list[k][3], 1, 1, 1, 1, true)
+					GameTooltip:Show()
+				end)
+				b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+			end
+			ns.ClickSound(b)
+			if right == controls then
+				b:SetPoint("RIGHT", controls, "RIGHT", 0, 0)
+			else
+				b:SetPoint("RIGHT", right, "LEFT", k == #list and -(gap or 1) or -1, 0)
+			end
+			right = b
+			store[#store + 1] = b
+		end
+		return right
+	end
+	Choice(MODES, "mode", modeButtons, Choice(RANGES, "range", rangeButtons, controls), 8)
 	graph:EnableMouse(true)
 	graph:SetScript("OnEnter", function(self) self:SetScript("OnUpdate", GraphHover) end)
 	graph:SetScript("OnLeave", function(self)
 		self:SetScript("OnUpdate", nil)
 		self.hovered = nil
 		self.marker:Hide()
+		self.column:Hide()
 		GameTooltip:Hide()
 	end)
 	if not graph.CreateLine then

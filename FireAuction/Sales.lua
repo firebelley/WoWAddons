@@ -61,6 +61,7 @@ local function Char()
 	end
 	return c
 end
+Sales.Char = Char
 
 -- The auction house gives a listing's price per item; this is the whole
 -- listing's (buyout, or the bid when there's no buyout). nil if unknown.
