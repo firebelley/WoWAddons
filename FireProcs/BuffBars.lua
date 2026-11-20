@@ -104,24 +104,38 @@ local function Total(info)
 	return info.duration
 end
 
+-- Where Blizzard puts the icon's time text: "below" or "above" the icon, or
+-- nil (beside it, in a vertical buff frame). Read from the buff frame's own
+-- layout settings - the text's anchor itself can't be read in combat (the
+-- game hides it from addons).
+local function TextSide()
+	local c = BuffFrame and BuffFrame.AuraContainer
+	if not c then return nil end
+	local horizontal, up = c.isHorizontal, c.addIconsToTop
+	if API.IsSecret(horizontal) or API.IsSecret(up) or not horizontal then return nil end
+	return up and "above" or "below"
+end
+
+-- The offset last given to each button's time text. Forgotten whenever the
+-- game lays out the buffs again (that puts the text back at 0).
+local nudged = {}
+
 -- Moves the icon's time text out of the bar's way (push = 0 puts it back).
--- Blizzard anchors it against the icon with no offset: below it ("BOTTOM"),
--- above it ("TOP") or beside it, depending on how the buff frame grows.
-local function NudgeText(button, push)
-	local text = button.Duration
-	if not (text and text.GetPoint) then return end
-	local point, rel, relPoint, x, y = text:GetPoint(1)
-	if not point then return end
+-- Blizzard anchors it against the icon with no offset.
+local function NudgeText(button, push, side)
+	local text, icon = button.Duration, button.Icon
+	if not (text and icon and side) then return end
 	local want = 0
-	if push > 0 then
-		local above = ns.db.buffBarAbove
-		if relPoint == "BOTTOM" and not above then
-			want = -push
-		elseif relPoint == "TOP" and above then
-			want = push
-		end
+	if push > 0 and (side == "above") == (ns.db.buffBarAbove and true or false) then
+		want = side == "above" and push or -push
 	end
-	if y ~= want then text:SetPoint(point, rel, relPoint, x or 0, want) end
+	if nudged[button] == want then return end
+	nudged[button] = want
+	if side == "above" then
+		text:SetPoint("BOTTOM", icon, "TOP", 0, want)
+	else
+		text:SetPoint("TOP", icon, "BOTTOM", 0, want)
+	end
 end
 
 local function UpdateBar(button, bar)
@@ -230,13 +244,14 @@ driver:SetScript("OnUpdate", function(_, elapsed)
 	-- Runs 20 times a second, so nothing here makes new tables or functions:
 	-- the garbage they leave makes the game hitch every few seconds.
 	local push = (ns.db.buffBarHeight or ns.DEFAULTS.buffBarHeight) + GAP
+	local side = TextSide()
 	for button, bar in pairs(bars) do
 		local ok, err = pcall(UpdateBar, button, bar)
 		if not ok then
 			bar:Hide()
 			ns.ReportError(err)
 		end
-		ok, err = pcall(NudgeText, button, bar:IsShown() and push or 0)
+		ok, err = pcall(NudgeText, button, bar:IsShown() and push or 0, side)
 		if not ok then ns.ReportError(err) end
 	end
 end)
@@ -245,13 +260,14 @@ end)
 function BuffBars.Refresh()
 	local on = ns.db.buffBars
 	local height = ns.db.buffBarHeight or ns.DEFAULTS.buffBarHeight
+	local side = TextSide()
 	for button, bar in pairs(bars) do
 		bar:SetHeight(height)
 		bar:SetCentered(ns.db.buffBarCenter)
 		bar:Place(ns.db.buffBarAbove)
 		if not on then
 			bar:Hide()
-			ns.SafeCall(NudgeText, button, 0)
+			ns.SafeCall(NudgeText, button, 0, side)
 		end
 	end
 	wait = 0
@@ -265,6 +281,12 @@ ns.On("PLAYER_LOGIN", function()
 		if not button.isAuraAnchor and button.Icon then
 			bars[button] = CreateBar(button)
 		end
+	end
+	-- The game re-anchors the time text (offset 0) each time it lays out the
+	-- buffs: forget what was nudged so the next tick sets it again.
+	local container = BuffFrame.AuraContainer
+	if container and type(container.UpdateGridLayout) == "function" then
+		hooksecurefunc(container, "UpdateGridLayout", function() wipe(nudged) end)
 	end
 	BuffBars.Refresh()
 end)
