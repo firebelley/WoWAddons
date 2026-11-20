@@ -321,10 +321,15 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 			l.left = math.min(l.left, a.quantity or l.left)
 			LedgerSync(l, id)
 		elseif full and now - l.at > 5 and (l.house or "faction") == (ns.house or "faction") then
-			-- Gone: sold out, unless its time was up first. (Only this auction house's:
-			-- the list doesn't have the other one's.)
-			if now <= l.at + l.length or l.soldSeen then l.left = 0 end
-			Settle(s, i, l.left == 0 and "sold" or "expired", id)
+			-- Gone: cancelled if you did (the list can drop it before the game says
+			-- so, or the game may not say), else sold out unless its time was up
+			-- first. (Only this auction house's: the list doesn't have the other one's.)
+			if ns.YouCancelled(l.auctionID) then
+				Settle(s, i, "cancelled", id)
+			else
+				if now <= l.at + l.length or l.soldSeen then l.left = 0 end
+				Settle(s, i, l.left == 0 and "sold" or "expired", id)
+			end
 		end
 	end)
 end)

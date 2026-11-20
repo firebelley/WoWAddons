@@ -325,7 +325,9 @@ end
 ns.On("AUCTION_CANCELED", function(auctionID)
 	local c = Char()
 	local a = c and auctionID and c.owned[auctionID]
-	if a then
+	-- Only yours: the game says "cancelled" when part of a listing sells, too.
+	if a and ns.YouCancelled(auctionID) and not a.cancelLogged then
+		a.cancelLogged = true
 		Sales.Log(c, "cancelLog", time(), a.qty or 1, a.name)
 		if ns.Archive then ns.SafeCall(ns.Archive.Event, "cancel", a.id or a.name, a.qty or 1, UnitPrice(a), a.house) end
 	end
@@ -777,7 +779,16 @@ local function ReadInbox()
 			keep[#keep + 1] = s
 		elseif s.inMail or s.delivered then
 			-- It was here (or was sent), and now it's gone: you took the money.
-			if not complete then keep[#keep + 1] = s end
+			if not complete then
+				keep[#keep + 1] = s
+			elseif s.qty and s.t and not s.part and not s.logged then
+				-- Its mail was never read here: the sale still goes in the logs.
+				s.logged = true
+				Sales.Log(c, "soldLog", s.t, s.qty, s.name)
+				if ns.Archive then
+					ns.SafeCall(ns.Archive.Event, "sold", s.id or s.name, s.qty, s.gross and s.gross / s.qty, s.house, nil, s.t)
+				end
+			end
 		elseif Take(pending, s) or now - (s.t or 0) < DELIVERY_GRACE or not complete then
 			keep[#keep + 1] = s -- not delivered yet
 		end
@@ -795,6 +806,7 @@ local function ReadInbox()
 			end
 		end
 	end
+	ns.Debug(("inbox: %d shown of %s, sales %d -> %d"):format(shown, tostring(total), #c.sales, #keep))
 	c.sales = keep
 end
 
@@ -807,11 +819,21 @@ ns.On("MAIL_INBOX_UPDATE", function()
 		if atMailbox then ns.SafeCall(ReadInbox) end
 	end)
 end)
-ns.On("MAIL_SHOW", function() atMailbox = true end)
-ns.On("MAIL_CLOSED", function()
+-- Read once the mail has loaded (MAIL_INBOX_UPDATE), not on opening: the
+-- list can still be empty then.
+local function MailOpened() atMailbox = true end
+local function MailClosed()
 	if atMailbox then ns.SafeCall(ReadInbox) end
 	atMailbox = false
-end)
+end
+ns.On("MAIL_SHOW", MailOpened)
+ns.On("MAIL_CLOSED", MailClosed)
+-- The newer way the game says it (in case the old events don't come).
+local MAILBOX = Enum and Enum.PlayerInteractionType and Enum.PlayerInteractionType.MailInfo
+if MAILBOX then
+	ns.On("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(kind) if kind == MAILBOX then MailOpened() end end)
+	ns.On("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", function(kind) if kind == MAILBOX then MailClosed() end end)
+end
 
 ---------------------------------------------------------------------------
 -- /fah testsale: what the announcement looks like (nothing is recorded)
