@@ -516,5 +516,18 @@ ns.On("ADDON_LOADED", function(name)
 	if name == "Blizzard_Professions" then SetUp() end
 end)
 ns.On("PLAYER_LOGIN", SetUp) -- in case it loaded before FireAuction
+
+-- For other addons (FireCrafting):
+--   FireAuction.ItemCost(itemID) - copper for one, the cheapest of vendor and
+--     lowest buyout; nil without a price
+--   FireAuction.Money(copper) - "1g 20s" with coin icons
+FireAuction = FireAuction or {}
+function FireAuction.ItemCost(itemID)
+	if not (ns.db and ns.db.vendorPrices and itemID) then return nil end
+	return (ReagentCost(itemID))
+end
+function FireAuction.Money(copper)
+	return ns.Money(copper)
+end
 -- Item names and vendor prices arrive a moment after they're first asked for.
 ns.On("GET_ITEM_INFO_RECEIVED", function() Crafting.Refresh() end)

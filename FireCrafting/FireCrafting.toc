@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: FireCrafting
+## Notes: A To Craft list beside the profession window: queue recipes, see every material you still need (crafted ones broken down), and what it all costs.
+## IconTexture: Interface\Icons\INV_Misc_Note_01
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariablesPerCharacter: FireCraftingCharDB
+## OptionalDeps: FireBags, FireAuction
+
+Init.lua
+Data.lua
+Panel.lua

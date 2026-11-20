@@ -54,6 +54,12 @@ function ns.GetItemCounts(itemID)
 	return GetBagCounts()[itemID] or 0, GetBankCounts()[itemID] or 0
 end
 
+-- For other addons (FireCrafting): bags, bank = FireBags.GetItemCounts(itemID)
+FireBags = FireBags or {}
+function FireBags.GetItemCounts(itemID)
+	return ns.GetItemCounts(itemID)
+end
+
 local function Invalidate() bagCounts = nil end
 ns.On("BAG_UPDATE", Invalidate)
 ns.On("BAG_UPDATE_DELAYED", Invalidate)
