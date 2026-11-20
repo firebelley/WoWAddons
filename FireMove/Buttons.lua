@@ -242,15 +242,16 @@ end
 
 -- Quick Keybind mode: the key pressed over one of ours binds it. Keys over
 -- anything else go on to the game's.
+-- SetPropagateKeyboardInput is blocked in combat, so the catcher is only
+-- shown (and so only gets keys) in bind mode out of combat.
 local catcher = CreateFrame("Frame", nil, UIParent)
 catcher:SetFrameStrata("TOOLTIP")
-catcher:EnableKeyboard(false)
+catcher:Hide()
 catcher:SetScript("OnKeyDown", function(self, key)
-	if not (binding and hovered) or key:match("^[LR]?SHIFT$") or key:match("^[LR]?CTRL$") or key:match("^[LR]?ALT$") then
-		self:SetPropagateKeyboardInput(true)
-		return
-	end
-	self:SetPropagateKeyboardInput(false)
+	if not binding or InCombatLockdown() then return end
+	local pass = not hovered or key:match("^[LR]?SHIFT$") or key:match("^[LR]?CTRL$") or key:match("^[LR]?ALT$")
+	self:SetPropagateKeyboardInput(pass and true or false)
+	if pass then return end
 	local command = Command(hovered)
 	if key == "ESCAPE" then
 		while GetBindingKey(command) do SetBinding(GetBindingKey(command)) end
@@ -262,11 +263,22 @@ catcher:SetScript("OnKeyDown", function(self, key)
 	for b in pairs(buttons) do UpdateHotkey(b) end
 	ShowTooltip(hovered)
 end)
+catcher:EnableKeyboard(true)
+
+local function UpdateCatcher()
+	catcher:SetShown(binding and not InCombatLockdown() and true or false)
+end
+
+catcher:RegisterEvent("PLAYER_REGEN_DISABLED")
+catcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+catcher:SetScript("OnEvent", function(_, event)
+	-- InCombatLockdown is still false while PLAYER_REGEN_DISABLED fires.
+	if event == "PLAYER_REGEN_DISABLED" then catcher:Hide() else UpdateCatcher() end
+end)
 
 function ns.SetBindMode(on)
 	binding = on
-	catcher:EnableKeyboard(on and true or false)
-	if not on then catcher:SetPropagateKeyboardInput(true) end
+	UpdateCatcher()
 	for b in pairs(buttons) do b.bindHighlight:SetShown(on and true or false) end
 end
 

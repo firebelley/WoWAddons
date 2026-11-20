@@ -455,7 +455,13 @@ end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
-events:SetScript("OnEvent", function()
+events:RegisterEvent("PLAYER_REGEN_DISABLED")
+events:SetScript("OnEvent", function(_, event)
+	-- The picker's key handling is blocked in combat.
+	if event == "PLAYER_REGEN_DISABLED" then
+		if picking then StopPicking() end
+		return
+	end
 	if pending then Attach.Apply() end
 	Refresh()
 end)
