@@ -447,23 +447,43 @@ local function Prepare(s)
 	s.started = GetTime()
 end
 
-local function RecordText(s, rec, gap)
+-- The most a record may take, after its id-gap (at most 5 characters) and a
+-- data message's head (at most 10).
+local RECORD_MAX = MAX_LEN - 15
+
+-- An item's record, without its id-gap: in parts that each fit a message
+-- (an item with many days of prices is too long for one; the parts after the
+-- first go with id-gap 0, the same item again, without the latest prices).
+-- Returns the parts, whether the latest prices are in, and how many day prices.
+local function RecordParts(s, rec)
 	local latest = s.since and rec.s and rec.s > s.since and rec.p
-	local flags = { latest and true or false }
-	local prices = {}
+	local prices = {} -- { day's place, text }
 	for j, day in ipairs(s.days) do
 		local p = rec.d[day]
 		if p then
-			flags[j + 1] = true
 			local pl, ph, ql, qh = ns.Data.Range(rec, day)
-			prices[#prices + 1] = Price12(p) .. Num(ns.Data.Scans(rec, day)) .. Num(ns.Data.Listed(rec, day) or 0)
-				.. Price12(pl) .. Price12(ph) .. Num(ql or 0) .. Num(qh or 0)
+			prices[#prices + 1] = { j, Price12(p) .. Num(ns.Data.Scans(rec, day)) .. Num(ns.Data.Listed(rec, day) or 0)
+				.. Price12(pl) .. Price12(ph) .. Num(ql or 0) .. Num(qh or 0) }
 		end
 	end
 	if not latest and #prices == 0 then return nil end
-	local out = Num(gap) .. Bits(flags, #s.days + 1)
-	if latest then out = out .. Num(rec.p) .. Num(rec.q or 0) .. Num(s.base - rec.s) .. Num(rec.m or rec.p) end
-	return out .. table.concat(prices), latest, #prices
+	local k = #s.days + 1
+	local parts, i, first = {}, 1, true
+	repeat
+		local flags = { (first and latest) and true or false }
+		local lat = (first and latest)
+			and (Num(rec.p) .. Num(rec.q or 0) .. Num(s.base - rec.s) .. Num(rec.m or rec.p)) or ""
+		local body, len = {}, math.ceil(k / 6) + #lat
+		while prices[i] and (#body == 0 or len + #prices[i][2] <= RECORD_MAX) do
+			flags[prices[i][1] + 1] = true
+			body[#body + 1] = prices[i][2]
+			len = len + #prices[i][2]
+			i = i + 1
+		end
+		parts[#parts + 1] = Bits(flags, k) .. lat .. table.concat(body)
+		first = false
+	until not prices[i]
+	return parts, latest, #prices
 end
 
 local function NextStreamMessage(s)
@@ -475,24 +495,33 @@ local function NextStreamMessage(s)
 			Num(s.T), Num(s.base), Num(s.complete and 1 or 0), DaysText(s.days) })
 	end
 	local realm = ns.Realm(s.house)
-	if realm and s.cursor <= #s.ids then
+	if realm then
 		local head = "D" .. ENC[VERSION] .. node .. s.sid .. Num(s.seq)
 		local parts, len, prev = { head }, #head, 0
-		while s.cursor <= #s.ids do
-			local id = s.ids[s.cursor]
-			local rec = realm.items[id]
-			local text, latest, n
-			if rec then text, latest, n = RecordText(s, rec, id - prev) end
-			if text then
+		while true do
+			-- The next item's parts, once the last one's are all out.
+			if not s.queue or not s.queue[1] then
+				if s.cursor > #s.ids then break end
+				local id = s.ids[s.cursor]
+				s.cursor = s.cursor + 1
+				local rec = realm.items[id]
+				local list, latest, n
+				if rec then list, latest, n = RecordParts(s, rec) end
+				if list then
+					s.queue, s.queueID = list, id
+					s.records = s.records + 1
+					if latest then s.latest = s.latest + 1 end
+					s.dayPrices = s.dayPrices + n
+				end
+			end
+			if s.queue and s.queue[1] then
+				local text = Num(s.queueID - prev) .. s.queue[1]
 				if len + #text > MAX_LEN and #parts > 1 then break end
+				table.remove(s.queue, 1)
 				parts[#parts + 1] = text
 				len = len + #text
-				prev = id
-				s.records = s.records + 1
-				if latest then s.latest = s.latest + 1 end
-				s.dayPrices = s.dayPrices + n
+				prev = s.queueID
 			end
-			s.cursor = s.cursor + 1
 		end
 		if #parts > 1 then
 			s.seq = s.seq + 1
