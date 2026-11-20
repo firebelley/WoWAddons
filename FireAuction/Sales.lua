@@ -73,7 +73,23 @@ local function ListingPrice(a)
 end
 
 local function ItemName(id)
-	return id and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id) or nil
+	local name = id and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id) or nil
+	if name == "" then name = nil end
+	if not name and id and C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
+	return name
+end
+
+-- The item's name from a link, else its ID. A link made before the game has
+-- the item's details reads "[]": no name from that.
+local function NameOf(link, id)
+	local name = link and link:match("%[(.-)%]")
+	if name == "" then name = nil end
+	return name or ItemName(id)
+end
+
+-- A link worth showing (not "[]").
+local function GoodLink(link)
+	return link and not link:find("%[%]") and link or nil
 end
 
 ---------------------------------------------------------------------------
@@ -139,7 +155,7 @@ local function ReadSold(c, rows, now, house)
 			local match
 			for pass = 1, 3 do
 				for _, s in ipairs(c.sales) do
-					if not s.soldKey and not s.inMail and s.name == r.name
+					if not s.soldKey and not s.inMail and ((r.name and s.name == r.name) or (r.id and s.id == r.id))
 						and ((pass == 1 and s.part and s.unit and r.total and s.unit * r.qty == r.total)
 							or (pass == 2 and s.qty == r.qty)
 							or (pass == 3 and s.part)) then
@@ -151,7 +167,7 @@ local function ReadSold(c, rows, now, house)
 			end
 			local s = match or { name = r.name, t = now, fromRow = true }
 			if not match then c.sales[#c.sales + 1] = s end
-			s.link, s.id = s.link or r.link, s.id or r.id
+			s.name, s.link, s.id = s.name or r.name, GoodLink(s.link) or r.link, s.id or r.id
 			s.qty, s.part, s.soldKey, s.house = r.qty, nil, r.key, house
 			if r.total and r.total > 0 then
 				s.unit = math.floor(r.total / r.qty + 0.5)
@@ -179,14 +195,14 @@ local function ReadOwned()
 			if not Back(c, a.auctionID, qty) then NoteDeposit(c, a.auctionID, GuessEach(id, qty)) end
 			sold[#sold + 1] = {
 				key = a.auctionID .. ":" .. qty, qty = qty, id = id, link = link, auction = a.auctionID,
-				name = (link and link:match("%[(.-)%]")) or ItemName(id),
+				name = NameOf(link, id),
 				total = (a.buyoutAmount and a.buyoutAmount > 0 and a.buyoutAmount) or a.bidAmount,
 			}
 		elseif ok and a and a.auctionID then
 			local id = a.itemKey and a.itemKey.itemID
 			local link = a.itemLink
 			local entry = {
-				name = (link and link:match("%[(.-)%]")) or ItemName(id),
+				name = NameOf(link, id),
 				link = link, id = id, qty = a.quantity or 1,
 				buyout = a.buyoutAmount, bid = a.bidAmount,
 				hasBid = a.bidder ~= nil or nil, house = house, seen = now,
@@ -300,7 +316,7 @@ ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	if c and auctionID and p and not c.owned[auctionID] and time() - p.at < 60 then
 		local now = time()
 		c.owned[auctionID] = {
-			name = (p.link and p.link:match("%[(.-)%]")) or ItemName(p.id), link = p.link, id = p.id,
+			name = NameOf(p.link, p.id), link = p.link, id = p.id,
 			qty = p.qty, buyout = p.buyout, house = ns.house or "faction", seen = now,
 			ends = p.length and now + p.length,
 		}
@@ -395,7 +411,8 @@ local function Duration(sec)
 end
 
 local function ListingText(a)
-	local text = a.link or a.name or "?"
+	if (not a.name or a.name == "") and a.id then a.name = ItemName(a.id) end
+	local text = GoodLink(a.link) or a.name or "?"
 	if (a.qty or 1) > 1 then text = text .. " x" .. a.qty end
 	if a.partSold then text = text .. " |cff999999(some sold)|r" end
 	if a.house == "neutral" then text = text .. " |cff999999(" .. ns.HouseName("neutral") .. ")|r" end
@@ -466,8 +483,15 @@ end
 
 -- s.part: part of a stack sold, and only the mail will say how many ("x?").
 -- A group (several sales) shows what's known: "x350+".
+-- One saved with an empty name (a "[]" link, before the game had the item)
+-- or none: named from its ID.
+local function Rename(s)
+	if (not s.name or s.name == "") and s.id then s.name = ItemName(s.id) end
+end
+
 local function SaleText(s)
-	local text = s.link or s.name or "?"
+	Rename(s)
+	local text = GoodLink(s.link) or s.name or "?"
 	if s.part then
 		text = text .. ((s.qty or 0) > 0 and (" x" .. s.qty .. "+") or " x?")
 	elseif (s.qty or 1) > 1 then
@@ -488,14 +512,15 @@ end
 local function Grouped(list)
 	local groups, byName = {}, {}
 	for _, s in ipairs(list) do
-		local key = s.name or s.link or "?"
+		Rename(s)
+		local key = s.name or (s.id and ("item:" .. s.id)) or "?"
 		local g = byName[key]
 		if not g then
 			g = { name = s.name, link = s.link, qty = 0, net = 0, known = true, exact = true, mailed = 0, sales = 0 }
 			byName[key] = g
 			groups[#groups + 1] = g
 		end
-		g.link = g.link or s.link
+		g.link = g.link or GoodLink(s.link)
 		if s.part then
 			g.part = true
 			g.unit = g.unit or s.unit
@@ -588,7 +613,9 @@ local function Sold(name, auctionID, auction)
 	-- Its Sold row may have been read first (the listing is gone by then):
 	-- that's this sale, not another.
 	for _, r in ipairs(c.sales) do
-		if r.fromRow and not r.noticed and r.name == s.name and s.t - (r.t or 0) < 600
+		Rename(r)
+		local same = r.name == s.name or (auction and auction.id and r.id == auction.id)
+		if r.fromRow and not r.noticed and same and s.t - (r.t or 0) < 600
 			and (not auction or (stack and r.unit == unit) or (not stack and r.qty == 1)) then
 			r.noticed = true
 			if stack then auction.partSold = true elseif auctionID then c.owned[auctionID] = nil end
