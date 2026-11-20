@@ -1,9 +1,13 @@
 -- Abilities that light up: Overpower after a dodge, Revenge after a block,
 -- Riposte after a parry, Execute below 20%...
 --
--- No list needed: in a fight, any spell of yours that goes from "can't be used"
+-- No list needed: in a fight, a spell of yours that goes from "can't be used"
 -- to usable *without* you changing anything (stance, target, combo points,
 -- gear, buffs) became usable because of something that happened - a proc.
+-- Only spells whose tooltip says they're usable just then ("Only usable after
+-- the target dodges", "becomes active after parrying"): others become usable
+-- for plain reasons (a soul shard for a summon, a pet for Health Funnel,
+-- stepping outdoors for a mount).
 local _, ns = ...
 local API, Spells, Glow = ns.API, ns.Spells, ns.Glow
 
@@ -25,6 +29,22 @@ local ticker
 
 function Reactive.Quiet()
 	quietUntil = GetTime() + QUIET_TIME
+end
+
+local CONDITIONAL = { "only usable", "only useable", "usable only", "useable only", "becomes active", "becomes usable" }
+local conditional = {} -- [spellID] = true/false, once its tooltip has loaded
+
+local function IsConditional(spellID)
+	local known = conditional[spellID]
+	if known ~= nil then return known end
+	local text = API.SpellDescription(spellID):lower()
+	if text == "" then return false end -- not loaded yet: asked again next time
+	known = false
+	for _, phrase in ipairs(CONDITIONAL) do
+		if text:find(phrase, 1, true) then known = true break end
+	end
+	conditional[spellID] = known
+	return known
 end
 
 local function OnCooldown(spellID)
@@ -64,7 +84,7 @@ local function Check()
 		states[s.name] = state
 
 		if fight and state > 0 then
-			if prev == 0 and not quiet then pending[s.name] = true end
+			if prev == 0 and not quiet and IsConditional(s.id) then pending[s.name] = true end
 			if pending[s.name] and state == 2 and not OnCooldown(s.id) then
 				pending[s.name] = nil
 				if ns.Proc(s.name, s.icon, "ready", "detectAbilities") then

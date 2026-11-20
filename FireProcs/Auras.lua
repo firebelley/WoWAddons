@@ -6,6 +6,8 @@ local API, Spells = ns.API, ns.Spells
 
 local STAY_MAX = 60 -- proc buffs up to this long get an icon until they end;
                     -- longer ones only get the announcement
+local PROC_MAX = 300 -- a buff of yours longer than this is food, an elixir, a
+                     -- scroll or a spell's (Demonic Sacrifice's) - not a proc
 
 local Auras = {}
 ns.Auras = Auras
@@ -24,16 +26,21 @@ Auras.hidden = 0
 
 -- Returns "proc", "gift" (a long buff from someone else) or nil plus the reason.
 local function Classify(a)
-	-- Some procs carry no caster at all; a short buff with nobody behind it is
+	-- Some procs carry no caster at all, and neither do buffs from anyone
+	-- outside your group (a passing priest's Renew): the game's own flag tells
+	-- them apart. Where it won't say, a short buff with nobody behind it is
 	-- treated as yours (buffs from group members name them: "party1"...).
-	local mine = a.source == "player" or (a.source == nil and a.duration > 0 and a.duration <= STAY_MAX)
+	local mine = a.source == "player"
+		or (a.source == nil and a.fromMe ~= false and a.duration > 0 and (a.fromMe or a.duration <= STAY_MAX))
 	if mine then
 		-- Permanent buffs are passives and stances, never procs.
 		if a.duration <= 0 then return nil, "permanent (passive, stance or aura)" end
+		if a.duration > PROC_MAX then return nil, ("yours and %ss long: food, an elixir or the like"):format(tostring(a.duration)) end
 		local own = Spells.OwnSpellFor(a.name)
 		if own then return nil, "belongs to your spell " .. Spells.Describe(own) end
 		return "proc"
 	end
+	if a.source == nil and a.fromMe then return nil, "yours, but permanent" end
 	-- Short buffs from others are left out - healers' HoTs would never stop.
 	if a.duration > STAY_MAX then return "gift" end
 	return nil, ("from %s, %ss long (only buffs over %ss from others count)"):format(

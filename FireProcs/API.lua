@@ -143,8 +143,11 @@ function API.IsUsable(spell)
 end
 
 -- Calls fn(aura) for each aura on the unit that addons may read, where aura is
--- { name, icon, count, duration, expires, source, spellId }. Hidden (secret)
--- auras are skipped; returns how many were skipped.
+-- { name, icon, count, duration, expires, source, spellId, fromMe }. Hidden
+-- (secret) auras are skipped; returns how many were skipped.
+-- source is the caster's unit ("player", "party1"...), nil when they have
+-- none (anyone outside your group). fromMe: the game's own word on whether
+-- you or your pet put it there - true/false, or nil when it won't say.
 local MAX_HIDDEN_RUN = 40 -- stop after this many hidden slots in a row
 
 local function Readable(a)
@@ -174,12 +177,13 @@ function API.ForEachAura(unit, filter, fn)
 				if hiddenRun >= MAX_HIDDEN_RUN then return hidden end
 			else
 				hiddenRun = 0
-				local count = a.applications
+				local count, fromMe = a.applications, a.isFromPlayerOrPlayerPet
+				if API.IsSecret(fromMe) or type(fromMe) ~= "boolean" then fromMe = nil end
 				fn({
 					name = a.name, icon = a.icon,
 					count = (not API.IsSecret(count) and count) or 0,
 					duration = a.duration or 0, expires = a.expirationTime or 0,
-					source = a.sourceUnit, spellId = a.spellId,
+					source = a.sourceUnit, spellId = a.spellId, fromMe = fromMe,
 					instance = not API.IsSecret(a.auraInstanceID) and a.auraInstanceID or nil,
 				})
 			end

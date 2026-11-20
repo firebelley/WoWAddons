@@ -51,6 +51,7 @@ local ANNOUNCE_THROTTLE = 3
 local LOGIN_CHECK = 5    -- seconds after login before checking what's missing
 local END_MARGIN = 1     -- in combat, a hidden buff this close to its end time counts as gone
 local GCD = 2            -- a cooldown this short right after casting is just the global cooldown
+local ALIAS_WINDOW = 1   -- a buff under another name appears this soon after the spell that gives it
 local JUDGEMENT = "Judgement" -- uses up a paladin's seal on purpose
 
 local SelfBuffs = {}
@@ -234,22 +235,26 @@ local function IsCandidate(a)
 	-- Your spell that the game says your pet applied, like Soul Link: it lasts
 	-- until the pet dies or is dismissed (no timer), and is worth recasting.
 	if a.source == "pet" and inBook then return true end
+	-- Yours: cast by you (a buff from anyone outside your group has no caster
+	-- either - the game's own flag tells those apart, where it gives one).
+	local byMe = a.source == "player" or (a.source == nil and a.fromMe ~= false)
 	-- A long buff one of your spells gives under another name (Demonic
-	-- Sacrifice -> Touch of Shadow): learned when it appears just as you cast
-	-- that spell, fresh (its full time left); then known by name.
-	local mine = a.source == "player" or a.source == "pet" or a.source == nil
-	if not inBook and mine and (a.duration or 0) >= MIN_DURATION then
+	-- Sacrifice -> Touch of Shadow): learned when it appears, fresh (its full
+	-- time left), right as you cast that spell - a spell that isn't an attack,
+	-- with nothing else cast or used since (an elixir, someone's Battle Shout
+	-- landing then); then known by name.
+	if not inBook and byMe and (a.source == "player" or a.fromMe) and (a.duration or 0) >= MIN_DURATION then
 		local e = Entry(a.name)
 		if e and e.from then return true end
-		local from = Spells.RecentBookCast and Spells.RecentBookCast()
+		local from = Spells.LastBookCast and Spells.LastBookCast(ALIAS_WINDOW)
 		local left = (a.expires or 0) - GetTime()
-		if from and a.expires and a.expires > 0 and a.duration - left < 3 then
+		if from and not API.IsHarmfulSpell(Spells.active[from]) and a.expires and a.expires > 0
+			and a.duration - left < ALIAS_WINDOW then
 			a.from = from
 			return true
 		end
 	end
-	-- (Some buffs carry no caster; one named after your own spell is yours.)
-	if a.source ~= "player" and a.source ~= nil then return false, "not cast by you (from " .. tostring(a.source) .. ")" end
+	if not byMe then return false, "not cast by you (from " .. tostring(a.source or "someone outside your group") .. ")" end
 	if not inBook then
 		return false, ("no spell named %q in your spellbook (%d spells read)"):format(a.name, Spells.count)
 	end

@@ -117,5 +117,14 @@ ns.On("ADDON_LOADED", function(name)
 	db.seen = db.seen or {}   -- [spell name] = true for every proc announced so far
 	db.selfBuffs = db.selfBuffs or {} -- [buff name] = { icon, on, group } for buff reminders
 	db.enchantNames = db.enchantNames or {} -- [weapon enchant ID] = name read from the weapon's tooltip
+	-- Buffs "a spell of yours gives under another name" used to be learned from
+	-- anything appearing as you cast (someone's Battle Shout, an elixir): those
+	-- are dropped once; real ones (Demonic Sacrifice's) are learned again.
+	if not db.aliasesChecked then
+		for name, e in pairs(db.selfBuffs) do
+			if type(e) == "table" and e.from then db.selfBuffs[name] = nil end
+		end
+		db.aliasesChecked = true
+	end
 	ns.db = db
 end)

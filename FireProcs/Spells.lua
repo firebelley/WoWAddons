@@ -217,6 +217,7 @@ local function RememberCast(spellID)
 	local name = API.SpellInfo(spellID)
 	if name then recentByName[name] = now end
 	if name and Spells.active[name] then Spells.lastBookCast, Spells.lastBookCastAt = name, now end
+	Spells.lastCast, Spells.lastCastAt = name or spellID, now -- anything: spells, items
 end
 
 ns.OnUnit("UNIT_SPELLCAST_SENT", "player", function(_, _, castGUID, spellID)
@@ -248,6 +249,14 @@ end)
 -- The spell from your spellbook you cast a moment ago, or nil.
 function Spells.RecentBookCast()
 	if Spells.lastBookCast and GetTime() - (Spells.lastBookCastAt or 0) < RECENT_CAST then return Spells.lastBookCast end
+	return nil
+end
+
+-- The spell from your spellbook you cast within `window` seconds, if it's the
+-- last thing you cast or used (no item, no other spell since); else nil.
+function Spells.LastBookCast(window)
+	local name = Spells.lastCast
+	if name and name == Spells.lastBookCast and GetTime() - (Spells.lastCastAt or 0) < window then return name end
 	return nil
 end
 
