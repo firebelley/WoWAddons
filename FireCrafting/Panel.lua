@@ -21,6 +21,7 @@ local WIDTH = 300
 local ROW = 20
 local INDENT = 12
 local GREY = "|cff999999"
+local BANK_COLOR = "ff8cb3ff" -- the same blue as FireBags' bank counts
 
 local page, form, panel, scroll, content, addBox, addButton, selName, emptyText, craftButton
 local headers, recipeRows, materialRows = {}, {}, {}
@@ -344,7 +345,8 @@ local function Draw()
 	if icon and panel.SetPortraitToAsset then pcall(panel.SetPortraitToAsset, panel, icon) end
 	RefreshAdd()
 
-	local result = Data.Compute(profID)
+	local use = { bags = ns.db.useBags, bank = ns.db.useBank }
+	local result = Data.Compute(profID, use)
 	local prices = Data.HasPrices()
 	local selected = SelectedRecipe()
 	selected = selected and selected.recipeID
@@ -398,7 +400,10 @@ local function Draw()
 		row.icon:SetTexture(ItemIcon(m.id))
 		row.name:SetText(ItemName(m.id))
 		local color = m.have >= m.need and "ff40c040" or (m.short == 0 and "ffffd100" or "ffff5050")
-		row.count:SetText(("|c%s%d/%d|r"):format(color, m.have, m.need))
+		local text = ("|c%s%d/%d|r"):format(color, m.have, m.need)
+		-- How many of those are in the bank (to fetch), in FireBags' bank blue.
+		if use.bags and use.bank and m.bank > 0 then text = text .. (" |c%s(%d)|r"):format(BANK_COLOR, m.bank) end
+		row.count:SetText(text)
 		row.note:SetText(m.crafts > 0 and ("craft " .. m.crafts) or "")
 		Place(row, y)
 		y = y - (ROW - 2)
@@ -409,7 +414,8 @@ local function Draw()
 	end
 
 	content:SetHeight(math.max(1, -y))
-	RefreshCraft(result)
+	-- Crafting goes by what you really have, whatever the toggles say.
+	RefreshCraft((use.bags and use.bank) and result or Data.Compute(profID))
 end
 
 -- Batched: bags and item info can update many times a second.
@@ -497,6 +503,35 @@ end
 ---------------------------------------------------------------------------
 -- Building it
 ---------------------------------------------------------------------------
+-- A checkbox for ns.db[key] (true / false).
+local function Toggle(parent, key, text, tip)
+	local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+	cb:SetSize(22, 22)
+	local label = cb.Text or cb.text
+	if not label then
+		label = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		label:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+	end
+	label:SetFontObject("GameFontHighlightSmall")
+	label:SetText(text)
+	cb.label = label
+	cb:SetChecked(ns.db[key])
+	cb:SetScript("OnClick", function(self)
+		ns.db[key] = self:GetChecked() and true or false
+		if PlaySound and SOUNDKIT then
+			PlaySound(self:GetChecked() and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+		end
+		Panel.Refresh()
+	end)
+	cb:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(tip, 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	return cb
+end
+
 local function Build()
 	local ok, f = pcall(CreateFrame, "Frame", "FireCraftingPanel", page, "PortraitFrameTemplate")
 	if not ok then
@@ -550,7 +585,17 @@ local function Build()
 
 	scroll = CreateFrame("ScrollFrame", "FireCraftingScroll", f, "UIPanelScrollFrameTemplate")
 	scroll:SetPoint("TOPLEFT", 10, -68)
-	scroll:SetPoint("BOTTOMRIGHT", -30, 38)
+	scroll:SetPoint("BOTTOMRIGHT", -30, 64)
+
+	-- Which of what you own counts as "have": untick both for a full
+	-- shopping list.
+	local useLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	useLabel:SetPoint("BOTTOMLEFT", 14, 42)
+	useLabel:SetText("Use what's in:")
+	local bags = Toggle(f, "useBags", "Bags", "Count what's in your bags.")
+	bags:SetPoint("LEFT", useLabel, "RIGHT", 4, 0)
+	local bank = Toggle(f, "useBank", "Bank", "Count what's in your bank.")
+	bank:SetPoint("LEFT", bags.label, "RIGHT", 10, 0)
 
 	craftButton = CreateFrame("Button", "FireCraftingCraftButton", f, "SecureActionButtonTemplate,UIPanelButtonTemplate")
 	craftButton:SetHeight(22)

@@ -278,6 +278,7 @@ end
 --     list order, crafted materials followed by what they're made of
 --     need:   how many in all
 --     have:   how many come from your bags and bank
+--     bank:   how many of those from the bank (bags are used first)
 --     crafts: how many times to craft it (made: how many that gives;
 --             recipe: the recipe that makes it)
 --     short:  how many you have to get (buy or gather)
@@ -285,7 +286,10 @@ end
 --   toBuy, toBuyComplete: cost of the materials you're short of
 -- Costs are nil without FireAuction; complete is false when something has
 -- no price.
-function Data.Compute(profID)
+-- use = { bags = bool, bank = bool }: which of what you own counts as "have"
+-- (default both).
+function Data.Compute(profID, use)
+	use = use or { bags = true, bank = true }
 	local out = { recipes = {}, materials = {} }
 	local prices = Data.HasPrices()
 
@@ -330,14 +334,14 @@ function Data.Compute(profID)
 		return best, best ~= nil
 	end
 
-	-- Materials: take what you have, craft what you can, the rest is short.
-	local pool = {} -- how many are left in bags and bank as needs take them
-	local function Available(itemID)
-		if not pool[itemID] then
-			local bags, bank = Data.Counts(itemID)
-			pool[itemID] = bags + bank
-		end
-		return pool[itemID]
+	-- Materials: take what you have (bags first, then bank), craft what you
+	-- can, the rest is short.
+	local bagPool, bankPool = {}, {} -- how many are left as needs take them
+	local function Load(itemID)
+		if bagPool[itemID] then return end
+		local bags, bank = Data.Counts(itemID)
+		bagPool[itemID] = use.bags and bags or 0
+		bankPool[itemID] = use.bank and bank or 0
 	end
 	local lines = {}
 	local stack = {}
@@ -345,7 +349,7 @@ function Data.Compute(profID)
 		local key = slot[2]
 		local line = lines[key]
 		if not line then
-			line = { id = key, depth = depth, need = 0, have = 0, crafts = 0, made = 0, short = 0 }
+			line = { id = key, depth = depth, need = 0, have = 0, bank = 0, crafts = 0, made = 0, short = 0 }
 			lines[key] = line
 			out.materials[#out.materials + 1] = line
 		end
@@ -354,10 +358,13 @@ function Data.Compute(profID)
 
 		local left = qty
 		for i = 2, #slot do
-			local a = Available(slot[i])
-			local take = math.min(a, left)
-			pool[slot[i]] = a - take
-			left = left - take
+			local id = slot[i]
+			Load(id)
+			local take = math.min(bagPool[id], left)
+			bagPool[id], left = bagPool[id] - take, left - take
+			take = math.min(bankPool[id], left)
+			bankPool[id], left = bankPool[id] - take, left - take
+			line.bank = line.bank + take
 		end
 		line.have = line.have + (qty - left)
 		if left <= 0 then return end
@@ -369,7 +376,7 @@ function Data.Compute(profID)
 			line.recipe = rid
 			line.crafts = line.crafts + crafts
 			line.made = line.made + left
-			pool[key] = (pool[key] or 0) + crafts * r.made - left -- leftovers serve later needs
+			bagPool[key] = bagPool[key] + crafts * r.made - left -- leftovers (in your bags) serve later needs
 			stack[rid] = true
 			for _, s in ipairs(r.r) do Need(s, s[1] * crafts, depth + 1) end
 			stack[rid] = nil

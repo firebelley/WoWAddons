@@ -41,11 +41,17 @@ end)
 --   recipes = { [recipeID] = { name, icon, prof, out = itemID, made = n,
 --               r = { { qty, itemID, alternative itemIDs... }, ... } } }
 --             every learned recipe of each profession window you've opened
+--   useBags, useBank = count what's there as "have" (default bags only)
+--   hidden  = the panel is closed (its tab shows it again)
 ns.On("ADDON_LOADED", function(name)
 	if name ~= ADDON then return end
 	FireCraftingCharDB = FireCraftingCharDB or {}
 	local db = FireCraftingCharDB
 	db.lists = db.lists or {}
 	db.recipes = db.recipes or {}
+	-- What counts as "have" (the panel's Bags / Bank toggles).
+	if db.useBags == nil then db.useBags = not db.noBags end
+	if db.useBank == nil then db.useBank = false end
+	db.noBags, db.noBank = nil, nil -- older names
 	ns.db = db
 end)
