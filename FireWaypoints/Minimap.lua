@@ -45,8 +45,17 @@ local function HideAll(from)
 	if not from and ns.Guild then ns.Guild.DrawMinimap(holder, nil) end
 end
 
+-- No pins and no guild dots: nothing to work out (this runs 20 times a second).
+local function Nothing()
+	if next(ns.mine) then return false end
+	for _, list in pairs(ns.shared) do
+		if next(list) then return false end
+	end
+	return not (ns.Guild and ns.Guild.Any())
+end
+
 local function Update()
-	if not ns.db or not ns.db.minimap then return HideAll() end
+	if not ns.db or not ns.db.minimap or Nothing() then return HideAll() end
 	local map, px, py = ns.PlayerPos()
 	if not map then return HideAll() end
 	local half = Minimap:GetWidth() / 2

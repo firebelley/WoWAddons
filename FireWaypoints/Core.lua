@@ -429,8 +429,22 @@ function ns.SenderKey(sender)
 end
 
 -- Is this player in your group?
+-- Remembered per roster: the map and minimap ask about every guild member
+-- many times a second, and matching a name against the group makes strings.
+local memberOf, memberFor = {}, nil -- [name] = member key or false, for roster memberFor
 function ns.InGroup(name)
-	return IsInGroup() and FindMember(Roster(), name) ~= nil
+	if not IsInGroup() then return false end
+	local roster = Roster()
+	if memberFor ~= roster then
+		wipe(memberOf)
+		memberFor = roster
+	end
+	local found = memberOf[name]
+	if found == nil then
+		found = FindMember(roster, name) or false
+		memberOf[name] = found
+	end
+	return found ~= false
 end
 
 local function OnAddonMessage(prefix, text, _, sender)

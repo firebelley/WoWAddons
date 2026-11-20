@@ -352,6 +352,19 @@ end
 
 local function Each(fn) for b in pairs(buttons) do fn(b) end end
 
+-- (Named once: several of these events fire many times a second in a fight.)
+local function MarkBar(btn) BarChanged(btn.bar) end
+local function UpdateCount(btn)
+	btn.Count:SetText(HasAction(btn) and Call("GetActionDisplayCount", btn.action) or "")
+end
+local function UpdateUsableIfAny(btn) if HasAction(btn) then UpdateUsable(btn) end end
+local function UpdateStateIfAny(btn) if HasAction(btn) then UpdateState(btn) end end
+local function UpdateCountdown(btn)
+	if btn.cooldown.SetHideCountdownNumbers then
+		btn.cooldown:SetHideCountdownNumbers(not GetCVarBool("countdownForCooldowns"))
+	end
+end
+
 local events = CreateFrame("Frame")
 for _, event in ipairs({
 	"PLAYER_ENTERING_WORLD", "ACTIONBAR_SLOT_CHANGED", "UPDATE_BINDINGS", "ACTIONBAR_UPDATE_STATE",
@@ -368,7 +381,7 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
 		-- 0: all of them. Otherwise just ours, if it's one of ours.
 		if a == 0 then
 			Each(Update)
-			Each(function(btn) BarChanged(btn.bar) end)
+			Each(MarkBar)
 		elseif bySlot[a] then
 			Update(bySlot[a])
 			BarChanged(bySlot[a].bar)
@@ -380,19 +393,19 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
 		Each(UpdateHotkey)
 	elseif event == "ACTIONBAR_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
 		Each(UpdateCooldown)
-		if event == "SPELL_UPDATE_CHARGES" then Each(function(btn) btn.Count:SetText(HasAction(btn) and Call("GetActionDisplayCount", btn.action) or "") end) end
+		if event == "SPELL_UPDATE_CHARGES" then Each(UpdateCount) end
 	elseif event == "ACTIONBAR_UPDATE_USABLE" or event == "ACTION_USABLE_CHANGED" or event == "SPELL_UPDATE_USABLE" then
-		Each(function(btn) if HasAction(btn) then UpdateUsable(btn) end end)
+		Each(UpdateUsableIfAny)
 	elseif event == "ACTIONBAR_UPDATE_STATE" or event == "PLAYER_ENTER_COMBAT" or event == "PLAYER_LEAVE_COMBAT"
 		or event == "START_AUTOREPEAT_SPELL" or event == "STOP_AUTOREPEAT_SPELL"
 		or event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_CLOSE" then
-		Each(function(btn) if HasAction(btn) then UpdateState(btn) end end)
+		Each(UpdateStateIfAny)
 	elseif event == "CVAR_UPDATE" then
-		Each(function(btn)
-			if btn.cooldown.SetHideCountdownNumbers then
-				btn.cooldown:SetHideCountdownNumbers(not GetCVarBool("countdownForCooldowns"))
-			end
-		end)
+		Each(UpdateCountdown)
+	elseif event == "UNIT_INVENTORY_CHANGED" then
+		-- Fires for everyone in the group; only your gear changes what the
+		-- buttons show (as the game's own bars do it). A hidden unit: as before.
+		if (issecretvalue and issecretvalue(a)) or a == "player" then Each(Update) end
 	else
 		Each(Update)
 	end

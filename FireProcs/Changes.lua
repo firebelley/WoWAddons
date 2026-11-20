@@ -65,8 +65,10 @@ local function Check()
 			elseif prev.cast and cast and prev.cast > 0 and cast == 0 then
 				changed[#changed + 1] = { spell = s, what = "instant" }
 			end
+			prev.cost, prev.cast = cost, cast -- (kept, not remade: this runs for every spell, often)
+		else
+			last[s.id] = { cost = cost, cast = cast }
 		end
-		last[s.id] = { cost = cost, cast = cast }
 	end
 
 	if #changed == 0 or not UnitAffectingCombat("player") then return end
@@ -79,13 +81,14 @@ local function Check()
 end
 
 local queued = false
+local function QueuedCheck()
+	queued = false
+	ns.SafeCall(Check)
+end
 local function RequestCheck()
 	if queued then return end
 	queued = true
-	C_Timer.After(CHECK_DELAY, function()
-		queued = false
-		ns.SafeCall(Check)
-	end)
+	C_Timer.After(CHECK_DELAY, QueuedCheck)
 end
 
 -- UNIT_AURA still fires in combat (its contents are hidden, but we only need

@@ -229,8 +229,9 @@ end
 
 -- A buff worth reminding about: yours, from a spell in your spellbook, long -
 -- or short and kept up by you (combat-only reminders).
--- Returns true plus "combat" for those, or false plus the reason.
-local function IsCandidate(a)
+-- Returns true plus "combat" for those, or false plus the reason (only with
+-- explain: it's for debug output, and runs for every buff, often).
+local function IsCandidate(a, explain)
 	local inBook = Spells.active[a.name] ~= nil
 	-- Your spell that the game says your pet applied, like Soul Link: it lasts
 	-- until the pet dies or is dismissed (no timer), and is worth recasting.
@@ -254,17 +255,19 @@ local function IsCandidate(a)
 			return true
 		end
 	end
-	if not byMe then return false, "not cast by you (from " .. tostring(a.source or "someone outside your group") .. ")" end
+	if not byMe then
+		return false, explain and ("not cast by you (from " .. tostring(a.source or "someone outside your group") .. ")")
+	end
 	if not inBook then
-		return false, ("no spell named %q in your spellbook (%d spells read)"):format(a.name, Spells.count)
+		return false, explain and ("no spell named %q in your spellbook (%d spells read)"):format(a.name, Spells.count)
 	end
 	local duration = a.duration or 0
 	if duration >= MIN_DURATION then return true end
 	if duration > 0 and IsMaintained(a.name) then return true, "combat" end
 	if duration > 0 and maintained[a.name] == false then
-		return false, ("lasts %ss and its spell has a cooldown, so it's meant to run out"):format(tostring(duration))
+		return false, explain and ("lasts %ss and its spell has a cooldown, so it's meant to run out"):format(tostring(duration))
 	end
-	return false, ("lasts %ss (under %ss; short buffs from spells without a cooldown, like seals, are watched "
+	return false, explain and ("lasts %ss (under %ss; short buffs from spells without a cooldown, like seals, are watched "
 		.. "in combat once you cast them out of combat)"):format(tostring(duration), MIN_DURATION)
 end
 
@@ -662,7 +665,7 @@ function SelfBuffs.DescribeCurrent()
 	local any = false
 	local hidden = API.ForEachAura("player", "HELPFUL", function(a)
 		any = true
-		local ok, why = IsCandidate(a)
+		local ok, why = IsCandidate(a, true)
 		print(("    %s (%ss, from %s): %s"):format(a.name, tostring(a.duration), tostring(a.source),
 			ok and "|cff40ff40watched|r" or ("not watched - " .. why)))
 	end)

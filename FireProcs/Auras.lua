@@ -24,8 +24,9 @@ local wasRestricted = false
 -- unchanged until combat ends, when everything is quietly re-checked.
 Auras.hidden = 0
 
--- Returns "proc", "gift" (a long buff from someone else) or nil plus the reason.
-local function Classify(a)
+-- Returns "proc", "gift" (a long buff from someone else) or nil plus the reason
+-- (only with explain: it's for debug output, and runs for every buff, often).
+local function Classify(a, explain)
 	-- Some procs carry no caster at all, and neither do buffs from anyone
 	-- outside your group (a passing priest's Renew): the game's own flag tells
 	-- them apart. Where it won't say, a short buff with nobody behind it is
@@ -35,15 +36,17 @@ local function Classify(a)
 	if mine then
 		-- Permanent buffs are passives and stances, never procs.
 		if a.duration <= 0 then return nil, "permanent (passive, stance or aura)" end
-		if a.duration > PROC_MAX then return nil, ("yours and %ss long: food, an elixir or the like"):format(tostring(a.duration)) end
+		if a.duration > PROC_MAX then
+			return nil, explain and ("yours and %ss long: food, an elixir or the like"):format(tostring(a.duration))
+		end
 		local own = Spells.OwnSpellFor(a.name)
-		if own then return nil, "belongs to your spell " .. Spells.Describe(own) end
+		if own then return nil, explain and ("belongs to your spell " .. Spells.Describe(own)) end
 		return "proc"
 	end
 	if a.source == nil and a.fromMe then return nil, "yours, but permanent" end
 	-- Short buffs from others are left out - healers' HoTs would never stop.
 	if a.duration > STAY_MAX then return "gift" end
-	return nil, ("from %s, %ss long (only buffs over %ss from others count)"):format(
+	return nil, explain and ("from %s, %ss long (only buffs over %ss from others count)"):format(
 		tostring(a.source), tostring(a.duration), STAY_MAX)
 end
 
@@ -62,7 +65,7 @@ function Auras.Update()
 		Spells.RememberIcon(a.name, a.icon)
 		local key = a.spellId or a.name
 		seenNow[key] = true
-		local kind, why = Classify(a)
+		local kind, why = Classify(a, ns.tracing)
 		if kind then
 			a.gift = kind == "gift"
 			now[key] = a
@@ -70,7 +73,7 @@ function Auras.Update()
 			if a.source == "player" then
 				sig[#sig + 1] = a.name -- your own spells: stealth, shouts, seals...
 			end
-			if live and not seen[key] then
+			if ns.tracing and live and not seen[key] then
 				ns.Trace("buff " .. Describe(a) .. " skipped: " .. why)
 			end
 		end
@@ -126,7 +129,7 @@ function Auras.DescribeCurrent()
 	local any = false
 	local hidden = API.ForEachAura("player", "HELPFUL", function(a)
 		any = true
-		local kind, why = Classify(a)
+		local kind, why = Classify(a, true)
 		ns.Trace("  " .. Describe(a) .. ": " .. (kind and ("counts (" .. kind .. ")") or ("skipped, " .. why)))
 	end)
 	if not any then ns.Trace("  (no readable buffs)") end

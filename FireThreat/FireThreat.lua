@@ -71,25 +71,33 @@ local function Status(who, mob)
 	if ok and s ~= nil and not IsSecret(s) then return s end
 end
 
--- Your group: the units whose threat is worth checking.
-local function Group()
-	local list = { "pet" }
-	if IsInRaid() then
-		for i = 1, 40 do
-			list[#list + 1] = "raid" .. i
-			list[#list + 1] = "raidpet" .. i
-		end
-	elseif IsInGroup() then
-		for i = 1, 4 do
-			list[#list + 1] = "party" .. i
-			list[#list + 1] = "partypet" .. i
-		end
-	end
-	return list
+-- Unit names, made once (the update runs five times a second).
+local PLATES = {}
+for i = 1, MAX_PLATES do PLATES[i] = "nameplate" .. i end
+local SOLO, PARTY, RAID = { "pet" }, { "pet" }, { "pet" }
+for i = 1, 4 do
+	PARTY[#PARTY + 1] = "party" .. i
+	PARTY[#PARTY + 1] = "partypet" .. i
+end
+for i = 1, 40 do
+	RAID[#RAID + 1] = "raid" .. i
+	RAID[#RAID + 1] = "raidpet" .. i
 end
 
 local function IsMe(unit)
 	return Yes(UnitIsUnit(unit, "player"))
+end
+
+-- Your group: the units whose threat is worth checking (there, and not you).
+-- Worked out once per update, not once per enemy.
+local others = {}
+local function Group()
+	wipe(others)
+	local units = IsInRaid() and RAID or IsInGroup() and PARTY or SOLO
+	for _, who in ipairs(units) do
+		if UnitExists(who) and not IsMe(who) then others[#others + 1] = who end
+	end
+	return others
 end
 
 local function ShortName(unit)
@@ -173,19 +181,17 @@ local function Assess(unit, group, tank)
 	local e = { unit = unit, status = s, mine = s ~= nil and s >= 2 }
 	if s == 2 and tank then
 		for _, who in ipairs(group) do
-			if UnitExists(who) and not IsMe(who) and Status(who, unit) == 1 then
+			if Status(who, unit) == 1 then
 				e.puller = who
 				break
 			end
 		end
 	elseif not e.mine then
 		for _, who in ipairs(group) do
-			if UnitExists(who) and not IsMe(who) then
-				local hs = Status(who, unit)
-				if hs and hs >= 2 then
-					e.holder = who
-					break
-				end
+			local hs = Status(who, unit)
+			if hs and hs >= 2 then
+				e.holder = who
+				break
 			end
 		end
 	end
@@ -207,24 +213,27 @@ local function Assess(unit, group, tank)
 	return e
 end
 
+local function MoreUrgent(a, b)
+	if a.rank ~= b.rank then return a.rank < b.rank end
+	if a.priority and b.priority and a.priority ~= b.priority then return a.priority < b.priority end
+	return (addedAt[a.unit] or 0) < (addedAt[b.unit] or 0)
+end
+
 -- Every enemy in combat with a nameplate, most urgent first.
 local function Enemies(tank)
-	local group, list = Group(), {}
+	local group, list = nil, {}
 	local now = GetTime()
 	for i = 1, MAX_PLATES do
-		local unit = "nameplate" .. i
+		local unit = PLATES[i]
 		if UnitExists(unit) and Yes(UnitCanAttack("player", unit)) and not Yes(UnitIsDead(unit))
 			and Yes(UnitAffectingCombat(unit)) then
 			addedAt[unit] = addedAt[unit] or now
+			group = group or Group() -- (only when there's an enemy to check it against)
 			local e = Assess(unit, group, tank)
 			if e.rank ~= RANK_OTHER or db.showOthers then list[#list + 1] = e end
 		end
 	end
-	table.sort(list, function(a, b)
-		if a.rank ~= b.rank then return a.rank < b.rank end
-		if a.priority and b.priority and a.priority ~= b.priority then return a.priority < b.priority end
-		return (addedAt[a.unit] or 0) < (addedAt[b.unit] or 0)
-	end)
+	table.sort(list, MoreUrgent)
 	return list
 end
 
@@ -482,8 +491,9 @@ end
 
 -- Remembers who each enemy is on, and warns when one changes in a way that
 -- matters: tanking, when one leaves you; otherwise, when you pull one.
+local seen = {}
 local function TrackChanges(list, tank)
-	local seen = {}
+	wipe(seen)
 	for _, e in ipairs(list) do
 		local unit = e.unit
 		seen[unit] = true
@@ -515,6 +525,7 @@ local function SetTitleShown(on)
 	end
 end
 
+local counts = {}
 local function Update()
 	if not frame then return end
 	local tank = ns.IsTank()
@@ -524,7 +535,7 @@ local function Update()
 	-- Not tanking and on your own, everything is on you anyway: nothing to show.
 	local allowed = unlocked or tank or IsInGroup() or UnitExists("pet")
 	local shown = allowed and math.min(#list, db.maxRows) or 0
-	local counts = { good = 0, warn = 0, bad = 0, other = 0 }
+	counts.good, counts.warn, counts.bad, counts.other = 0, 0, 0, 0
 	for _, e in ipairs(list) do
 		counts[e.look] = counts[e.look] + 1
 	end

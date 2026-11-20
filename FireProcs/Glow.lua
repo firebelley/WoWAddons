@@ -17,7 +17,11 @@ local TEMPLATES = { "ActionButtonSpellAlertTemplate", "ActionBarButtonSpellActiv
 local glowing = {} -- [spell name] = true
 local shown = {}   -- [button] = true while its glow is up
 
+-- The game's action buttons: looked up once (until the next loading screen),
+-- not on every refresh.
+local buttonList
 local function Buttons()
+	if buttonList then return buttonList end
 	local list = {}
 	for _, prefix in ipairs(BAR_PREFIXES) do
 		for i = 1, 12 do
@@ -25,6 +29,7 @@ local function Buttons()
 			if b then list[#list + 1] = b end
 		end
 	end
+	buttonList = list
 	return list
 end
 
@@ -112,12 +117,13 @@ local function ShowGlow(b)
 	elseif o.pulse then o.pulse:Play() end
 end
 
+local ANIMATIONS = { "ProcStartAnim", "ProcLoop", "animIn", "animOut", "pulse" }
 local function HideGlow(b)
 	if not shown[b] then return end
 	shown[b] = nil
 	local o = b.fireProcsGlow
 	if not o then return end
-	for _, key in ipairs({ "ProcStartAnim", "ProcLoop", "animIn", "animOut", "pulse" }) do
+	for _, key in ipairs(ANIMATIONS) do
 		if o[key] then o[key]:Stop() end
 	end
 	o:Hide()
@@ -148,3 +154,4 @@ for _, event in ipairs({
 }) do
 	ns.On(event, Glow.Refresh)
 end
+ns.On("PLAYER_ENTERING_WORLD", function() buttonList = nil end)

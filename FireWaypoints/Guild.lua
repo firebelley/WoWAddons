@@ -123,6 +123,15 @@ function Guild.ForEach(fn)
 	end
 end
 
+-- Whether ForEach would give anyone.
+function Guild.Any()
+	if not Guild.On() then return false end
+	for name in pairs(members) do
+		if not ns.InGroup(name) then return true end
+	end
+	return false
+end
+
 -- The switch in the options: off stops sending and hides the dots.
 function Guild.Changed()
 	if not Guild.On() then

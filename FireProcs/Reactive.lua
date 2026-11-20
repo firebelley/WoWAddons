@@ -58,13 +58,15 @@ local function InFight()
 		and UnitCanAttack("player", "target") and not UnitIsDead("target")
 end
 
+local new = {} -- [name] = state this check (kept between checks: no new table each time)
 local function Check()
 	checkQueued = false
 	local fight = InFight()
 	local quiet = GetTime() < quietUntil
 
 	-- First read every spell, counting how many just became possible.
-	local new, risen = {}, 0
+	wipe(new)
+	local risen = 0
 	for _, s in ipairs(Spells.reactive) do
 		local usable, noPower = API.IsUsable(s.id)
 		local state = usable and 2 or (noPower and 1 or 0)
@@ -102,10 +104,11 @@ local function Check()
 	end
 end
 
+local function QueuedCheck() ns.SafeCall(Check) end
 function Reactive.RequestCheck()
 	if checkQueued then return end
 	checkQueued = true
-	C_Timer.After(CHECK_DELAY, function() ns.SafeCall(Check) end)
+	C_Timer.After(CHECK_DELAY, QueuedCheck)
 end
 
 local function QuietAndCheck()

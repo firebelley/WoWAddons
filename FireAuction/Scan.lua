@@ -103,23 +103,27 @@ local function ReadOne(i, prices, bidOnly, groups)
 	return true
 end
 
+-- One frame's share of the reading. (A named function: a new one each frame
+-- would be garbage for the whole scan.)
+local function ReadChunk(self)
+	local stop = math.min(self.index + CHUNK, self.total)
+	for i = self.index, stop do
+		if ReadOne(i, self.prices, self.bidOnly, self.groups) then self.read = self.read + 1 end
+	end
+	self.index = stop + 1
+	if self.index > self.total then
+		-- More may have arrived while reading.
+		local total = AH.GetNumReplicateItems() or 0
+		if total > self.total then
+			self.total = total
+			return
+		end
+		self.done = true
+	end
+end
+
 reader:SetScript("OnUpdate", function(self)
-	local ok, err = pcall(function()
-		local stop = math.min(self.index + CHUNK, self.total)
-		for i = self.index, stop do
-			if ReadOne(i, self.prices, self.bidOnly, self.groups) then self.read = self.read + 1 end
-		end
-		self.index = stop + 1
-		if self.index > self.total then
-			-- More may have arrived while reading.
-			local total = AH.GetNumReplicateItems() or 0
-			if total > self.total then
-				self.total = total
-				return
-			end
-			self.done = true
-		end
-	end)
+	local ok, err = pcall(ReadChunk, self)
 	if not ok then
 		ns.ReportError(err)
 		Finish("scan failed.")
