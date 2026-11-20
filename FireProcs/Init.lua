@@ -20,6 +20,11 @@ local DEFAULTS = {
 	remindAnnounce = true,  -- ...announce it once
 	remindIcon = true,      -- ...and keep an icon up until you recast it
 	remindIconMinutes = 0,  -- ...or until this many minutes have passed (0 = no limit)
+	-- Timer bars on the game's buff icons (see BuffBars.lua).
+	buffBars = false,
+	buffBarHeight = 4,      -- pixels
+	buffBarCenter = false,  -- shrink from both ends toward the middle
+	buffBarAbove = false,   -- above the icons instead of below
 }
 ns.DEFAULTS = DEFAULTS
 
@@ -117,6 +122,7 @@ ns.On("ADDON_LOADED", function(name)
 	db.seen = db.seen or {}   -- [spell name] = true for every proc announced so far
 	db.selfBuffs = db.selfBuffs or {} -- [buff name] = { icon, on, group } for buff reminders
 	db.enchantNames = db.enchantNames or {} -- [weapon enchant ID] = name read from the weapon's tooltip
+	db.enchantDurations = db.enchantDurations or {} -- [weapon enchant ID] = longest seconds left seen (BuffBars.lua)
 	-- Buffs "a spell of yours gives under another name" used to be learned from
 	-- anything appearing as you cast (someone's Battle Shout, an elixir): those
 	-- are dropped once; real ones (Demonic Sacrifice's) are learned again.

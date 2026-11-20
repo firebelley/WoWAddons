@@ -17,6 +17,7 @@ Glow.lua
 Reactive.lua
 Auras.lua
 SelfBuffs.lua
+BuffBars.lua
 Changes.lua
 Casts.lua
 Drain.lua

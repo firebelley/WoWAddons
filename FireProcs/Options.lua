@@ -27,8 +27,22 @@ end
 -- Main page
 ---------------------------------------------------------------------------
 local function BuildMain()
-	local panel = CreateFrame("Frame")
-	panel:Hide()
+	-- The page scrolls: everything is drawn on `panel`, the scroll child.
+	local page = CreateFrame("Frame")
+	page:Hide()
+	local ok, scroll = pcall(CreateFrame, "ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
+	if not ok then scroll = CreateFrame("ScrollFrame", nil, page) end
+	scroll:SetPoint("TOPLEFT")
+	scroll:SetPoint("BOTTOMRIGHT", -30, 4)
+	scroll:EnableMouseWheel(true)
+	scroll:SetScript("OnMouseWheel", function(self, delta)
+		local max = self:GetVerticalScrollRange()
+		self:SetVerticalScroll(math.max(0, math.min(max, self:GetVerticalScroll() - delta * 40)))
+	end)
+	local panel = CreateFrame("Frame", nil, scroll)
+	panel:SetSize(1, 1)
+	scroll:SetScrollChild(panel)
+	scroll:HookScript("OnSizeChanged", function(_, w) panel:SetWidth(math.max(w or 1, 1)) end)
 	local refreshers = {} -- re-read db into the widgets each time the page opens
 	local y = -16         -- next free spot, top to bottom
 
@@ -193,11 +207,25 @@ local function BuildMain()
 		RefreshReminders)
 	if sliderX ~= 0 then sliderX, y = 0, y - 48 end -- a slider on its own
 
-	panel:SetScript("OnShow", function()
+	local function RefreshBars() ns.BuffBars.Refresh() end
+	Header("Buff timers")
+	Checkbox("buffBars", "Show timer bars on buffs",
+		"A bar on each buff icon showing time left. Green to red as it runs out.", RefreshBars)
+	Checkbox("buffBarCenter", "Shrink from both ends",
+		"Bars shrink toward the middle instead of to the left.", RefreshBars)
+	Checkbox("buffBarAbove", "Put bars above the icons",
+		"Otherwise they go below.", RefreshBars)
+	Slider("buffBarHeight", "Bar height", "Height of the timer bars.", 1, 12, 1,
+		function(v) return ("%d px"):format(v) end, RefreshBars)
+	if sliderX ~= 0 then sliderX, y = 0, y - 48 end -- a slider on its own
+
+	panel:SetHeight(-y + 8)
+	page:SetScript("OnShow", function()
+		panel:SetWidth(math.max(scroll:GetWidth(), 1))
 		for _, fn in ipairs(refreshers) do ns.SafeCall(fn) end
 	end)
 
-	category = Settings.RegisterCanvasLayoutCategory(panel, "FireProcs")
+	category = Settings.RegisterCanvasLayoutCategory(page, "FireProcs")
 	Settings.RegisterAddOnCategory(category)
 end
 
