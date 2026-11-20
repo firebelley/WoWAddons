@@ -568,13 +568,20 @@ end)
 local incoming = {} -- ["node:sid"] = state
 
 local lastRetryHello = -math.huge
+local lastHelloSeen = -math.huge -- anyone's, ours included
 
 local function EndIncoming(key, st, reason)
 	incoming[key] = nil
-	-- Parts went missing: ask again in a little while (not too often).
+	-- Parts went missing: ask again in a little while (not too often). When a
+	-- stream breaks off (its sender reloaded, say), everyone listening misses
+	-- it at once - so each waits a random while, and only asks if nobody else
+	-- has by then (any hello brings everyone's differences round again).
 	if reason and GetTime() - lastRetryHello > 300 then
-		lastRetryHello = GetTime()
-		C_Timer.After(20, function() Sync.Hello() end)
+		local at = GetTime()
+		lastRetryHello = at
+		C_Timer.After(20 + math.random() * 100, function()
+			if lastHelloSeen < at then Sync.Hello() end
+		end)
 	end
 	local realm = ns.Realm(st.house)
 	if realm and (st.added + st.updated + st.filled + st.gone > 0 or st.newerScan) then
@@ -588,9 +595,9 @@ local function EndIncoming(key, st, reason)
 	if st.added > 0 then what[#what + 1] = st.added .. " new items" end
 	if st.filled > 0 then what[#what + 1] = st.filled .. " history prices" end
 	if st.gone > 0 then what[#what + 1] = st.gone .. " no longer listed" end
-	local got = #what > 0 and table.concat(what, ", ") or "nothing new"
-	Log(("from %s (%s auction house): %s, in %ds%s."):format(st.from, ns.HouseName(st.house), got,
-		floor(GetTime() - st.started + 0.5), reason and (" - " .. reason) or ""))
+	if #what == 0 then return end -- nothing new: not worth a line
+	Log(("from %s (%s auction house): %s, in %ds%s."):format(st.from, ns.HouseName(st.house),
+		table.concat(what, ", "), floor(GetTime() - st.started + 0.5), reason and (" - " .. reason) or ""))
 end
 
 local function OnBegin(r, from, sender)
@@ -811,6 +818,7 @@ end
 
 function Sync.Hello()
 	if not (ns.db and IsInGuild and IsInGuild()) then return false end
+	lastHelloSeen = GetTime()
 	InBackground(function()
 		local offers = {}
 		waiting, helloAt = offers, GetTime()
@@ -834,6 +842,7 @@ local function OnHello(r, from)
 	local house = CHAR_HOUSE[r:Take(1)]
 	if not house then return end
 	local theirs = ReadSummary(r)
+	lastHelloSeen = GetTime()
 	InBackground(function()
 		local mine = Summary(house)
 		if not (mine and Differs(mine, theirs)) then return end
