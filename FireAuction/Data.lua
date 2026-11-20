@@ -184,29 +184,47 @@ function Data.Listed(rec, day)
 	return rec.dq and rec.dq[day]
 end
 
+local function PruneItem(realm, id, rec, oldest)
+	local any = false
+	for day in pairs(rec.d) do
+		if day < oldest then
+			rec.d[day] = nil
+			if rec.dn then rec.dn[day] = nil end
+			if rec.dq then rec.dq[day] = nil end
+			if rec.ds then rec.ds[day] = nil end
+			if rec.dr then rec.dr[day] = nil end
+		else
+			any = true
+		end
+	end
+	if rec.dn and not next(rec.dn) then rec.dn = nil end
+	if rec.dq and not next(rec.dq) then rec.dq = nil end
+	if rec.ds and not next(rec.ds) then rec.ds = nil end
+	if rec.dr and not next(rec.dr) then rec.dr = nil end
+	if not any then realm.items[id] = nil end
+end
+
 -- Forget days older than the history setting (and items with nothing left).
-function Data.Prune(house)
+-- pause: called now and then, to spread the work over frames (Sync.lua).
+function Data.Prune(house, pause)
 	local realm = ns.Realm(house)
 	if not realm then return end
 	local oldest = Data.Today() - ns.db.historyDays
-	for id, rec in pairs(realm.items) do
-		local any = false
-		for day in pairs(rec.d) do
-			if day < oldest then
-				rec.d[day] = nil
-				if rec.dn then rec.dn[day] = nil end
-				if rec.dq then rec.dq[day] = nil end
-				if rec.ds then rec.ds[day] = nil end
-				if rec.dr then rec.dr[day] = nil end
-			else
-				any = true
-			end
-		end
-		if rec.dn and not next(rec.dn) then rec.dn = nil end
-		if rec.dq and not next(rec.dq) then rec.dq = nil end
-		if rec.ds and not next(rec.ds) then rec.ds = nil end
-		if rec.dr and not next(rec.dr) then rec.dr = nil end
-		if not any then realm.items[id] = nil end
+	if not pause then
+		for id, rec in pairs(realm.items) do PruneItem(realm, id, rec, oldest) end
+		return
+	end
+	-- The IDs first: items can come and go while it waits.
+	local ids, n = {}, 0
+	for id in pairs(realm.items) do
+		n = n + 1
+		ids[n] = id
+	end
+	for i = 1, n do
+		if i % 50 == 0 then pause() end
+		local id = ids[i]
+		local rec = realm.items[id]
+		if rec then PruneItem(realm, id, rec, oldest) end
 	end
 end
 

@@ -248,6 +248,40 @@ local function ItemHash(id, price, scans, listed, pl, ph, ql, qh)
 	return (v * v + id) % HASH
 end
 
+---------------------------------------------------------------------------
+-- Background work: a summary reads every day of every item - with thousands
+-- of items, far too much for one frame (the game hitches). Run in
+-- InBackground, it's worked out a few milliseconds per frame instead.
+---------------------------------------------------------------------------
+local SLICE_MS = 3
+local sliceStart = 0
+
+-- Lets the frame go on if this slice has had its time (only in the background).
+local function Pause()
+	if debugprofilestop() - sliceStart > SLICE_MS and coroutine.running() then coroutine.yield() end
+end
+
+local jobs = {}
+local worker = CreateFrame("Frame")
+worker:Hide()
+worker:SetScript("OnUpdate", function()
+	local job = jobs[1]
+	if not job then
+		worker:Hide()
+		return
+	end
+	sliceStart = debugprofilestop()
+	local ok, err = coroutine.resume(job)
+	if not ok then ns.ReportError(err) end
+	if coroutine.status(job) == "dead" then table.remove(jobs, 1) end
+end)
+
+-- Runs fn over as many frames as it needs, after the ones queued before it.
+local function InBackground(fn)
+	jobs[#jobs + 1] = coroutine.create(fn)
+	worker:Show()
+end
+
 -- { full, today, k, hashes = { [day] = checksum } }
 local function Summary(house)
 	local realm = ns.Realm(house)
@@ -255,13 +289,24 @@ local function Summary(house)
 	local today, k = Today(), WindowDays()
 	local from = today - k + 1
 	local hashes = {}
-	for id, rec in pairs(realm.items) do
-		for day, price in pairs(rec.d) do
-			if day >= from and day <= today then
-				hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day), ns.Data.Listed(rec, day),
-					ns.Data.Range(rec, day))) % HASH
+	-- The IDs first: items can come and go between slices.
+	local ids, n = {}, 0
+	for id in pairs(realm.items) do
+		n = n + 1
+		ids[n] = id
+	end
+	for i = 1, n do
+		local id = ids[i]
+		local rec = realm.items[id]
+		if rec then
+			for day, price in pairs(rec.d) do
+				if day >= from and day <= today then
+					hashes[day] = ((hashes[day] or 0) + ItemHash(id, price, ns.Data.Scans(rec, day), ns.Data.Listed(rec, day),
+						ns.Data.Range(rec, day))) % HASH
+				end
 			end
 		end
+		if i % 50 == 0 then Pause() end
 	end
 	return { full = Full(realm), today = today, k = k, hashes = hashes }
 end
@@ -533,8 +578,10 @@ local function EndIncoming(key, st, reason)
 	end
 	local realm = ns.Realm(st.house)
 	if realm and (st.added + st.updated + st.filled + st.gone > 0 or st.newerScan) then
-		ns.Data.Prune(st.house)
-		DataChanged()
+		InBackground(function()
+			ns.Data.Prune(st.house, Pause)
+			DataChanged()
+		end)
 	end
 	local what = {}
 	if st.updated > 0 then what[#what + 1] = st.updated .. " newer prices" end
@@ -764,18 +811,20 @@ end
 
 function Sync.Hello()
 	if not (ns.db and IsInGuild and IsInGuild()) then return false end
-	local offers = {}
-	waiting, helloAt = offers, GetTime()
-	for _, house in ipairs(HOUSES) do
-		local sum = Summary(house)
-		if sum then
-			Queue(SummaryText("H", house, sum))
-			offers[house] = {}
+	InBackground(function()
+		local offers = {}
+		waiting, helloAt = offers, GetTime()
+		for _, house in ipairs(HOUSES) do
+			local sum = Summary(house)
+			if sum then
+				Queue(SummaryText("H", house, sum))
+				offers[house] = {}
+			end
 		end
-	end
-	C_Timer.After(OFFER_WAIT, function()
-		if waiting == offers then waiting = nil end
-		Decide(offers)
+		C_Timer.After(OFFER_WAIT, function()
+			if waiting == offers then waiting = nil end
+			InBackground(function() Decide(offers) end)
+		end)
 	end)
 	return true
 end
@@ -785,12 +834,16 @@ local function OnHello(r, from)
 	local house = CHAR_HOUSE[r:Take(1)]
 	if not house then return end
 	local theirs = ReadSummary(r)
-	local mine = Summary(house)
-	if not (mine and Differs(mine, theirs)) then return end
-	-- Answer after a moment, so a whole guild doesn't answer at once.
-	C_Timer.After(0.3 + math.random() * 2.5, function()
-		local now = Summary(house)
-		if now then Queue(SummaryText("O", house, now, from)) end
+	InBackground(function()
+		local mine = Summary(house)
+		if not (mine and Differs(mine, theirs)) then return end
+		-- Answer after a moment, so a whole guild doesn't answer at once.
+		C_Timer.After(0.3 + math.random() * 2.5, function()
+			InBackground(function()
+				local now = Summary(house)
+				if now then Queue(SummaryText("O", house, now, from)) end
+			end)
+		end)
 	end)
 end
 
@@ -802,7 +855,7 @@ local function OnOffer(r, from)
 	if waiting and waiting[house] then
 		waiting[house][from] = sum
 	elseif helloAt and GetTime() - helloAt < LATE_OFFERS then
-		Decide({ [house] = { [from] = sum } })
+		InBackground(function() Decide({ [house] = { [from] = sum } }) end)
 	end
 end
 
