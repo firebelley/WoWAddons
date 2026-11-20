@@ -20,18 +20,27 @@ local BuffBars = {}
 ns.BuffBars = BuffBars
 
 local TICK = 0.05 -- seconds between bar updates
-local TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
+-- A flat fill: shaded bar textures look different at each end, so the two
+-- halves of a bar shrinking from both ends wouldn't match.
+local TEXTURE = "Interface\\Buttons\\WHITE8X8"
 local GAP = 1     -- pixels between the icon and the bar
 
 local bars = {} -- [Blizzard buff button] = our status bar
 
--- 1 = full (green), 0.5 = yellow, 0 = empty (red).
+-- Muted colours: full = green, half = yellow, empty = red.
+local GREEN = { 0.25, 0.68, 0.25 }
+local YELLOW = { 0.85, 0.70, 0.22 }
+local RED = { 0.78, 0.22, 0.18 }
+
+-- f: 1 = full, 0 = empty. (Runs every tick: no new tables.)
 local function SetColor(bar, f)
+	local a, b, t
 	if f > 0.5 then
-		bar:SetStatusBarColor((1 - f) * 2, 1, 0)
+		a, b, t = YELLOW, GREEN, (f - 0.5) * 2
 	else
-		bar:SetStatusBarColor(1, f * 2, 0)
+		a, b, t = RED, YELLOW, f * 2
 	end
+	bar:SetStatusBarColor(a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t)
 end
 
 -- The same colours as a curve, for hidden (combat) values.
@@ -42,9 +51,9 @@ local function Curve()
 		if C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor then
 			local ok, c = pcall(C_CurveUtil.CreateColorCurve)
 			if ok and c and pcall(function()
-				c:AddPoint(0, CreateColor(1, 0, 0))
-				c:AddPoint(0.5, CreateColor(1, 1, 0))
-				c:AddPoint(1, CreateColor(0, 1, 0))
+				c:AddPoint(0, CreateColor(unpack(RED)))
+				c:AddPoint(0.5, CreateColor(unpack(YELLOW)))
+				c:AddPoint(1, CreateColor(unpack(GREEN)))
 			end) then
 				curve = c
 			end
@@ -59,11 +68,10 @@ local function SetHiddenColor(bar, button, info)
 	local c = Curve()
 	local id = info.auraInstanceID
 	if not (c and id and not API.IsSecret(id) and C_UnitAuras and C_UnitAuras.GetAuraDuration) then return end
-	pcall(function()
-		local dur = C_UnitAuras.GetAuraDuration(button.unit or "player", id)
-		local color = dur and dur:EvaluateRemainingPercent(c)
-		if color then bar:SetStatusBarColor(color:GetRGB()) end
-	end)
+	local ok, dur = pcall(C_UnitAuras.GetAuraDuration, button.unit or "player", id)
+	if not (ok and dur) then return end
+	local ok2, color = pcall(dur.EvaluateRemainingPercent, dur, c)
+	if ok2 and color then bar:SetStatusBarColor(color:GetRGB()) end
 end
 
 -- Total length of a weapon enchant: the longest time left seen for it.
@@ -126,7 +134,7 @@ local function UpdateBar(button, bar)
 	if bar.info ~= info then -- a different buff on this button (or a refresh)
 		bar.info = info
 		bar.total = Total(info)
-		bar:SetStatusBarColor(0, 1, 0)
+		SetColor(bar, 1)
 	end
 	local total = bar.total
 	if type(total) ~= "number" then
@@ -219,6 +227,8 @@ driver:SetScript("OnUpdate", function(_, elapsed)
 	wait = TICK
 	-- (Checked every tick: the game puts the text back whenever it re-lays
 	-- out the buffs.)
+	-- Runs 20 times a second, so nothing here makes new tables or functions:
+	-- the garbage they leave makes the game hitch every few seconds.
 	local push = (ns.db.buffBarHeight or ns.DEFAULTS.buffBarHeight) + GAP
 	for button, bar in pairs(bars) do
 		local ok, err = pcall(UpdateBar, button, bar)
@@ -226,7 +236,8 @@ driver:SetScript("OnUpdate", function(_, elapsed)
 			bar:Hide()
 			ns.ReportError(err)
 		end
-		ns.SafeCall(NudgeText, button, bar:IsShown() and push or 0)
+		ok, err = pcall(NudgeText, button, bar:IsShown() and push or 0)
+		if not ok then ns.ReportError(err) end
 	end
 end)
 

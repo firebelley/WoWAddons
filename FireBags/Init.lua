@@ -34,8 +34,7 @@ function ns.ReportError(err)
 end
 
 function ns.SafeCall(fn, ...)
-	local n, args = select("#", ...), { ... }
-	return xpcall(function() return fn(unpack(args, 1, n)) end, ns.ReportError)
+	return xpcall(fn, ns.ReportError, ...)
 end
 
 ---------------------------------------------------------------------------

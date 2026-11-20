@@ -50,9 +50,9 @@ function ns.ReportError(err)
 	ns.Print("|cffff4040error:|r " .. msg)
 end
 
+-- (xpcall passes the arguments itself: no table or function made per call.)
 function ns.SafeCall(fn, ...)
-	local n, args = select("#", ...), { ... }
-	return xpcall(function() return fn(unpack(args, 1, n)) end, ns.ReportError)
+	return xpcall(fn, ns.ReportError, ...)
 end
 
 ---------------------------------------------------------------------------
