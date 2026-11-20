@@ -14,8 +14,9 @@ local _, ns = ...
 
 local HIST_GAP = 60          -- seconds between kept snapshots
 local HIST_KEEP = 30 * 86400 -- how long they're kept
-local PAIR_MAX = 86400       -- snapshots further apart than this aren't compared
+local PAIR_MAX = 3600        -- snapshots further apart than this aren't compared
 local MIN_SEEN = 600         -- seconds of comparisons before a speed is trusted
+local NEVER_SEEN = 6 * 3600  -- ...before "more listed than sold" means never
 local PRIOR_WEIGHT = 3600    -- the scan estimate counts as this much watching
 local HORIZONS = { 2, 8, 24 } -- the chance columns, in hours
 local SPREAD = 1             -- how unsure "sells in" is (log scale)
@@ -24,6 +25,10 @@ local LIVE_ROWS = 60         -- listings read from the auction house
 local TREND_SPAN = 6 * 3600  -- the trend: over this long
 local FLOOR_UNITS = 20       -- the trend follows the price this many in
 local RECALC = 2             -- seconds between working it out again
+local SERIES_DAYS = 30       -- days of price history the chances look at
+local SERIES_GAP = 600       -- seconds between points kept from it
+local LOOK = 48 * 3600       -- how far ahead each point is followed
+local MIN_SAMPLE = 20        -- points needed to trust a chance
 
 local WIDTH = 430
 local PAD = 14
@@ -118,25 +123,31 @@ local function Prior(id)
 end
 
 -- The cheapest listings now (not yours): the auction house's if loaded,
--- else the last kept, and how old (seconds; 0 for live).
+-- else the last kept, and how old (seconds; 0 for live). Also yours, the
+-- same way (live only; they sell before your dearer ones).
 local function Book(id, list)
 	local AH = C_AuctionHouse
 	local n = AH and AH.GetNumCommoditySearchResults and AH.GetNumCommoditySearchResults(id) or 0
 	if n > 0 then
-		local rows = {}
+		local rows, own = {}, {}
 		for i = 1, math.min(n, LIVE_ROWS) do
 			local r = AH.GetCommoditySearchResultInfo(id, i)
 			if not r then break end
-			local open = r.quantity - (r.numOwnerItems or 0)
+			local mine = r.numOwnerItems or 0
+			local open = r.quantity - mine
 			if open > 0 then
 				rows[#rows + 1] = r.unitPrice
 				rows[#rows + 1] = open
 			end
+			if mine > 0 then
+				own[#own + 1] = r.unitPrice
+				own[#own + 1] = mine
+			end
 		end
-		if #rows > 0 then return rows, 0 end
+		if #rows > 0 then return rows, 0, own end
 	end
 	local last = list[#list]
-	if last then return last.rows, time() - last.at end
+	if last then return last.rows, time() - last.at, {} end
 	return nil
 end
 
@@ -167,6 +178,105 @@ local function Trend(list)
 	return sxx > 0 and sxy / sxx or nil
 end
 
+---------------------------------------------------------------------------
+-- The chances, from history: listed at p, yours have sold once the cheapest
+-- price goes over p. So from each past moment, how long until the cheapest
+-- rose that much (the same share over the cheapest then as p is over it
+-- now)? Across all of them, how often that took under 2, 8, 24 hours is the
+-- chance. Moments followed less than that (the data stops) count only as
+-- far as they go (Kaplan-Meier). Undercutting, buyers, time of day: all in.
+---------------------------------------------------------------------------
+-- The cheapest price over time, oldest first: your refreshes and your scans
+-- (Archive.lua), one point per SERIES_GAP: { t, cheapest then, highest
+-- cheapest before the next point }.
+local function Series(id, list)
+	local pts = {}
+	for _, s in ipairs(list) do
+		if s.rows[1] then pts[#pts + 1] = { s.at, s.rows[1] } end
+	end
+	if ns.Archive and ns.Archive.Ticks then
+		local today = ns.Data.Today()
+		for _, k in ipairs(ns.Archive.Ticks(ns.house or "faction", id, today - SERIES_DAYS, today)) do
+			if k.cheapest and k.cheapest > 0 then pts[#pts + 1] = { k.t, k.cheapest } end
+		end
+	end
+	table.sort(pts, function(a, b) return a[1] < b[1] end)
+	local out = {}
+	for _, p in ipairs(pts) do
+		local last = out[#out]
+		if last and p[1] - last[1] < SERIES_GAP then
+			last[3] = math.max(last[3], p[2])
+		else
+			out[#out + 1] = { p[1], p[2], p[2] }
+		end
+	end
+	return out
+end
+
+-- Kaplan-Meier over samples ({ seconds, sold }): the chance of selling by
+-- each of horizons (seconds, ascending; nil with too few samples), and when
+-- it's 50% (nil if never).
+local function KM(samples, horizons)
+	table.sort(samples, function(a, b)
+		if a[1] ~= b[1] then return a[1] < b[1] end
+		return a[2] and not b[2]
+	end)
+	local n, S, events, h = #samples, 1, 0, 1
+	local chance, median = {}, nil
+	local function Mark(i) -- samples before i are all at or under horizons[h]
+		while horizons[h] and (i > n or samples[i][1] > horizons[h]) do
+			if events + (n - i + 1) >= MIN_SAMPLE then chance[h] = 1 - S end
+			h = h + 1
+		end
+	end
+	for i = 1, n do
+		Mark(i)
+		if samples[i][2] then
+			S = S * (1 - 1 / (n - i + 1))
+			events = events + 1
+			if not median and S <= 0.5 and n >= MIN_SAMPLE then median = samples[i][1] end
+		end
+	end
+	Mark(n + 1)
+	return chance, median
+end
+
+-- ratios: each price over the cheapest now, ascending; delay: seconds yours
+-- add once it's your turn. Returns { { chance, median }, ... } per ratio.
+local function Passage(series, ratios, delay)
+	local K, n = #ratios, #series
+	local samples = {}
+	for k = 1, K do samples[k] = {} end
+	for i = 1, n do
+		local t0, c0 = series[i][1], series[i][2]
+		local k, top, seenTo = 1, 0, 0
+		for j = i, n do
+			local t = series[j][1] - t0
+			if t > LOOK then break end
+			seenTo = t
+			top = math.max(top, series[j][3] / c0)
+			while k <= K and top > ratios[k] do
+				local list = samples[k]
+				list[#list + 1] = { t + delay, true }
+				k = k + 1
+			end
+			if k > K then break end
+		end
+		for kk = k, K do
+			local list = samples[kk]
+			list[#list + 1] = { seenTo, false }
+		end
+	end
+	local horizons = {}
+	for i, h in ipairs(HORIZONS) do horizons[i] = h * 3600 end
+	local out = {}
+	for k = 1, K do
+		local chance, median = KM(samples[k], horizons)
+		out[k] = { chance = chance, median = median }
+	end
+	return out
+end
+
 -- The chance something expected in `hours` happens within `within` hours.
 local function Chance(hours, within)
 	if hours <= 0 then return 0.95 end
@@ -184,15 +294,19 @@ local cache = {}
 -- own resale price, a row of its own (custom = true) where it sorts.
 function Ladder.Work(id, count, floor, custom)
 	local list = History(id)
+	local realm = ns.Realm()
+	local scan = realm and realm.lastScan or 0
 	local c = cache[id]
-	if not (c and c.n == #list and c.last == (list[#list] and list[#list].at)) then
-		c = { n = #list, last = list[#list] and list[#list].at, speed = {}, trend = Trend(list) }
+	if not (c and c.n == #list and c.last == (list[#list] and list[#list].at) and c.scan == scan) then
+		c = { n = #list, last = list[#list] and list[#list].at, scan = scan, speed = {}, trend = Trend(list),
+			series = Series(id, list) }
 		cache[id] = c
 	end
-	local book, age = Book(id, list)
+	local book, age, own = Book(id, list)
 	if not book then return nil end
 	local prior = Prior(id)
-	local out = { rows = {}, trend = c.trend, age = age, seen = 0 }
+	local first = c.series[1]
+	local out = { rows = {}, trend = c.trend, age = age, seen = 0, span = first and time() - first[1] or 0 }
 	local function Row(p)
 		local sp = c.speed[p]
 		if not sp then
@@ -208,9 +322,13 @@ function Ladder.Work(id, count, floor, custom)
 		elseif seen >= MIN_SEEN then
 			rate = drained / seen
 		end
-		local ahead = Under(book, p, floor)
+		local ahead = Under(book, p, floor) + Under(own, p)
 		local hours
-		if rate then hours = rate > 0 and (ahead + math.max(1, count)) / rate / 3600 or math.huge end
+		if rate and rate > 0 then
+			hours = (ahead + math.max(1, count)) / rate / 3600
+		elseif rate and seen >= NEVER_SEEN then
+			hours = math.huge -- watched long enough to say so; less, it's just noise
+		end
 		return { price = p, ahead = ahead, hours = hours, perHour = rate and rate * 3600 }
 	end
 	local last
@@ -234,6 +352,27 @@ function Ladder.Work(id, count, floor, custom)
 			local r = Row(custom)
 			r.custom = true
 			table.insert(out.rows, at, r)
+		end
+	end
+	-- From history, where there's enough: the chances, and when it's 50%.
+	local cheapest
+	for i = 1, #book, 2 do
+		if not floor or book[i] > floor then cheapest = book[i] break end
+	end
+	if cheapest and #c.series > 0 and #out.rows > 0 then
+		local ratios = {}
+		for k, r in ipairs(out.rows) do ratios[k] = r.price / cheapest end
+		local delay = (prior and prior > 0) and count / prior or 0
+		local key = cheapest .. ":" .. table.concat(ratios, ",") .. ":" .. delay
+		if c.passageKey ~= key then c.passageKey, c.passage = key, Passage(c.series, ratios, delay) end
+		for k, r in ipairs(out.rows) do
+			local p = c.passage[k]
+			r.chance = p.chance
+			if p.median then
+				r.hours, r.over = p.median / 3600, nil
+			elseif p.chance[#HORIZONS] then
+				r.hours, r.over = nil, HORIZONS[#HORIZONS]
+			end
 		end
 	end
 	-- Dearer can't sell sooner: whatever sells before the cheaper price does
@@ -346,7 +485,7 @@ local function Create(anchor)
 	summaryHover:EnableMouse(true)
 	summaryHover:SetScript("OnEnter", function(self)
 		ShowTip(self, { "Listing prices", "Trend: price change per hour, last 6 hours.",
-			"Data: hours of your refreshes this is based on." })
+			"Data: how far back the price history goes (your scans and refreshes)." })
 	end)
 	summaryHover:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	rows = {}
@@ -358,13 +497,13 @@ end
 
 -- Show the ladder for id beside the tracker (anchor). info: { left (how many
 -- you'd list), short (still to make back, after what's up), floor (your Up
--- to, in Quick buy) }.
+-- to, in Quick buy), price (the sell page's Unit Price) }.
 function Ladder.Show(anchor, id, info)
 	if not frame then Create(anchor) end
 	local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
 	ns.SideWindowIcon(frame, texture or "Interface\\Icons\\INV_Misc_QuestionMark")
 	local count = info.left or 0
-	local custom = ns.QuickBuy and ns.QuickBuy.Target and ns.QuickBuy.Target(id)
+	local custom = info.price or (ns.QuickBuy and ns.QuickBuy.Target and ns.QuickBuy.Target(id))
 	local key = id .. ":" .. count .. ":" .. tostring(info.floor) .. ":" .. tostring(custom)
 	if key ~= workedKey or not workedAt or GetTime() - workedAt >= RECALC then
 		worked, workedAt, workedKey = Ladder.Work(id, count, info.floor, custom), GetTime(), key
@@ -377,8 +516,9 @@ function Ladder.Show(anchor, id, info)
 	if w and w.trend then
 		bits[#bits + 1] = math.abs(w.trend) < 1 and "Trend flat" or ("Trend %s/h"):format(Signed(w.trend))
 	end
-	if w and w.seen > 0 then
-		bits[#bits + 1] = GREY .. ("Data %s|r"):format((Duration(w.seen / 3600):gsub("~", "")))
+	local span = w and math.max(w.span, w.seen) or 0
+	if span > 0 then
+		bits[#bits + 1] = GREY .. ("Data %s|r"):format((Duration(span / 3600):gsub("~", "")))
 	end
 	summary:SetText(table.concat(bits, "   "))
 
@@ -413,16 +553,23 @@ function Ladder.Show(anchor, id, info)
 			local v = {
 				price = r.custom and (CUSTOM .. ns.Money(r.price) .. "|r") or ns.Money(r.price),
 				ahead = tostring(r.ahead),
-				sells = Duration(r.hours),
+				sells = r.over and (">" .. Duration(r.over):gsub("~", "")) or Duration(r.hours),
 				profit = count > 0 and Signed(math.floor(r.price * cut * count) - (info.short or 0)) or nil,
 			}
 			for k, h in ipairs(HORIZONS) do
-				v["h" .. k] = r.hours and ("%d%%"):format(math.floor(Chance(r.hours, h) * 20 + 0.5) * 5) or nil
+				local p = r.chance and r.chance[k] or (r.hours and Chance(r.hours, h))
+				if p then
+					p = math.max(0.05, math.min(0.95, p))
+					v["h" .. k] = ("%d%%"):format(math.floor(p * 20 + 0.5) * 5)
+				else
+					v["h" .. k] = GREY .. "?|r"
+				end
 			end
 			local speed = not r.perHour and "Not enough data yet."
 				or r.perHour > 0 and ("~%d sell an hour."):format(math.floor(r.perHour + 0.5))
 				or "More listed than sold."
-			Line(i, y, "GameFontHighlightSmall", v, { r.custom and ("Your resale price: " .. ns.Money(r.price)) or ns.Money(r.price),
+			local label = r.custom and ((info.price and "Your Unit Price: " or "Your resale price: ") .. ns.Money(r.price))
+			Line(i, y, "GameFontHighlightSmall", v, { label or ns.Money(r.price),
 				("%d listed cheaper."):format(r.ahead), speed })
 			y = y - ROW
 		end

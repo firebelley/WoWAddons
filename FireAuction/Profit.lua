@@ -7,7 +7,8 @@
 -- bars, Daily % as a share of your gold the day before.
 --
 -- Profit: what sales brought in (after the cut), less what you paid and the
--- deposits lost, plus what you still hold at the market price (after the cut).
+-- deposits lost, plus what you still hold at what it cost you - so it moves
+-- only when something sells.
 local _, ns = ...
 
 local Profit = {}
@@ -23,7 +24,7 @@ local GREEN, RED = "|cff40ff40", "|cffff5050"
 
 -- The lines, drawn in this order (the first on top).
 local SERIES = {
-	{ key = "total", label = "Profit", color = TOTAL_COLOR, tip = "Cash, plus what you still hold at market price" },
+	{ key = "total", label = "Profit", color = TOTAL_COLOR, tip = "What sold, less what it cost you" },
 	{ key = "cash", label = "Cash", color = CASH_COLOR, tip = "Sales, less purchases and lost deposits" },
 	{ key = "gold", label = "Gold", color = GOLD_COLOR, tip = "Gold on all your characters" },
 }
@@ -394,7 +395,7 @@ local function GraphHover(self)
 		if text then GameTooltip:AddLine(s.label .. ": " .. text, c[1], c[2], c[3]) end
 	end
 	if r.p.held > 0 then
-		GameTooltip:AddLine(("Holding %d, worth %s"):format(r.p.held, ns.Money(math.floor(r.p.value + 0.5))), 0.8, 0.8, 0.8)
+		GameTooltip:AddLine(("Holding %d, cost %s"):format(r.p.held, ns.Money(math.floor(r.p.value + 0.5))), 0.8, 0.8, 0.8)
 	end
 	GameTooltip:Show()
 end
@@ -448,7 +449,7 @@ local function UpdateDetail()
 	info[#info + 1] = ("Bought %d for %s   Sold %d for %s"):format(bought, ns.Money(spent), sold, ns.Money(income))
 	if lost > 0 then info[#info + 1] = "Deposits lost: " .. ns.Money(lost) end
 	if nowP.held > 0 then
-		info[#info + 1] = ("Holding %d, worth %s at market price"):format(nowP.held, ns.Money(math.floor(nowP.value + 0.5)))
+		info[#info + 1] = ("Holding %d, cost %s"):format(nowP.held, ns.Money(math.floor(nowP.value + 0.5)))
 	end
 	if perDay then
 		info[#info + 1] = ("Per day: %s (last %d day%s)   In %d days: %s"):format(Signed(perDay), days, days == 1 and "" or "s",

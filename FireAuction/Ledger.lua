@@ -158,34 +158,20 @@ end
 ---------------------------------------------------------------------------
 -- Profit over time
 ---------------------------------------------------------------------------
--- What an item is worth on a day: that day's market price (or the nearest
--- before, else after), after the cut; without prices, what you paid on
--- average - no profit either way.
-local function Pricer(id, item)
-	local rec = ns.Data.Get(id, item.house) or ns.Data.Get(id)
-	local history = rec and ns.Data.History(rec) or {}
-	return function(day, avgCost)
-		local price
-		for _, h in ipairs(history) do
-			if h[1] <= day then price = h[2] else break end
-		end
-		price = price or (history[1] and history[1][2])
-		if price then return price * (1 - ns.Cut(item.house or "faction")) end
-		return avgCost or 0
-	end
-end
-
 -- Day by day from the first session to today, for one item or (nil) all:
 -- { { day, cash, value, total, held }, ... } - cash: sales less purchases and
--- deposits so far; value: what you still hold, at the market price; total:
--- the two together. nil with nothing yet.
+-- deposits so far; value: what you still hold, at what it cost you; total:
+-- the two together - so profit moves only when something sells (or a
+-- deposit is lost), not when you buy or keep some. nil with nothing yet.
+-- What's held costs what was paid for it, less each sale's share at the
+-- average cost then (a day's buys before its sales).
 function Ledger.Series(onlyID)
 	local items = DB().items
 	local list = {}
 	local first
 	for id, item in pairs(items) do
 		if not onlyID or id == onlyID then
-			list[#list + 1] = { id = id, item = item, price = Pricer(id, item), cash = 0, held = 0, b = 0, spent = 0 }
+			list[#list + 1] = { id = id, item = item, cash = 0, held = 0, cost = 0 }
 			for day in pairs(item.days) do first = math.min(first or day, day) end
 		end
 	end
@@ -198,11 +184,15 @@ function Ledger.Series(onlyID)
 			local d = e.item.days[day]
 			if d then
 				e.cash = e.cash + d.income - d.spent - d.lost
-				e.held = math.max(0, e.held + d.b - d.s)
-				e.b, e.spent = e.b + d.b, e.spent + d.spent
+				e.held, e.cost = e.held + d.b, e.cost + d.spent
+				local sold = math.min(d.s, e.held)
+				if sold > 0 then
+					e.cost = e.cost * (e.held - sold) / e.held
+					e.held = e.held - sold
+				end
 			end
 			cash, held = cash + e.cash, held + e.held
-			if e.held > 0 then value = value + e.held * e.price(day, e.b > 0 and e.spent / e.b or 0) end
+			value = value + e.cost
 		end
 		series[#series + 1] = { day = day, cash = cash, value = value, total = cash + value, held = held }
 	end

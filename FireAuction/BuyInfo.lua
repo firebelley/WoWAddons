@@ -162,7 +162,7 @@ local function SellLines(id)
 				Add("Deposits lost", nil, Signed(-seedLost), nil, Tip("Deposits lost", "On cancelled or expired seeds."))
 			end
 		end
-		return lines, summaryText, nil, { left = have + seedUp, short = cover - upIncome }
+		return lines, summaryText, nil, { left = have + seedUp, short = cover - upIncome, price = typed }
 	end
 
 	local paid = spent + lost
@@ -221,7 +221,7 @@ local function SellLines(id)
 			Add("Profit", nil, Signed(total), nil, Tip("Profit", AfterCut()), ns.Percent(total / spent * 100))
 		end
 	end
-	return lines, summaryText, progress, { left = left, short = cover - upIncome }
+	return lines, summaryText, progress, { left = left, short = cover - upIncome, price = typed }
 end
 
 -- The lines to show for itemID: { { left, mid, right, kind, tip, pct }, ... }, kind
