@@ -101,7 +101,6 @@ local function ClearSession(id)
 	-- in the Profit tab until they end.
 	if s.listed and ns.Listings then ns.Listings.Keep(id, s.listed) end
 	s.listed, s.sold, s.after, s.done = nil, nil, nil, nil
-	s.bigOK = nil -- asks again before a big purchase (Click)
 	summarized[id] = nil
 	boughtNow[id] = nil
 end
@@ -871,22 +870,48 @@ local function CheckMissed(quoted)
 	Update()
 end
 
--- A click that would spend more than "Ask before spending more than"
--- (Options; 0 = never) asks first - once a session: accepted, it doesn't ask
--- again until the session ends (s.bigOK).
+-- Asked first, once per item each time the auction house opens (accepted, not
+-- again until it's closed), in Options (0 = never):
+--   a click that would spend more than quickBuyAsk ("big");
+--   "Up to" within quickBuyMargin percent of the market price, or over it
+--   ("price"): little or nothing left after the cut.
 local Click
+local accepted = {} -- [itemID] = { big = true, price = true } this visit
+local function OK(flag) return accepted[itemID] and accepted[itemID][flag] end
+
 local function TooMuch(total)
 	local limit = ns.db.quickBuyAsk or 0
-	return limit > 0 and total > limit and not Settings(itemID).bigOK
+	return limit > 0 and total > limit and not OK("big")
 end
 
-StaticPopupDialogs.FIREAUCTION_QUICKBUY_MANY = {
-	text = "%s\n\nYou won't be asked again until you end this session.",
+-- The market price, when "Up to" is too close to it.
+local function TooDear(max)
+	local pct = ns.db.quickBuyMargin or 0
+	if pct <= 0 or OK("price") then return nil end
+	local market = ns.Data.Market(ns.Data.Get(itemID))
+	if market and market > 0 and max >= market * (1 - pct / 100) then return market end
+end
+
+-- A new visit asks again; a dialog left open goes with the auction house.
+ns.On("AUCTION_HOUSE_SHOW", function() wipe(accepted) end)
+ns.On("AUCTION_HOUSE_CLOSED", function()
+	wipe(accepted)
+	StaticPopup_Hide("FIREAUCTION_QUICKBUY_ASK")
+end)
+
+local function Ask(text, flag)
+	local dialog = StaticPopup_Show("FIREAUCTION_QUICKBUY_ASK", text)
+	if dialog then dialog.data = { id = itemID, flag = flag } end
+end
+
+StaticPopupDialogs.FIREAUCTION_QUICKBUY_ASK = {
+	text = "%s\n\nYou won't be asked again until you close the auction house.",
 	button1 = "Buy",
 	button2 = CANCEL,
-	OnAccept = function(_, id)
-		if id ~= itemID then return end
-		Settings(id).bigOK = true
+	OnAccept = function(_, data)
+		if not (data and data.id == itemID) then return end
+		accepted[data.id] = accepted[data.id] or {}
+		accepted[data.id][data.flag] = true
 		ns.SafeCall(Click)
 	end,
 	timeout = 0,
@@ -903,13 +928,18 @@ function Click()
 	if not button:IsEnabled() then return end
 	if mode == "check" or mode == "buy" then
 		-- (A price check buys at up to "Up to" each.)
+		local max = Settings(itemID).max or 0
 		local q = mode == "buy" and plan.quantity or checkPlan.quantity
-		local total = mode == "buy" and plan.total or (Settings(itemID).max or 0) * q
+		local total = mode == "buy" and plan.total or max * q
+		local market = TooDear(max)
+		if market then
+			Ask(("Up to %s is %s the market price (%s)."):format(ns.Money(max),
+				max >= market and "over" or "close to", ns.Money(market)), "price")
+			return
+		end
 		if TooMuch(total) then
-			local name = ItemName(itemID)
-			local text = (mode == "buy" and "Buy %d %s for %s?" or "Buy %d %s for up to %s?"):format(q, name, ns.Money(total))
-			local dialog = StaticPopup_Show("FIREAUCTION_QUICKBUY_MANY", text)
-			if dialog then dialog.data = itemID end
+			Ask((mode == "buy" and "Buy %d %s for %s?" or "Buy %d %s for up to %s?"):format(q, ItemName(itemID),
+				ns.Money(total)), "big")
 			return
 		end
 	end

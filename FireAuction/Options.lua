@@ -42,8 +42,22 @@ StaticPopupDialogs.FIREAUCTION_FORGET = {
 }
 
 local function Build()
-	local panel = CreateFrame("Frame")
-	panel:Hide()
+	-- The page scrolls: everything is drawn on `panel`, the scroll child.
+	local page = CreateFrame("Frame")
+	page:Hide()
+	local ok, scroll = pcall(CreateFrame, "ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
+	if not ok then scroll = CreateFrame("ScrollFrame", nil, page) end
+	scroll:SetPoint("TOPLEFT")
+	scroll:SetPoint("BOTTOMRIGHT", -30, 4)
+	scroll:EnableMouseWheel(true)
+	scroll:SetScript("OnMouseWheel", function(self, delta)
+		local max = self:GetVerticalScrollRange()
+		self:SetVerticalScroll(math.max(0, math.min(max, self:GetVerticalScroll() - delta * 40)))
+	end)
+	local panel = CreateFrame("Frame", nil, scroll)
+	panel:SetSize(1, 1)
+	scroll:SetScrollChild(panel)
+	scroll:HookScript("OnSizeChanged", function(_, w) panel:SetWidth(math.max(w or 1, 1)) end)
 	local refreshers = {}
 	local y = -16
 
@@ -231,8 +245,33 @@ local function Build()
 
 	Header("Buying")
 	MoneyInput("quickBuyAsk", "Quick buy: ask before spending more than",
-		"One click that would spend more asks first. Once you say yes, it doesn't ask again until you end the "
-			.. "session. 0: never ask.")
+		"The first click that would spend more asks first, each time you open the auction house. 0: never ask.")
+	-- "Label [ 10 ] suffix": a whole number.
+	local function NumberInput(key, label, suffix, tooltip)
+		local name = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		name:SetPoint("TOPLEFT", 46, y - 6)
+		name:SetText(label)
+		local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+		box:SetSize(36, 20)
+		box:SetPoint("TOPLEFT", 46 + name:GetStringWidth() + 14, y - 2)
+		box:SetAutoFocus(false)
+		box:SetNumeric(true)
+		box:SetMaxLetters(3)
+		box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+		box:SetScript("OnEditFocusLost", function(self)
+			ns.db[key] = math.floor(tonumber(self:GetText()) or 0)
+			self:SetText(tostring(ns.db[key]))
+		end)
+		Tooltip(box, label, tooltip)
+		local unit = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		unit:SetPoint("LEFT", box, "RIGHT", 6, 0)
+		unit:SetText(suffix)
+		refreshers[#refreshers + 1] = function() box:SetText(tostring(ns.db[key] or 0)) end
+		y = y - 30
+	end
+	NumberInput("quickBuyMargin", "Quick buy: ask when \"Up to\" is within", "% of market",
+		"Asks on the first buy each time you open the auction house when \"Up to\" is this close to the market "
+			.. "price, or over it. 0: never ask.")
 
 	Header("Selling")
 	Checkbox("announceSales", "Announce when one of my auctions sells",
@@ -255,11 +294,13 @@ local function Build()
 	end)
 	EndButtons()
 
-	panel:SetScript("OnShow", function()
+	panel:SetHeight(-y + 8)
+	page:SetScript("OnShow", function()
+		panel:SetWidth(math.max(scroll:GetWidth(), 1))
 		for _, fn in ipairs(refreshers) do ns.SafeCall(fn) end
 	end)
 
-	category = Settings.RegisterCanvasLayoutCategory(panel, "FireAuction")
+	category = Settings.RegisterCanvasLayoutCategory(page, "FireAuction")
 	Settings.RegisterAddOnCategory(category)
 end
 
