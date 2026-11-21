@@ -14,6 +14,7 @@ local DEFAULTS = {
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
 	quickBuyCheapest = false, -- Quick buy takes only the lowest price within "Up to" per click (QuickBuy.lua)
 	quickBuyAsk = 100000, -- copper: Quick buy asks before one click spends more (10g), once per AH visit (0 = never)
+	quickBuyLeaveSeed = true, -- Quick buy leaves one listed at the seed price when it would buy all of them there (QuickBuy.lua Walk)
 	quickBuyMargin = 10, -- percent: Quick buy asks when "Up to" is within this of the market price, once per AH visit (0 = never)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)

@@ -155,6 +155,24 @@ local function Walk(id, maxPrice, quantity)
 		count = count + take
 		if r.quantity - gone > 0 then rows[#rows + 1] = { price = r.unitPrice, quantity = r.quantity - gone, take = take } end
 	end
+	if count > 0 and maxPrice ~= math.huge and ns.db.quickBuyLeaveSeed then
+		-- Leave one at the seed price: when everything it would buy is at or
+		-- under it and none would be left there (yours count), one fewer. Not
+		-- when it buys dearer ones too - the cheapest go first, so keeping one
+		-- would mean never buying those. (No requests: the listings on screen.)
+		local last
+		for _, row in ipairs(rows) do
+			if row.take > 0 then last = row end
+		end
+		local seed = ns.Seed and ns.Seed.Price and ns.Seed.Price(id)
+		if seed and last.price <= seed then
+			local left = false
+			for _, row in ipairs(rows) do
+				if row.price <= seed and row.quantity - row.take > 0 then left = true break end
+			end
+			if not left then last.take = last.take - 1 end
+		end
+	end
 	return rows
 end
 
