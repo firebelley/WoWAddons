@@ -19,6 +19,7 @@ local API = ns.API
 local STEP_INTERVAL = 0.02 -- seconds between checks for the last moves to land
 local MAX_MOVES = 1500     -- safety cap (passes)
 local MAX_WAIT = 5         -- give up if items stay locked this long
+local STALLS = 3           -- give up after this many rounds of moves that changed nothing
 
 -- The order (FireBags' own sorter), after the one TrinityCore worked out for
 -- Blizzard's sort (github.com/TrinityCore/TrinityCore/pull/29947): items go
@@ -335,6 +336,23 @@ local function Step(state)
 	-- item), don't try that item again this sort.
 	state:CheckLastMove()
 
+	-- Moves that change nothing (a bag refusing items it was thought to take)
+	-- would be planned again and again: a few rounds of that and it stops.
+	local sig = {}
+	for _, group in ipairs(groups) do
+		for _, r in ipairs(group.items) do sig[#sig + 1] = r and (r.link .. r.count) or "" end
+	end
+	sig = table.concat(sig, "|")
+	if sig == state.lastSig then
+		-- (Not too soon either: the bags may just not have caught up yet.)
+		state.stalls = state.stalls + 1
+		state.stallSince = state.stallSince or GetTime()
+		if state.stalls >= STALLS and GetTime() - state.stallSince >= 1 then return "stuck" end
+	else
+		state.stalls, state.stallSince = 0, nil
+	end
+	state.lastSig = sig
+
 	-- Groups never share slots, so each one's moves go in the same pass.
 	local stacked = false
 	for _, group in ipairs(groups) do
@@ -438,6 +456,8 @@ sorter:SetScript("OnUpdate", function(self, elapsed)
 		if self.moves >= MAX_MOVES then StopSorting("Sorting stopped: too many moves.") end
 	elseif result == "done" then
 		StopSorting()
+	elseif result == "stuck" then
+		StopSorting("Sorting stopped: some items wouldn't move.")
 	else
 		StopSorting("Sorting stopped: bags changed unexpectedly. Try again.")
 	end
@@ -467,6 +487,7 @@ function ns.SortBags(kind)
 	sorter.groups = BuildGroups(sections)
 	sorter.failed = {}
 	sorter.refusedBy = {}
+	sorter.lastSig, sorter.stalls, sorter.stallSince = nil, 0, nil
 	sorter.lastMove = nil
 	sorter.timer = STEP_INTERVAL
 	sorter.waited = 0

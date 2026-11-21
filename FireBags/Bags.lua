@@ -138,17 +138,26 @@ end
 ---------------------------------------------------------------------------
 -- Entries: { bag, numSlots, numFree, family }
 ---------------------------------------------------------------------------
--- Is the bag in the reagent bag slot really a reagent bag? Forever lets any
--- bag go there (a soul bag, a plain bag), so ask the bag itself: reagent bags
--- are containers of subclass 11. If it can't be told, a bag with no special
--- family is taken for one.
-local function IsReagentBag(bag, family)
+-- What kind of bag is equipped in a bag slot, from the bag item itself:
+-- "reagent", a bag family (bit flag), or 0 for a plain bag; nil if unknown.
+-- The game's own answer (GetFreeSlots) isn't always right: Forever lets any
+-- bag go in the reagent bag slot, and reports a soul bag there as plain.
+local BAG_SUBCLASS_FAMILY = { -- containers (class 1) by subclass
+	[0] = 0, [1] = 0x0004, [2] = 0x0020, [3] = 0x0040, [4] = 0x0080,
+	[5] = 0x0200, [6] = 0x0400, [7] = 0x0008, [8] = 0x0010, [11] = "reagent",
+}
+local QUIVER_SUBCLASS_FAMILY = { [2] = 0x0001, [3] = 0x0002 } -- class 11: quiver, ammo pouch
+
+local function BagItemFamily(bag)
 	local toInv = C_Container and C_Container.ContainerIDToInventoryID or ContainerIDToInventoryID
+	if not toInv then return nil end
 	local ok, inv = pcall(toInv, bag)
 	local itemID = ok and inv and GetInventoryItemID("player", inv)
-	local subClassID = itemID and select(7, API.GetItemInfoInstant(itemID))
-	if subClassID then return subClassID == 11 end
-	return family == 0
+	if not itemID then return nil end
+	local classID, subClassID = select(6, API.GetItemInfoInstant(itemID))
+	if classID == 1 then return BAG_SUBCLASS_FAMILY[subClassID] end
+	if classID == 11 then return QUIVER_SUBCLASS_FAMILY[subClassID] end
+	return nil
 end
 
 local function LiveEntry(bag)
@@ -156,7 +165,18 @@ local function LiveEntry(bag)
 	if numSlots <= 0 then return nil end
 	local free, family = API.GetFreeSlots(bag)
 	family = family or 0
-	if REAGENT_BAG and bag == REAGENT_BAG and IsReagentBag(bag, family) then family = "reagent" end
+	-- A special bag the game calls plain goes by what the bag item says.
+	if bag ~= BACKPACK then
+		local own = BagItemFamily(bag)
+		local reagentSlot = REAGENT_BAG and bag == REAGENT_BAG
+		if own == "reagent" then
+			if reagentSlot then family = own end
+		elseif family == 0 and own then
+			family = own
+		elseif family == 0 and own == nil and reagentSlot then
+			family = "reagent" -- can't tell: the slot's own kind
+		end
+	end
 	return { bag = bag, numSlots = numSlots, numFree = free or 0, family = family }
 end
 
