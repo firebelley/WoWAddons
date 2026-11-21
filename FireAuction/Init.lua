@@ -192,6 +192,8 @@ ns.On("ADDON_LOADED", function(name)
 	db.craftMaxPrice, db.targetProfit = nil, nil -- replaced by craftWorth
 	db.quickBuy = db.quickBuy or {} -- [itemID] = { want = how many, max = copper each } (QuickBuy.lua)
 	ns.db = db
+	local moved = ns.MergeBlankRealm and ns.MergeBlankRealm(db)
+	if moved and moved > 0 then ns.Print("prices and sales saved without a realm name were put back under " .. db.realmName .. ".") end
 end)
 
 -- Prices per auction house: your faction's ("Realm - Horde") and the neutral
@@ -217,7 +219,7 @@ function ns.Realm(house)
 	local faction = UnitFactionGroup("player")
 	if not faction then return nil end -- too early
 	house = house or ns.house or "faction"
-	local key = (GetRealmName() or "?") .. " - " .. (house == "neutral" and "Neutral" or faction)
+	local key = ns.RealmName() .. " - " .. (house == "neutral" and "Neutral" or faction)
 	local realms = ns.db.realms
 	if not realms[key] then realms[key] = { items = {}, lastScan = 0, lastRequest = 0 } end
 	return realms[key]

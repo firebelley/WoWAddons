@@ -8,6 +8,7 @@
 
 Init.lua
 Data.lua
+Realm.lua
 Scan.lua
 Tooltip.lua
 Window.lua

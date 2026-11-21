@@ -124,6 +124,7 @@ function Archive.DB()
 			end
 		end
 	end
+	Archive.MergeBlankRealm(db)
 	AddEvents(db)
 	return db
 end
@@ -139,7 +140,7 @@ ns.On("AUCTION_HOUSE_SHOW", function() Archive.DB() end)
 local function HouseKey(house)
 	local faction = UnitFactionGroup("player")
 	if not faction then return nil end
-	return (GetRealmName() or "?") .. " - " .. (house == "neutral" and "Neutral" or faction)
+	return ns.RealmName() .. " - " .. (house == "neutral" and "Neutral" or faction)
 end
 
 local function House(house)
@@ -278,7 +279,7 @@ end
 function Archive.Event(kind, item, qty, unit, house, extra, t)
 	local name = UnitName("player")
 	if not (name and item and ns.db) then return end
-	local key = name .. " - " .. (GetRealmName() or "?")
+	local key = name .. " - " .. ns.RealmName()
 	local e = { t or time(), kind, item, qty, unit and math.floor(unit + 0.5) or nil,
 		(house or ns.house) == "neutral" and "n" or "f", extra }
 	ns.db.archivePending = ns.db.archivePending or {}
@@ -288,6 +289,140 @@ function Archive.Event(kind, item, qty, unit, house, extra, t)
 		if d then AddEvents(d) end
 	end
 end
+
+---------------------------------------------------------------------------
+-- A blank realm name (Realm.lua): its house and characters go back
+---------------------------------------------------------------------------
+-- Two records of the same day, a the earlier: one record.
+local function JoinDay(a, b)
+	return { o = a.o, c = b.c, h = math.max(a.h, b.h), l = math.min(a.l, b.l), cl = math.min(a.cl, b.cl),
+		ch = math.max(a.ch, b.ch), qsum = a.qsum + b.qsum, ql = math.min(a.ql, b.ql), qh = math.max(a.qh, b.qh),
+		gone = a.gone + b.gone, n = a.n + b.n }
+end
+
+-- An item's day records (oldest first, as they were added): one per day.
+local function JoinDays(s, bucket)
+	local byDay, days, pos = {}, {}, 1
+	while pos <= #s do
+		local r
+		r, pos = DecodeDay(s, pos, bucket)
+		if not r then break end
+		r.qsum = r.q * r.n
+		if byDay[r.day] then
+			byDay[r.day] = JoinDay(byDay[r.day], r)
+		else
+			byDay[r.day] = r
+			days[#days + 1] = r.day
+		end
+	end
+	table.sort(days)
+	local out = {}
+	for i, day in ipairs(days) do out[i] = EncodeDay(day, byDay[day]) end
+	return table.concat(out)
+end
+
+-- An item's scans: by time.
+local function SortTicks(s)
+	local list, pos = {}, 1
+	while pos <= #s do
+		local v = {}
+		for i = 1, 5 do
+			v[i], pos = Read(s, pos)
+			if not v[i] then break end
+		end
+		if not v[5] then break end
+		list[#list + 1] = v
+	end
+	table.sort(list, function(x, y) return x[1] < y[1] end)
+	local out = {}
+	for i, v in ipairs(list) do out[i] = Num(v[1]) .. Num(v[2]) .. Num(v[3]) .. Num(v[4]) .. Num(v[5]) end
+	return table.concat(out)
+end
+
+-- The blank realm's house (b, the newer) into the same house (a).
+local function MergeHouse(a, b)
+	a.daily, a.ticks, a.cover = a.daily or {}, a.ticks or {}, a.cover or {}
+	-- Both days so far: an older one is over, the same one is one day.
+	local ta, tb = a.today, b.today
+	if ta and tb and ta.day == tb.day then
+		for id, r in pairs(tb.items) do
+			ta.items[id] = ta.items[id] and JoinDay(ta.items[id], r) or r
+		end
+		b.today = nil
+	elseif ta and tb then
+		if ta.day < tb.day then Flush(a); a.today = tb else Flush(b) end
+		b.today = nil
+	elseif tb then
+		a.today, b.today = tb, nil
+	end
+	for bucket, items in pairs(b.daily or {}) do
+		local list = a.daily[bucket]
+		if not list then
+			a.daily[bucket] = items
+		else
+			for id, s in pairs(items) do
+				list[id] = list[id] and JoinDays(list[id] .. s, bucket) or s
+			end
+		end
+	end
+	-- A day flushed on one side that's still going on the other: one day.
+	if a.today then
+		local list = a.daily[math.floor(a.today.day / BUCKET)]
+		for id, s in pairs(list or {}) do
+			local kept = {}
+			local pos, joined = 1, nil
+			while pos <= #s do
+				local r, nextPos = DecodeDay(s, pos, math.floor(a.today.day / BUCKET))
+				if not r then break end
+				if r.day == a.today.day then
+					r.qsum = r.q * r.n
+					joined = joined and JoinDay(joined, r) or r
+				else
+					kept[#kept + 1] = s:sub(pos, nextPos - 1)
+				end
+				pos = nextPos
+			end
+			if joined then
+				local r = a.today.items[id]
+				a.today.items[id] = r and JoinDay(joined, r) or joined
+				list[id] = #kept > 0 and table.concat(kept) or nil
+			end
+		end
+	end
+	for day, items in pairs(b.ticks or {}) do
+		local list = a.ticks[day]
+		if not list then
+			a.ticks[day] = items
+		else
+			for id, s in pairs(items) do
+				list[id] = list[id] and SortTicks(list[id] .. s) or s
+			end
+		end
+	end
+	for day, s in pairs(b.cover or {}) do a.cover[day] = (a.cover[day] or 0) + s end
+end
+
+function Archive.MergeBlankRealm(d)
+	local realm = ns.RealmName()
+	if realm == "" then return end
+	for key, b in pairs(d.houses) do
+		local side = key:match("^ %- (%a+)$")
+		if side then
+			local to = realm .. " - " .. side
+			if d.houses[to] then MergeHouse(d.houses[to], b) else d.houses[to] = b end
+			d.houses[key] = nil
+		end
+	end
+	for key, b in pairs(d.chars) do
+		local name = key:match("^(.-) %- $")
+		if name then
+			local to = name .. " - " .. realm
+			d.chars[to] = ns.MergeLog(d.chars[to], b)
+			d.chars[key] = nil
+		end
+	end
+end
+Archive.MergeHouse = MergeHouse
 
 ---------------------------------------------------------------------------
 -- Reading (for whatever shows it later)

@@ -246,7 +246,7 @@ local function Build()
 	Button("Open price window", "Search your saved prices and see an item's price over time (/fah).",
 		function() ns.Window.Show() end)
 	Button("Forget prices", "Delete all saved prices for this realm.", function()
-		StaticPopup_Show("FIREAUCTION_FORGET", (GetRealmName() or "?") .. " (" .. (UnitFactionGroup("player") or "?") .. " and neutral)")
+		StaticPopup_Show("FIREAUCTION_FORGET", ns.RealmName() .. " (" .. (UnitFactionGroup("player") or "?") .. " and neutral)")
 	end)
 	EndButtons()
 

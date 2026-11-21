@@ -212,7 +212,7 @@ end
 local node = ENC[math.random(0, 63)] .. ENC[math.random(0, 63)] .. ENC[math.random(0, 63)]
 
 local function RealmTag()
-	local name = GetRealmName() or "?"
+	local name = ns.RealmName()
 	local h = 0
 	for i = 1, #name do h = (h * 31 + byte(name, i)) % 4096 end
 	return ENC[floor(h / 64)] .. ENC[h % 64]

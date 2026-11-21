@@ -83,4 +83,51 @@ ns.On("ADDON_LOADED", function(name)
 		db.settingsVersion = 2
 	end
 	ns.db = db
+	ns.MergeBlankRealm(db)
 end)
+
+---------------------------------------------------------------------------
+-- The realm's name, for per-character keys ("Name - Realm"). Forever's
+-- client started giving "" for it (2026-11-20): the last real name seen
+-- stands in (before one's seen: the one in the saved keys), and a character
+-- saved under the blank name ("Name - ") goes back with the rest.
+---------------------------------------------------------------------------
+function ns.RealmName()
+	local name = GetRealmName and GetRealmName()
+	if type(name) == "string" and name ~= "" then
+		if ns.db then ns.db.realmName = name end
+		return name
+	end
+	return ns.db and ns.db.realmName or ""
+end
+
+function ns.MergeBlankRealm(db)
+	if not db.realmName then
+		local found, count = nil, 0
+		for key in pairs(db.chars) do
+			local realm = key:match("^.- %- (.+)$")
+			if realm and realm ~= found then found, count = realm, count + 1 end
+		end
+		if count == 1 then db.realmName = found end
+	end
+	local realm = db.realmName
+	if not realm then return end
+	for key, b in pairs(db.chars) do
+		local name = key:match("^(.-) %- $")
+		if name then
+			local to = name .. " - " .. realm
+			local a = db.chars[to]
+			if not a then
+				db.chars[to] = b
+			else
+				-- The newer bank snapshot, and the actions if any were set up since.
+				if b.bank and (b.bank.time or 0) > (a.bank and a.bank.time or 0) then a.bank = b.bank end
+				if b.actions and #b.actions > 0 then a.actions = b.actions end
+				for k, v in pairs(b) do
+					if a[k] == nil then a[k] = v end
+				end
+			end
+			db.chars[key] = nil
+		end
+	end
+end

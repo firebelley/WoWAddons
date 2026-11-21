@@ -28,7 +28,7 @@ local function Char()
 	if not ns.db then return nil end
 	local name = UnitName("player")
 	if not name then return nil end
-	local key = name .. " - " .. (GetRealmName() or "?")
+	local key = name .. " - " .. ns.RealmName()
 	ns.db.chars = ns.db.chars or {}
 	local c = ns.db.chars[key]
 	if not c then

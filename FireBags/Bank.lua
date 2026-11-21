@@ -13,7 +13,7 @@ ns.atBank = false
 -- Snapshot storage (per character, in FireBagsDB.chars)
 ---------------------------------------------------------------------------
 local function CharacterKey()
-	return (UnitName("player") or "?") .. " - " .. (GetRealmName() or "?")
+	return (UnitName("player") or "?") .. " - " .. ns.RealmName()
 end
 ns.CharacterKey = CharacterKey
 
