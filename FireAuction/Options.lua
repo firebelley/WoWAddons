@@ -229,6 +229,11 @@ local function Build()
 	MoneyInput("markPrice", "Worth at least", "The auction price per item that gets the gold coin.",
 		function() ns.BagIcons.Refresh() end)
 
+	Header("Buying")
+	MoneyInput("quickBuyAsk", "Quick buy: ask before spending more than",
+		"One click that would spend more asks first. Once you say yes, it doesn't ask again until you end the "
+			.. "session. 0: never ask.")
+
 	Header("Selling")
 	Checkbox("announceSales", "Announce when one of my auctions sells",
 		"A big on-screen message and coin sound when something sells. Gold waiting in the mail shows on the "

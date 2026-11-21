@@ -101,6 +101,7 @@ local function ClearSession(id)
 	-- in the Profit tab until they end.
 	if s.listed and ns.Listings then ns.Listings.Keep(id, s.listed) end
 	s.listed, s.sold, s.after, s.done = nil, nil, nil, nil
+	s.bigOK = nil -- asks again before a big purchase (Click)
 	summarized[id] = nil
 	boughtNow[id] = nil
 end
@@ -870,11 +871,48 @@ local function CheckMissed(quoted)
 	Update()
 end
 
+-- A click that would spend more than "Ask before spending more than"
+-- (Options; 0 = never) asks first - once a session: accepted, it doesn't ask
+-- again until the session ends (s.bigOK).
+local Click
+local function TooMuch(total)
+	local limit = ns.db.quickBuyAsk or 0
+	return limit > 0 and total > limit and not Settings(itemID).bigOK
+end
+
+StaticPopupDialogs.FIREAUCTION_QUICKBUY_MANY = {
+	text = "%s\n\nYou won't be asked again until you end this session.",
+	button1 = "Buy",
+	button2 = CANCEL,
+	OnAccept = function(_, id)
+		if id ~= itemID then return end
+		Settings(id).bigOK = true
+		ns.SafeCall(Click)
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
 -- One click, one thing: buy what's listed within "Up to", or refresh when
 -- there's nothing to buy (or check the price, see Check).
-local function Click()
+function Click()
 	if pending or not itemID then return end
 	Update()
+	if not button:IsEnabled() then return end
+	if mode == "check" or mode == "buy" then
+		-- (A price check buys at up to "Up to" each.)
+		local q = mode == "buy" and plan.quantity or checkPlan.quantity
+		local total = mode == "buy" and plan.total or (Settings(itemID).max or 0) * q
+		if TooMuch(total) then
+			local name = ItemName(itemID)
+			local text = (mode == "buy" and "Buy %d %s for %s?" or "Buy %d %s for up to %s?"):format(q, name, ns.Money(total))
+			local dialog = StaticPopup_Show("FIREAUCTION_QUICKBUY_MANY", text)
+			if dialog then dialog.data = itemID end
+			return
+		end
+	end
 	if mode == "check" then
 		Check()
 	elseif mode == "refresh" then

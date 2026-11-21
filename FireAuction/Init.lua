@@ -13,6 +13,7 @@ local DEFAULTS = {
 	craftWorth = true,    -- "Worth as <crafted item>" on reagent tooltips, from your saved recipes (Crafting.lua)
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
 	quickBuyCheapest = false, -- Quick buy takes only the lowest price within "Up to" per click (QuickBuy.lua)
+	quickBuyAsk = 100000, -- copper: Quick buy asks before one click spends more (10g), once a session (0 = never)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
 }
