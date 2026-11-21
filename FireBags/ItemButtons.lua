@@ -16,6 +16,12 @@ local BORDER_TEXTURE = "Interface\\Common\\WhiteIconFrame"
 local GLOW_ATLAS = "bags-glow-white"
 local GLOW_FALLBACK = "Interface\\Buttons\\UI-ActionButton-Border"
 local LOOT_ICON = "Interface\\Cursor\\Pickup" -- the loot hand cursor
+local LOCK_ICON = "Interface\\LFGFrame\\UI-LFG-ICON-LOCK"
+
+-- Alt held, and neither Shift nor Ctrl.
+local function AltOnly()
+	return IsAltKeyDown() and not IsShiftKeyDown() and not IsControlKeyDown()
+end
 
 local IB = {}
 ns.ItemButtons = IB
@@ -139,6 +145,14 @@ local function AddDecorations(b)
 	loot:Hide()
 	b.fbLoot = loot
 
+	-- Locked in place (Marks.lua): a small padlock in the bottom corner.
+	local lock = b:CreateTexture(nil, "OVERLAY", nil, 5)
+	lock:SetTexture(LOCK_ICON)
+	lock:SetSize(14, 14)
+	lock:SetPoint("BOTTOMLEFT", 1, 1)
+	lock:Hide()
+	b.fbLock = lock
+
 	-- Search: darkens items that don't match.
 	local dim = b:CreateTexture(nil, "OVERLAY", nil, 7)
 	dim:SetAllPoints()
@@ -238,6 +252,7 @@ local function ApplyVisual(b, v)
 
 	if b.JunkIcon then b.JunkIcon:SetShown(texture and v.isJunk or false) end
 	b.fbLoot:SetShown(texture and v.hasLoot or false)
+	b.fbLock:SetShown(texture and b.fbBag and ns.Marks.IsLocked(b.fbBag, b.fbSlot) or false)
 	b.fbDim:SetShown(texture and not MatchesSearch(v.link) or false)
 	SetGlow(b, texture and v.isNew, quality)
 
@@ -267,7 +282,7 @@ local function UpdateLive(b)
 		quality = info and info.quality,
 		locked = info and info.isLocked,
 		isNew = ns.NewItems.IsNew(bag, slot),
-		isJunk = info and info.quality == 0 and not info.hasNoValue,
+		isJunk = info and (info.quality == 0 or ns.Marks.IsForSale(info.itemID)) and not info.hasNoValue,
 		questKind = IB.QuestKind(bag, slot, info),
 		hasLoot = info and info.hasLoot,
 		link = info and info.hyperlink,
@@ -350,6 +365,18 @@ function IB.AcquireLive(window, bag, slot)
 		end
 	end)
 
+	-- Alt-click: left locks the item in place, right marks it as junk
+	-- (Marks.lua). The game does nothing else with an Alt-click on a bag item.
+	b:HookScript("OnClick", function(self, button)
+		if not AltOnly() or CursorHasItem() then return end
+		if button == "LeftButton" then
+			ns.Marks.ToggleLock(self.fbBag, self.fbSlot)
+		elseif button == "RightButton" then
+			local info = API.GetSlotInfo(self.fbBag, self.fbSlot)
+			if info then ns.Marks.ToggleSell(info.itemID, info.hyperlink) end
+		end
+	end)
+
 	window.fbLive[key] = b
 	return b
 end
@@ -363,7 +390,7 @@ local function UpdateCached(b)
 		texture = item and item.i,
 		count = item and item.c,
 		quality = item and item.q,
-		isJunk = item and item.q == 0,
+		isJunk = item and (item.q == 0 or ns.Marks.IsForSale(tonumber(item.l and item.l:match("item:(%d+)")))),
 		questKind = item and item.k,
 		hasLoot = item and item.o,
 		link = item and item.l,
@@ -381,7 +408,13 @@ local function CachedOnEnter(self)
 	GameTooltip:Show()
 end
 
-local function CachedOnClick(self)
+local function CachedOnClick(self, button)
+	-- Alt-right-click marks it as junk, as in your bags.
+	if self.fbItem and button == "RightButton" and AltOnly() then
+		local link = self.fbItem.l
+		ns.Marks.ToggleSell(tonumber(link and link:match("item:(%d+)")), link)
+		return
+	end
 	-- Shift-click to link in chat, ctrl-click to preview, like normal items.
 	if self.fbItem and HandleModifiedItemClick then
 		HandleModifiedItemClick(self.fbItem.l)
@@ -402,6 +435,7 @@ function IB.AcquireCached(window, bag, slot)
 	for _, script in ipairs({ "OnEvent", "OnShow", "OnHide", "OnUpdate", "OnDragStart", "OnReceiveDrag", "PreClick", "PostClick" }) do
 		if b:HasScript(script) then b:SetScript(script, nil) end
 	end
+	b.fbBag, b.fbSlot = bag, slot
 	b.fbUpdate = UpdateCached
 	b.UpdateTooltip = CachedOnEnter
 	AddDecorations(b)

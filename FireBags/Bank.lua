@@ -151,10 +151,11 @@ sortTab = window:AddTab({
 	title = "Sort Bank",
 	text = function()
 		if not ns.atBank then return "|cffff4040Visit a banker to sort your bank.|r" end
+		local line = "\nAlt-click an item to lock it in place."
 		if ns.bankModel == "tabs" then
-			return ns.db.bankTabsSeparate and "Each tab is sorted on its own." or "Sorted across all your tabs."
+			return (ns.db.bankTabsSeparate and "Each tab is sorted on its own." or "Sorted across all your tabs.") .. line
 		end
-		return "Special bags are sorted within themselves."
+		return "Special bags are sorted within themselves." .. line
 	end,
 	atlas = "bags-button-autosort-up",
 	icon = "Interface\\Icons\\INV_Misc_Bag_08",

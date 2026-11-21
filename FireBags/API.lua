@@ -105,32 +105,6 @@ function API.GetItemFamily(item)
 end
 
 ---------------------------------------------------------------------------
--- Sorting
----------------------------------------------------------------------------
-function API.HasBlizzardSort()
-	return (C and C.SortBags ~= nil) or SortBags ~= nil
-end
-
-function API.BlizzardSort()
-	if C and C.SortBags then C.SortBags() elseif SortBags then SortBags() end
-end
-
--- Tab-based banks sort with C_Container.SortBank(bankType); older ones with SortBankBags.
-function API.HasBlizzardBankSort()
-	return (C and (C.SortBank or C.SortBankBags) ~= nil) or SortBankBags ~= nil
-end
-
-function API.BlizzardBankSort()
-	if C and C.SortBank and Enum.BankType then
-		C.SortBank(Enum.BankType.Character)
-	elseif C and C.SortBankBags then
-		C.SortBankBags()
-	elseif SortBankBags then
-		SortBankBags()
-	end
-end
-
----------------------------------------------------------------------------
 -- Bank
 ---------------------------------------------------------------------------
 function API.CloseBank()

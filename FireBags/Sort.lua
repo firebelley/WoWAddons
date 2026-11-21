@@ -1,47 +1,54 @@
 -- Sorting.
 --
--- FireBags' own sorter works one move at a time, waiting for the server to
--- confirm each move before making the next. Each section (main bags, quiver,
+-- FireBags' own sorter sends every move that doesn't clash at once, then
+-- waits for the server before the next round (the order it sorts in is
+-- below, by SPECIAL). Each section (main bags, quiver,
 -- soul bag, herb bag, reagent bag, each bank tab...) is sorted within itself,
 -- with these rules for special bags:
 --   * Items already in a special bag never leave it.
 --   * Items in your main bags that the special bag accepts top up matching
 --     partial stacks in it, then fill its empty slots, rarest first.
 --   * When a special bag is full, it's only sorted within itself.
+-- Locked items (Marks.lua) stay put.
 --
--- By default (sortmode auto) Blizzard's built-in sort is used whenever the
--- client has one, because it's instant; it doesn't follow the special bag
--- rules above. FireBags' sorter runs when picked in the options ("Sort with"), or when the
--- client has no built-in sort.
+-- Blizzard's own sort is never used: it can't leave locked items alone, and
+-- one sorter means the same order every time.
 local _, ns = ...
 local API = ns.API
 
-local STEP_INTERVAL = 0.05 -- seconds between move attempts
-local MAX_MOVES = 1500     -- safety cap
+local STEP_INTERVAL = 0.02 -- seconds between checks for the last moves to land
+local MAX_MOVES = 1500     -- safety cap (passes)
 local MAX_WAIT = 5         -- give up if items stay locked this long
 
-local HEARTHSTONE = 6948
-
--- Lower = earlier. Keyed by item classID.
-local CLASS_ORDER = {
-	[0] = 1,   -- Consumable
-	[12] = 2,  -- Quest
-	[2] = 3,   -- Weapon
-	[4] = 4,   -- Armor
-	[1] = 5,   -- Container
-	[11] = 6,  -- Quiver
-	[6] = 7,   -- Projectile
-	[7] = 8,   -- Trade Goods
-	[5] = 9,   -- Reagent
-	[3] = 10,  -- Gem
-	[9] = 11,  -- Recipe
-	[13] = 12, -- Key
-	[15] = 13, -- Miscellaneous
+-- The order (FireBags' own sorter), after the one TrinityCore worked out for
+-- Blizzard's sort (github.com/TrinityCore/TrinityCore/pull/29947): items go
+-- in groups, in this order -
+local SPECIAL = { [6948] = true, [110560] = true, [140192] = true, [141605] = true } -- hearthstones, whistle
+local GROUP_SPECIAL, GROUP_CONSUMABLE, GROUP_WEAPON = 0, 1, 2
+local GROUP_ACCESSORY, GROUP_BODY, GROUP_OTHER = 13, 14, 15
+-- Armor by where it's worn (3-14); armor not listed goes with "other".
+local ARMOR_GROUP = {
+	INVTYPE_SHIELD = 3, INVTYPE_HOLDABLE = 3, -- off-hands with shields (your bank: Blizzard's does)
+	INVTYPE_HEAD = 4, INVTYPE_SHOULDER = 5, INVTYPE_CHEST = 6, INVTYPE_ROBE = 6,
+	INVTYPE_WRIST = 7, INVTYPE_HAND = 8, INVTYPE_WAIST = 9, INVTYPE_LEGS = 10,
+	INVTYPE_FEET = 11, INVTYPE_CLOAK = 12,
+	INVTYPE_NECK = GROUP_ACCESSORY, INVTYPE_FINGER = GROUP_ACCESSORY, INVTYPE_TRINKET = GROUP_ACCESSORY,
+	INVTYPE_BODY = GROUP_BODY, INVTYPE_TABARD = GROUP_BODY,
 }
+-- - and within a group:
+--   special:            item ID, lowest first
+--   consumables:        subtype, highest first; then item ID, lowest first
+--   weapons and armor:  item level, highest first
+--   jewelry, shirts and tabards: item ID, highest first
+--   other:              item class, lowest first (containers, gems, trade goods, recipes, quest items...);
+--                       then subtype, highest first; then item level, highest first
+--                       (TrinityCore's has item ID here; Blizzard's sort of your bank went by item level)
+-- Ties: item ID, then the bigger stack first. Junk (grey) goes at the end
+-- instead, filling from the last slot back.
 
 local function MakeRecord(info)
 	local link = info.hyperlink
-	local name, _, quality, ilvl, _, _, _, maxStack, _, _, _, classID, subClassID,
+	local name, _, quality, ilvl, _, _, _, maxStack, equipLoc, _, _, classID, subClassID,
 		_, _, _, isCraftingReagent = API.GetItemInfo(link)
 
 	-- What the reagent bag accepts: crafting reagents. Clients that don't report
@@ -66,8 +73,9 @@ local function MakeRecord(info)
 		name = name or link or "",
 		ilvl = ilvl or 0,
 		maxStack = maxStack,
-		classID = classID,
+		classID = classID or 99,
 		subClassID = subClassID or 0,
+		equipLoc = equipLoc,
 		isReagent = isReagent and not isContainer,
 		family = family or 0,
 	}
@@ -75,8 +83,18 @@ end
 
 local bit_band = bit and bit.band
 
+-- Items a special bag refused although the game said they fit (by bag
+-- family; saved, so each is only tried once): [family] = { [itemID] = true }.
+local function Refused(family)
+	local all = ns.db.refused or {}
+	ns.db.refused = all
+	all[family] = all[family] or {}
+	return all[family]
+end
+
 -- Does this special bag group accept this item?
 local function Accepts(group, record)
+	if Refused(group.family)[record.id] then return false end
 	if group.family == "reagent" then return record.isReagent end
 	if type(group.family) == "number" and group.family ~= 0 and bit_band then
 		return bit_band(record.family, group.family) ~= 0
@@ -84,20 +102,29 @@ local function Accepts(group, record)
 	return false
 end
 
-local function Rank(r)
-	if r.id == HEARTHSTONE then return 0 end
-	if r.quality == 0 then return 100 end -- junk goes last
-	return CLASS_ORDER[r.classID] or 50
+local function Group(r)
+	if SPECIAL[r.id] then return GROUP_SPECIAL end
+	if r.classID == 0 then return GROUP_CONSUMABLE end
+	if r.classID == 2 then return GROUP_WEAPON end
+	if r.classID == 4 then return ARMOR_GROUP[r.equipLoc] or GROUP_OTHER end
+	return GROUP_OTHER
 end
 
 -- Strict total order on records; ties only for interchangeable items.
 local function Compare(a, b)
-	local ra, rb = Rank(a), Rank(b)
-	if ra ~= rb then return ra < rb end
-	if a.subClassID ~= b.subClassID then return a.subClassID < b.subClassID end
-	if a.quality ~= b.quality then return a.quality > b.quality end
-	if a.ilvl ~= b.ilvl then return a.ilvl > b.ilvl end
-	if a.name ~= b.name then return a.name < b.name end
+	local ga, gb = Group(a), Group(b)
+	if ga ~= gb then return ga < gb end
+	if ga == GROUP_CONSUMABLE then
+		if a.subClassID ~= b.subClassID then return a.subClassID > b.subClassID end
+	elseif ga == GROUP_ACCESSORY or ga == GROUP_BODY then
+		if a.id ~= b.id then return a.id > b.id end
+	elseif ga == GROUP_OTHER then
+		if a.classID ~= b.classID then return a.classID < b.classID end
+		if a.subClassID ~= b.subClassID then return a.subClassID > b.subClassID end
+		if a.ilvl ~= b.ilvl then return a.ilvl > b.ilvl end
+	elseif ga ~= GROUP_SPECIAL then -- weapons, armor
+		if a.ilvl ~= b.ilvl then return a.ilvl > b.ilvl end
+	end
 	if a.id ~= b.id then return a.id < b.id end
 	if a.count ~= b.count then return a.count > b.count end
 	return a.link < b.link
@@ -118,6 +145,7 @@ end
 local function SlotKey(s) return s[1] .. ":" .. s[2] end
 
 -- Each group is { key = section key, slots = { {bag, slot}, ... } }.
+-- Locked slots (Marks.lua) are left out, so nothing moves into or out of them.
 local function BuildGroups(sections)
 	local groups = {}
 	for _, section in ipairs(sections) do
@@ -125,7 +153,9 @@ local function BuildGroups(sections)
 			local slots = {}
 			for _, entry in ipairs(section.bags) do
 				for slot = 1, entry.numSlots do
-					table.insert(slots, { entry.bag, slot })
+					if not ns.Marks.IsLocked(entry.bag, slot) then
+						table.insert(slots, { entry.bag, slot })
+					end
 				end
 			end
 			table.insert(groups, { key = section.key, family = section.family, slots = slots })
@@ -160,20 +190,23 @@ local function ReadGroups(groups)
 	return true
 end
 
--- Combine partial stacks of the same item within a group.
+-- Combine partial stacks of the same item within a group: every pair at
+-- once (each slot in one move only).
 local function StackWithin(group)
-	local partial = {}
+	local partial, moved = {}, false
 	for i, r in ipairs(group.items) do
 		if r and r.maxStack and r.maxStack > 1 and r.count < r.maxStack then
 			local first = partial[r.link]
 			if first then
 				Move(group.slots[i], group.slots[first])
-				return true
+				partial[r.link] = nil
+				moved = true
+			else
+				partial[r.link] = i
 			end
-			partial[r.link] = i
 		end
 	end
-	return false
+	return moved
 end
 
 -- Move items from the main bags into a special bag that accepts them. Only
@@ -207,34 +240,89 @@ local function FillSpecialBag(state, main, special)
 	end
 	if not best then return false end
 
-	state:Track(main.slots[bestIndex], best)
+	state:Track(main.slots[bestIndex], best, special, special.slots[empty])
 	Move(main.slots[bestIndex], special.slots[empty])
 	return true
 end
 
--- Put the first out-of-place slot of a group right.
-local function OrderWithin(group)
-	local desired = {}
-	for _, r in ipairs(group.items) do
-		if r then table.insert(desired, r) end
+-- Where each item of a group should end up: [slot index] = record, or false
+-- for empty. Sorted items from the first slot on, junk from the last slot back.
+local function Layout(items, n)
+	local keep, junk = {}, {}
+	for _, r in ipairs(items) do
+		if r then table.insert(r.quality == 0 and junk or keep, r) end
 	end
-	table.sort(desired, Compare)
+	table.sort(keep, Compare)
+	table.sort(junk, Compare)
+	local desired = {}
+	for i = 1, n do desired[i] = keep[i] or false end
+	for k, r in ipairs(junk) do desired[n + 1 - k] = r end
+	return desired
+end
 
+-- Put out-of-place slots of a group right: every swap that doesn't touch a
+-- slot already used this pass, all sent at once (the server takes them
+-- together). The planned swaps are played out on `items` as they're made, so
+-- each next one is planned on how the bags will be.
+local function OrderWithin(group)
 	local items, slots = group.items, group.slots
+	local desired = Layout(items, #slots)
+
+	-- A slot whose item can go to slot i: holding `want` (if exact, the same
+	-- stack size too) and not already holding what belongs in its own slot.
+	local used = {}
+	local function From(i, want, exact)
+		local busy
+		for j = 1, #slots do
+			local r = items[j]
+			if j ~= i and r and r.link == want.link and (not exact or r.count == want.count)
+				and not Same(r, desired[j]) then
+				if not used[j] then return j end
+				busy = true -- it's there, but already moving this pass
+			end
+		end
+		return nil, busy
+	end
+
+	local moved, stuck = false, false
 	for i = 1, #slots do
-		local want = desired[i] or false
-		if not Same(want, items[i]) then
-			if not want then return "error" end
-			for j = i + 1, #slots do
-				if Same(items[j], want) then
+		local want, have = desired[i], items[i]
+		if want and not used[i] and not Same(want, have) then
+			if have and have.link == want.link then
+				-- The same item, a smaller stack than belongs here: drop a bigger
+				-- one on it - the game tops this one up and leaves the rest
+				-- behind, which swaps the sizes. Alone in its pass (stacks merge
+				-- rather than swap, so the next is planned on what happened).
+				-- A bigger stack than belongs here is fixed from the other end.
+				if have.count < want.count then
+					local j = From(i, want, true)
+					if j then
+						if moved then return "moved" end
+						Move(slots[j], slots[i])
+						return "moved"
+					end
+				end
+			else
+				local j, busy = From(i, want, true)
+				if not j and not busy then j, busy = From(i, want, false) end
+				if j then
 					Move(slots[j], slots[i])
-					return "moved"
+					items[i], items[j] = items[j], items[i]
+					used[i], used[j] = true, true
+					moved = true
+				elseif not busy then
+					stuck = true
 				end
 			end
-			return "error"
+			-- (A slot that should be empty is cleared when its item's own slot
+			-- is put right.)
 		end
 	end
-	return nil
+	if moved then return "moved" end
+	for i = 1, #slots do
+		if not Same(desired[i], items[i]) then return "error" end
+	end
+	return stuck and "error" or nil
 end
 
 -- Returns "wait", "moved", "done" or "error".
@@ -247,9 +335,12 @@ local function Step(state)
 	-- item), don't try that item again this sort.
 	state:CheckLastMove()
 
+	-- Groups never share slots, so each one's moves go in the same pass.
+	local stacked = false
 	for _, group in ipairs(groups) do
-		if StackWithin(group) then return "moved" end
+		if StackWithin(group) then stacked = true end
 	end
+	if stacked then return "moved" end
 
 	local main
 	for _, group in ipairs(groups) do
@@ -257,17 +348,20 @@ local function Step(state)
 	end
 	if main then
 		for _, group in ipairs(groups) do
-			if group ~= main and group.family ~= 0 and FillSpecialBag(state, main, group) then
+			if group ~= main and group.family ~= 0 and not state.refusedBy[group.key]
+				and FillSpecialBag(state, main, group) then
 				return "moved"
 			end
 		end
 	end
 
+	local moved = false
 	for _, group in ipairs(groups) do
 		local result = OrderWithin(group)
-		if result then return result end
+		if result == "error" then return "error" end
+		if result == "moved" then moved = true end
 	end
-	return "done"
+	return moved and "moved" or "done"
 end
 
 ---------------------------------------------------------------------------
@@ -276,18 +370,35 @@ end
 local sorter = CreateFrame("Frame")
 sorter:Hide()
 
--- Remember a cross-bag move so we can tell if it was refused.
-function sorter:Track(from, record)
-	self.lastMove = { bag = from[1], slot = from[2], link = record.link, count = record.count }
+-- Remember a cross-bag move so we can tell if it was refused. into, to: the
+-- special bag group and its empty slot, when one is being filled.
+function sorter:Track(from, record, into, to)
+	self.lastMove = { bag = from[1], slot = from[2], link = record.link, count = record.count, id = record.id,
+		into = into, to = to }
 end
 
 function sorter:CheckLastMove()
 	local last = self.lastMove
 	if not last then return end
 	self.lastMove = nil
-	local info = API.GetSlotInfo(last.bag, last.slot)
-	if info and info.hyperlink == last.link and info.stackCount == last.count then
+	local refused
+	if last.to then
+		-- Filling an empty slot: refused unless the item is there now.
+		local there = API.GetSlotInfo(last.to[1], last.to[2])
+		refused = not (there and there.hyperlink == last.link)
+	else
+		local info = API.GetSlotInfo(last.bag, last.slot)
+		refused = info and info.hyperlink == last.link and info.stackCount == last.count
+	end
+	if refused then
 		self.failed[last.link] = true
+		-- The game's word on what fits that bag was wrong: never try this item
+		-- there again, and stop filling the bag this sort (one error, not one
+		-- per item).
+		if last.into then
+			Refused(last.into.family)[last.id] = true
+			self.refusedBy[last.into.key] = true
+		end
 	end
 end
 
@@ -352,20 +463,10 @@ function ns.SortBags(kind)
 	local isBank = kind == "bank"
 	local sections = isBank and ns.GetLiveBankSections() or ns.GetInventorySections()
 
-	local hasBlizzard = isBank and API.HasBlizzardBankSort() or (not isBank and API.HasBlizzardSort())
-	local mode = ns.db.sortMode
-	local useBlizzard = hasBlizzard and mode ~= "custom"
-	if useBlizzard then
-		if isBank then API.BlizzardBankSort() else API.BlizzardSort() end
-		return
-	end
-	if mode == "blizzard" then
-		ns.Print("This client has no built-in sort for that; using FireBags' sorter.")
-	end
-
 	sorter.kind = kind
 	sorter.groups = BuildGroups(sections)
 	sorter.failed = {}
+	sorter.refusedBy = {}
 	sorter.lastMove = nil
 	sorter.timer = STEP_INTERVAL
 	sorter.waited = 0

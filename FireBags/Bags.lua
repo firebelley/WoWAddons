@@ -138,12 +138,25 @@ end
 ---------------------------------------------------------------------------
 -- Entries: { bag, numSlots, numFree, family }
 ---------------------------------------------------------------------------
+-- Is the bag in the reagent bag slot really a reagent bag? Forever lets any
+-- bag go there (a soul bag, a plain bag), so ask the bag itself: reagent bags
+-- are containers of subclass 11. If it can't be told, a bag with no special
+-- family is taken for one.
+local function IsReagentBag(bag, family)
+	local toInv = C_Container and C_Container.ContainerIDToInventoryID or ContainerIDToInventoryID
+	local ok, inv = pcall(toInv, bag)
+	local itemID = ok and inv and GetInventoryItemID("player", inv)
+	local subClassID = itemID and select(7, API.GetItemInfoInstant(itemID))
+	if subClassID then return subClassID == 11 end
+	return family == 0
+end
+
 local function LiveEntry(bag)
 	local numSlots = API.GetNumSlots(bag)
 	if numSlots <= 0 then return nil end
 	local free, family = API.GetFreeSlots(bag)
 	family = family or 0
-	if REAGENT_BAG and bag == REAGENT_BAG then family = "reagent" end
+	if REAGENT_BAG and bag == REAGENT_BAG and IsReagentBag(bag, family) then family = "reagent" end
 	return { bag = bag, numSlots = numSlots, numFree = free or 0, family = family }
 end
 

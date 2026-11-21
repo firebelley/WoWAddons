@@ -126,7 +126,7 @@ end)
 ---------------------------------------------------------------------------
 window:AddTab({
 	title = "Sort Bags",
-	text = "Special bags are sorted within themselves.",
+	text = "Special bags are sorted within themselves.\nAlt-click an item to lock it in place.\nAlt-right-click an item to mark it as junk.",
 	atlas = "bags-button-autosort-up",
 	icon = "Interface\\Icons\\INV_Misc_Bag_08",
 	onClick = function() ns.SortBags("inventory") end,
@@ -165,8 +165,9 @@ local junkTab = window:AddTab({
 	title = "Sell Junk",
 	text = function()
 		local count, value = ns.Junk.Summary()
-		if count == 0 then return "No junk in your bags." end
-		return ("Sell %d grey item%s for %s."):format(count, count == 1 and "" or "s", ns.API.FormatMoney(value))
+		local line = "\nAlt-right-click an item to mark it as junk."
+		if count == 0 then return "No junk in your bags." .. line end
+		return ("Sell %d junk item%s for %s."):format(count, count == 1 and "" or "s", ns.API.FormatMoney(value)) .. line
 	end,
 	atlas = "SpellIcon-256x256-SellJunk",
 	icon = "Interface\\Icons\\INV_Misc_Coin_02",

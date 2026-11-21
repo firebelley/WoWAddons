@@ -9,12 +9,14 @@
 Init.lua
 API.lua
 Bags.lua
+Marks.lua
 Window.lua
 ItemButtons.lua
 NewItems.lua
 Sort.lua
 Inventory.lua
 Bank.lua
+Deposit.lua
 Junk.lua
 Counts.lua
 Crafting.lua

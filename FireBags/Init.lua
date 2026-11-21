@@ -9,8 +9,8 @@ local DEFAULTS = {
 	scale = 1,
 	locked = false,
 	showKeyring = true,
-	sortMode = "auto", -- "auto" (Blizzard's sort if available), "blizzard", "custom"
 	newItemGlow = true,
+	autoSellJunk = true, -- sell junk (and items marked as junk) when a vendor opens
 	tooltipCounts = true, -- "Bags: 12  Bank: 40" on item tooltips
 	craftCounts = true,   -- profession windows count your bank too
 	craftVendor = true,   -- ...and show how many more you could make by buying vendor reagents
@@ -82,6 +82,14 @@ ns.On("ADDON_LOADED", function(name)
 		db.background = "default"
 		db.settingsVersion = 2
 	end
+	-- v3: a soul bag in the reagent bag slot was taken for a reagent bag, and
+	-- the reagents it refused were remembered as never fitting one.
+	if db.settingsVersion < 3 then
+		db.refused = nil
+		db.settingsVersion = 3
+	end
+	-- Sorting is always FireBags' own now (no "Sort with" choice).
+	db.sortMode, db.blizzardBankOnce = nil, nil
 	ns.db = db
 	ns.MergeBlankRealm(db)
 end)

@@ -32,7 +32,7 @@ local SECTION_TINT = {
 local TEMPLATES = { "PortraitFrameFlatTemplate", "PortraitFrameTemplate", "ButtonFrameTemplate" }
 
 -- Content insets and where the status line / tabs go, per style.
-local METRICS_BLIZZARD = { left = 12, right = 12, top = 64, bottom = 12, statusX = 62, statusY = -30, tabX = 0, tabTop = -40, titleInfoX = 62, titleInfoY = -11 }
+local METRICS_BLIZZARD = { left = 12, right = 12, top = 64, bottom = 12, statusX = 62, statusY = -30, tabX = 0, tabTop = -40, titleInfoX = 62, titleInfoY = -12.5 }
 local METRICS_FALLBACK = { left = 10, right = 10, top = 50, bottom = 10, statusX = 12, statusY = -30, tabX = -2, tabTop = -34, titleInfoX = 12, titleInfoY = -16 }
 
 local function Mix(target, source)

@@ -1,5 +1,8 @@
 -- Selling junk: the bag window shows a "Sell Junk" tab while a vendor is open.
--- Clicking it sells every grey item in your bags.
+-- Clicking it sells every grey item in your bags, and every item marked for
+-- sale (Marks.lua); locked items are never sold.
+-- With "Sell junk at vendors automatically" (on by default) that happens by
+-- itself as a vendor opens.
 local _, ns = ...
 local API = ns.API
 
@@ -12,13 +15,14 @@ Junk.atMerchant = false
 local queue, sold, earned
 local ticker
 
--- Grey items in your bags that a vendor will buy.
+-- Grey and marked items in your bags that a vendor will buy.
 local function JunkSlots()
 	local list = {}
 	for _, bag in ipairs(ns.GetInventoryBagIDs()) do
 		for slot = 1, API.GetNumSlots(bag) do
 			local info = API.GetSlotInfo(bag, slot)
-			if info and info.quality == 0 and not info.hasNoValue and not info.isLocked then
+			local junk = info and (info.quality == 0 or ns.Marks.IsForSale(info.itemID))
+			if junk and not info.hasNoValue and not info.isLocked and not ns.Marks.IsLocked(bag, slot) then
 				local price = select(11, API.GetItemInfo(info.hyperlink or info.itemID)) or 0
 				if price > 0 then
 					table.insert(list, {
@@ -89,6 +93,12 @@ end
 ns.On("MERCHANT_SHOW", function()
 	Junk.atMerchant = true
 	if ns.UpdateJunkTab then ns.UpdateJunkTab() end
+	-- (A moment later, once the vendor's window is up.)
+	if ns.db.autoSellJunk then
+		C_Timer.After(0.3, function()
+			if Junk.atMerchant and Junk.Summary() > 0 then Junk.Sell() end
+		end)
+	end
 end)
 
 ns.On("MERCHANT_CLOSED", function()
