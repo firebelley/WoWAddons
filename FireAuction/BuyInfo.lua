@@ -6,8 +6,8 @@
 --   (portrait)        the item, and how many you've bought (toward Want).
 --   So far            spent, sold, up, and how many are left (mail too).
 --   Resale price      automatic (the cheapest listing) or your own, set with
---                     its two buttons; under it, the profit if all sell at it,
---                     the break-even price, how many to sell to break even and
+--                     its two buttons; under it, the profit on what's unsold
+--                     and in total if all sell at it, the break-even price, how many to sell to break even and
 --                     how many are then yours for free.
 --   Next buy          the profit per item at your "Up to" price, and how many
 --                     more to buy per 1g of it.
@@ -121,6 +121,19 @@ local function PerGoldRow(Add, bought, spent, net)
 		Tip("Buy per 1g profit", ("At your average cost (%s)."):format(ns.Money(math.floor(avg + 0.5)))))
 end
 
+-- The profit on what's not sold yet: what's up at its own price and the
+-- `left` at net each, less what they cost you on average.
+local function UnsoldRow(Add, left, listUp, upIncome, net, bought, spent)
+	local unsold = left + listUp
+	if unsold <= 0 or bought <= 0 then return end
+	local cost = spent / bought * unsold
+	local profit = math.floor(net * left + upIncome - cost)
+	Add(("Unsold %d"):format(unsold), nil, Signed(profit), nil, Tip("Unsold",
+		("What's up at its own price, the rest at this one, %s; less their cost (%s each)."):format(CutPhrase(),
+			ns.Money(math.floor(spent / bought + 0.5)))),
+		cost > 0 and ns.Percent(profit / cost * 100) or nil)
+end
+
 -- The sell page's lines (see Lines): what you've put in and got back, what
 -- the listing on the sell page would do, and where selling everything leaves
 -- you. Priced at the sell page's Unit Price, else your own, else the cheapest
@@ -218,7 +231,9 @@ local function SellLines(id)
 			local total = math.floor(sell * cut * left) - short
 			Add(("If all %d sell at %s"):format(left + listUp, money), nil, nil, "header", Tip("Price",
 				typed and "Your Unit Price on the sell page." or target and "Your own price." or AutoSource(approx, true)))
-			Add("Profit", nil, Signed(total), nil, Tip("Profit", AfterCut()), ns.Percent(total / spent * 100))
+			UnsoldRow(Add, left, listUp, upIncome, sell * cut, bought, spent)
+			Add("Total profit", nil, Signed(total), nil, Tip("Total profit",
+				"With what's sold and deposits lost; " .. CutPhrase() .. "."), ns.Percent(total / spent * 100))
 		end
 	end
 	return lines, summaryText, progress, { left = left, short = cover - upIncome, price = typed }
@@ -309,8 +324,10 @@ local function Lines(id, selling)
 	if bought > 0 and sell and left + listUp > 0 then
 		local short = cover - upIncome
 		local total = math.floor(net * left) - short
-		Add(("Profit (all %d)"):format(left + listUp), nil, Signed(total), nil, Tip("Profit",
-			"If all you bought sells: what's left at this price, what's up at its own; " .. CutPhrase() .. "."),
+		UnsoldRow(Add, left, listUp, upIncome, net, bought, spent)
+		Add(("Total profit (all %d)"):format(bought), nil, Signed(total), nil, Tip("Total profit",
+			"If all you bought sells: what's left at this price, what's up at its own; with what's sold and deposits lost; "
+				.. CutPhrase() .. "."),
 			ns.Percent(total / spent * 100))
 		if left > 0 then
 			Add("Break-even", nil, short > 0 and (ns.Money(QB.RelistPrice(short, left)) .. " each") or (GREY .. "any price|r"),
