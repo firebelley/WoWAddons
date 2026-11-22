@@ -1086,41 +1086,62 @@ end)
 
 -- A purchase went through: the button flashes gold, and "Purchase
 -- successful!" shows after the status line for a moment. With "Check for"
--- on the button stays red and clickable (see Finish), where a flash only
--- looks like it lit up: a green "+29" rises from it instead (Gained).
-local flash, gained
+-- on the button stays red and clickable (see Finish), where a gold flash only
+-- looks like it lit up: a green outline flashes around it instead, the same
+-- way (on at once, fading over 0.6s).
+local flash, ring
 
--- "+N" over the button, rising and fading.
-local function Gained(quantity)
-	if not gained then
-		local text = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-		text:SetTextColor(0.3, 1, 0.3)
-		text:SetPoint("BOTTOM", button, "TOP", 0, -6)
-		text:Hide()
-		local g = text:CreateAnimationGroup()
-		local rise = g:CreateAnimation("Translation")
-		rise:SetOffset(0, 26)
-		rise:SetDuration(0.9)
-		rise:SetSmoothing("OUT")
-		local fade = g:CreateAnimation("Alpha")
-		fade:SetStartDelay(0.4)
-		fade:SetDuration(0.5)
-		fade:SetFromAlpha(1)
-		fade:SetToAlpha(0)
-		g:SetScript("OnFinished", function() text:Hide() end)
-		text.anim = g
-		gained = text
-	end
-	gained.anim:Stop()
-	gained:SetText("+" .. quantity)
-	gained:Show()
-	gained.anim:Play()
+-- The same flash on any region: on in 0.08s, fading over 0.6s.
+local function FlashAnim(region)
+	region:SetAlpha(0)
+	local g = region:CreateAnimationGroup()
+	local on = g:CreateAnimation("Alpha")
+	on:SetOrder(1)
+	on:SetDuration(0.08)
+	on:SetFromAlpha(0)
+	on:SetToAlpha(1)
+	local off = g:CreateAnimation("Alpha")
+	off:SetOrder(2)
+	off:SetDuration(0.6)
+	off:SetFromAlpha(1)
+	off:SetToAlpha(0)
+	return g
 end
 
-local function Flash(quantity)
+-- A green outline just outside the button: a crisp line, a faint one past it.
+local function Ring()
+	local f = CreateFrame("Frame", nil, button:GetParent())
+	f:SetPoint("TOPLEFT", button, "TOPLEFT", -1, 1)
+	f:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 1, -1)
+	f:SetFrameLevel(button:GetFrameLevel() + 2)
+	local function Edge(inset, width, alpha)
+		local sides = {
+			{ "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+			{ "TOPLEFT", "BOTTOMLEFT", false }, { "TOPRIGHT", "BOTTOMRIGHT", false },
+		}
+		for _, s in ipairs(sides) do
+			local t = f:CreateTexture(nil, "OVERLAY")
+			t:SetColorTexture(0.3, 1, 0.3, alpha)
+			local ox = (s[1]:find("LEFT") and -inset or inset)
+			local oy = (s[1]:find("TOP") and inset or -inset)
+			local ox2 = (s[2]:find("LEFT") and -inset or inset)
+			local oy2 = (s[2]:find("TOP") and inset or -inset)
+			t:SetPoint(s[1], f, s[1], ox, oy)
+			t:SetPoint(s[2], f, s[2], ox2, oy2)
+			if s[3] then t:SetHeight(width) else t:SetWidth(width) end
+		end
+	end
+	Edge(0, 2, 1)
+	Edge(2, 2, 0.35)
+	return FlashAnim(f)
+end
+
+local function Flash()
 	if not (panel and panel:IsVisible() and button.CreateAnimationGroup) then return end
-	if checkNext == itemID and quantity then
-		Gained(quantity)
+	if checkNext == itemID then
+		ring = ring or Ring()
+		ring:Stop()
+		ring:Play()
 	else
 		if not flash then
 			local t = button:CreateTexture(nil, "OVERLAY")
@@ -1129,19 +1150,7 @@ local function Flash(quantity)
 			t:SetBlendMode("ADD")
 			t:SetVertexColor(1, 0.8, 0.2)
 			t:SetAllPoints()
-			t:SetAlpha(0)
-			local g = t:CreateAnimationGroup()
-			local on = g:CreateAnimation("Alpha")
-			on:SetOrder(1)
-			on:SetDuration(0.08)
-			on:SetFromAlpha(0)
-			on:SetToAlpha(1)
-			local off = g:CreateAnimation("Alpha")
-			off:SetOrder(2)
-			off:SetDuration(0.6)
-			off:SetFromAlpha(1)
-			off:SetToAlpha(0)
-			flash = g
+			flash = FlashAnim(t)
 		end
 		flash:Stop()
 		flash:Play()
@@ -1199,7 +1208,7 @@ ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
 		left and (left > 0 and (" (%d more to go)"):format(left) or " - that's all you wanted") or ""))
 	if left == 0 then Summary(id) end
 	Finish(nil)
-	ns.SafeCall(Flash, quantity) -- after Finish: the status line says what was bought by now
+	ns.SafeCall(Flash) -- after Finish: the status line says what was bought by now
 end)
 
 ns.On("COMMODITY_PURCHASE_FAILED", function()
