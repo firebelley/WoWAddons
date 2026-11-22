@@ -16,7 +16,7 @@ local BORDER_TEXTURE = "Interface\\Common\\WhiteIconFrame"
 local GLOW_ATLAS = "bags-glow-white"
 local GLOW_FALLBACK = "Interface\\Buttons\\UI-ActionButton-Border"
 local LOOT_ICON = "Interface\\Cursor\\Pickup" -- the loot hand cursor
-local LOCK_ICON = "Interface\\LFGFrame\\UI-LFG-ICON-LOCK"
+local LOCK_ICON = "Interface\\AddOns\\FireBags\\Lock" -- Lock.tga
 
 -- Alt held, and neither Shift nor Ctrl.
 local function AltOnly()
@@ -147,9 +147,12 @@ local function AddDecorations(b)
 
 	-- Locked in place (Marks.lua): a small padlock in the bottom corner.
 	local lock = b:CreateTexture(nil, "OVERLAY", nil, 5)
+	-- FireBags' own padlock: white with a black outline (shows on any item
+	-- art), tinted bright blue.
 	lock:SetTexture(LOCK_ICON)
-	lock:SetSize(14, 14)
-	lock:SetPoint("BOTTOMLEFT", 1, 1)
+	lock:SetVertexColor(0.35, 0.8, 1)
+	lock:SetSize(17, 17)
+	lock:SetPoint("BOTTOMLEFT", 0, 0)
 	lock:Hide()
 	b.fbLock = lock
 
@@ -291,6 +294,19 @@ local function UpdateLive(b)
 	b.hasItem = texture and 1 or nil
 	b.readable = info and info.isReadable
 
+	-- A locked item isn't sold by right-clicking it at a vendor: there the
+	-- button stops taking right-clicks (Blizzard's click handler would sell
+	-- it, and replacing that handler would stop items being used).
+	local noSell = texture and ns.Junk.atMerchant and ns.Marks.IsLocked(bag, slot) or false
+	if b.fbNoSell ~= noSell then
+		b.fbNoSell = noSell
+		if noSell then
+			b:RegisterForClicks("LeftButtonUp")
+		else
+			b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		end
+	end
+
 	local cooldown = b.Cooldown or _G[b:GetName() .. "Cooldown"]
 	if cooldown then
 		if texture then
@@ -374,6 +390,13 @@ function IB.AcquireLive(window, bag, slot)
 		elseif button == "RightButton" then
 			local info = API.GetSlotInfo(self.fbBag, self.fbSlot)
 			if info then ns.Marks.ToggleSell(info.itemID, info.hyperlink) end
+		end
+	end)
+
+	-- (Says why a right-click on a locked item did nothing at a vendor.)
+	b:HookScript("OnMouseUp", function(self, button)
+		if button == "RightButton" and self.fbNoSell and not CursorHasItem() then
+			UIErrorsFrame:AddMessage("Locked items aren't sold.", 1, 0.1, 0.1)
 		end
 	end)
 

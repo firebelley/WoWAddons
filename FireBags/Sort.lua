@@ -16,7 +16,8 @@
 local _, ns = ...
 local API = ns.API
 
-local STEP_INTERVAL = 0.02 -- seconds between checks for the last moves to land
+local STEP_INTERVAL = 0.02 -- at least this long between looks at the bags
+local IDLE_STEP = 0.25     -- ...and a look this often even with no bag events
 local MAX_MOVES = 1500     -- safety cap (passes)
 local MAX_WAIT = 5         -- give up if items stay locked this long
 local STALLS = 3           -- give up after this many rounds of moves that changed nothing
@@ -79,7 +80,26 @@ local function MakeRecord(info)
 		equipLoc = equipLoc,
 		isReagent = isReagent and not isContainer,
 		family = family or 0,
+		loaded = name ~= nil,
 	}
+end
+
+-- Records are never changed once made, so one per item and stack size does
+-- for the whole sort (the bags are read again after every round of moves):
+-- [link] = { [count] = record }. Items the game hasn't loaded yet aren't kept.
+local records = {}
+
+local function Record(info)
+	local link, count = info.hyperlink, info.stackCount or 1
+	local byCount = records[link]
+	local r = byCount and byCount[count]
+	if r then return r end
+	r = MakeRecord(info)
+	if r.loaded then
+		if not byCount then byCount = {} records[link] = byCount end
+		byCount[count] = r
+	end
+	return r
 end
 
 local bit_band = bit and bit.band
@@ -103,12 +123,21 @@ local function Accepts(group, record)
 	return false
 end
 
-local function Group(r)
+local function FindGroup(r)
 	if SPECIAL[r.id] then return GROUP_SPECIAL end
 	if r.classID == 0 then return GROUP_CONSUMABLE end
 	if r.classID == 2 then return GROUP_WEAPON end
 	if r.classID == 4 then return ARMOR_GROUP[r.equipLoc] or GROUP_OTHER end
 	return GROUP_OTHER
+end
+
+local function Group(r)
+	local g = r.group
+	if not g then
+		g = FindGroup(r)
+		r.group = g
+	end
+	return g
 end
 
 -- Strict total order on records; ties only for interchangeable items.
@@ -173,22 +202,34 @@ local function Move(from, to)
 end
 
 -- Reads every slot of every group. Returns nil if anything is still locked or
--- not loaded yet (so the caller waits).
+-- not loaded yet (so the caller waits); else whether anything changed since
+-- the last full read.
 local function ReadGroups(groups)
 	for _, group in ipairs(groups) do
-		local items = {}
+		local items = group.items or {}
+		group.items = items
 		for i, s in ipairs(group.slots) do
 			local info = API.GetSlotInfo(s[1], s[2])
 			if info then
 				if info.isLocked or not info.hyperlink then return nil end
-				items[i] = MakeRecord(info)
+				items[i] = Record(info)
 			else
 				items[i] = false
 			end
 		end
-		group.items = items
 	end
-	return true
+	local changed = false
+	for _, group in ipairs(groups) do
+		local seen = group.seen or {}
+		group.seen = seen
+		for i, r in ipairs(group.items) do
+			if seen[i] ~= r then
+				seen[i] = r
+				changed = true
+			end
+		end
+	end
+	return true, changed
 end
 
 -- Combine partial stacks of the same item within a group: every pair at
@@ -330,7 +371,8 @@ end
 local function Step(state)
 	if CursorHasItem() then return "wait" end
 	local groups = state.groups
-	if not ReadGroups(groups) then return "wait" end
+	local ready, changed = ReadGroups(groups)
+	if not ready then return "wait" end
 
 	-- If the last move into a special bag didn't happen (the bag refused the
 	-- item), don't try that item again this sort.
@@ -338,12 +380,7 @@ local function Step(state)
 
 	-- Moves that change nothing (a bag refusing items it was thought to take)
 	-- would be planned again and again: a few rounds of that and it stops.
-	local sig = {}
-	for _, group in ipairs(groups) do
-		for _, r in ipairs(group.items) do sig[#sig + 1] = r and (r.link .. r.count) or "" end
-	end
-	sig = table.concat(sig, "|")
-	if sig == state.lastSig then
+	if not changed then
 		-- (Not too soon either: the bags may just not have caught up yet.)
 		state.stalls = state.stalls + 1
 		state.stallSince = state.stallSince or GetTime()
@@ -351,7 +388,6 @@ local function Step(state)
 	else
 		state.stalls, state.stallSince = 0, nil
 	end
-	state.lastSig = sig
 
 	-- Groups never share slots, so each one's moves go in the same pass.
 	local stacked = false
@@ -420,17 +456,26 @@ function sorter:CheckLastMove()
 	end
 end
 
+local SORT_EVENTS = { "BAG_UPDATE", "BAG_UPDATE_DELAYED", "ITEM_LOCK_CHANGED" }
+
 local function StopSorting(message)
 	sorter:Hide()
+	for _, event in ipairs(SORT_EVENTS) do sorter:UnregisterEvent(event) end
 	sorter.groups = nil
+	wipe(records)
 	if message then ns.Print(message) end
 	for _, w in ipairs(ns.windows) do w:RequestRefresh() end
 end
 
+-- The bags only need looking at again once something in them has changed
+-- (items locking as moves go out, unlocking as they land).
+sorter:SetScript("OnEvent", function(self) self.dirty = true end)
+
 sorter:SetScript("OnUpdate", function(self, elapsed)
 	self.timer = self.timer + elapsed
-	if self.timer < STEP_INTERVAL then return end
+	if self.timer < STEP_INTERVAL or (not self.dirty and self.timer < IDLE_STEP) then return end
 	self.timer = 0
+	self.dirty = false
 
 	if InCombatLockdown() then
 		StopSorting("Sorting stopped: entered combat.")
@@ -448,10 +493,10 @@ sorter:SetScript("OnUpdate", function(self, elapsed)
 	end
 
 	if result == "wait" then
-		self.waited = self.waited + STEP_INTERVAL
-		if self.waited > MAX_WAIT then StopSorting("Sorting stopped: items stayed locked.") end
+		self.waitSince = self.waitSince or GetTime()
+		if GetTime() - self.waitSince > MAX_WAIT then StopSorting("Sorting stopped: items stayed locked.") end
 	elseif result == "moved" then
-		self.waited = 0
+		self.waitSince = nil
 		self.moves = self.moves + 1
 		if self.moves >= MAX_MOVES then StopSorting("Sorting stopped: too many moves.") end
 	elseif result == "done" then
@@ -487,10 +532,13 @@ function ns.SortBags(kind)
 	sorter.groups = BuildGroups(sections)
 	sorter.failed = {}
 	sorter.refusedBy = {}
-	sorter.lastSig, sorter.stalls, sorter.stallSince = nil, 0, nil
+	sorter.stalls, sorter.stallSince = 0, nil
 	sorter.lastMove = nil
 	sorter.timer = STEP_INTERVAL
-	sorter.waited = 0
+	sorter.dirty = true
+	sorter.waitSince = nil
 	sorter.moves = 0
+	wipe(records)
+	for _, event in ipairs(SORT_EVENTS) do sorter:RegisterEvent(event) end
 	sorter:Show()
 end

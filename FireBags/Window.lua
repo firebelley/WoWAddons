@@ -392,16 +392,22 @@ function Window:UpdateSlot(bag, slot)
 	if b and self.shownButtons[b] then b:fbUpdate() end
 end
 
--- Coalesce bursts of events into one layout pass.
+-- Coalesce bursts of events into one layout pass. While a sort runs, the bags
+-- change many times a second but their layout doesn't: then only the slots
+-- are redrawn, less often, and the whole window once the sort is over.
 function Window:RequestRefresh()
 	self.dirty = true
 	if not self:IsShown() or self.refreshPending then return end
 	self.refreshPending = true
-	C_Timer.After(0.05, function()
+	C_Timer.After(ns.IsSorting() and 0.3 or 0.05, function()
 		self.refreshPending = false
 		if self:IsShown() and self.dirty then
-			self.dirty = false
-			ns.SafeCall(self.opts.refresh, self)
+			if ns.IsSorting() then
+				ns.SafeCall(self.UpdateButtons, self) -- (still dirty: laid out after)
+			else
+				self.dirty = false
+				ns.SafeCall(self.opts.refresh, self)
+			end
 		end
 	end)
 end

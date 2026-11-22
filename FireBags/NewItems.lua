@@ -105,6 +105,7 @@ ns.On("PLAYER_LOGIN", function()
 	C_Timer.After(3, TakeBaseline)
 end)
 
+-- (Not mid-sort: nothing's gained, and the window catches up once it's done.)
 ns.On("BAG_UPDATE_DELAYED", function()
-	NI.Update()
+	if not ns.IsSorting() then NI.Update() end
 end)

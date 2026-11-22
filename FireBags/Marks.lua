@@ -49,11 +49,12 @@ end
 ---------------------------------------------------------------------------
 local loc = ItemLocation and ItemLocation.CreateEmpty and ItemLocation:CreateEmpty()
 
--- The GUID of the item in a slot, or nil.
+-- The GUID of the item in a slot; false if the slot is empty, nil if it
+-- can't be told (hidden in combat, say).
 local function GUIDAt(bag, slot)
 	if not (loc and C_Item and C_Item.GetItemGUID) then return nil end
 	loc:SetBagAndSlot(bag, slot)
-	if C_Item.DoesItemExist and not C_Item.DoesItemExist(loc) then return nil end
+	if C_Item.DoesItemExist and not C_Item.DoesItemExist(loc) then return false end
 	local ok, guid = pcall(C_Item.GetItemGUID, loc)
 	if ok and type(guid) == "string" and not (issecretvalue and issecretvalue(guid)) then return guid end
 end
@@ -114,7 +115,12 @@ local function Readable(bag)
 	return ns.atBank and ns.IsBankLoaded() and ns.IsBankBag(bag)
 end
 
+-- (Not until the bags have surely loaded after logging in: a lock is only
+-- dropped when its item is gone, and bags still loading look empty.)
+local ready = false
+
 local function Follow()
+	if not ready then return end
 	local any = false
 	for guid, pos in pairs(locks) do
 		local bag, slot = Find(guid)
@@ -123,14 +129,23 @@ local function Follow()
 				pos[1], pos[2] = bag, slot
 				any = true
 			end
-		elseif Readable(pos[1]) and API.GetNumSlots(pos[1]) >= pos[2] and GUIDAt(pos[1], pos[2]) ~= guid then
-			-- Not in any bag, and not where it was: it's gone.
-			locks[guid] = nil
-			any = true
+		elseif Readable(pos[1]) and API.GetNumSlots(pos[1]) >= pos[2] then
+			-- Not in any bag, and something else (or nothing) where it was: it's gone.
+			local there = GUIDAt(pos[1], pos[2])
+			if there ~= nil and there ~= guid then
+				locks[guid] = nil
+				any = true
+			end
 		end
 	end
 	if any then Changed() end
 end
 
+ns.On("PLAYER_LOGIN", function()
+	C_Timer.After(5, function()
+		ready = true
+		Follow()
+	end)
+end)
 ns.On("BAG_UPDATE_DELAYED", Follow)
 ns.On("BANKFRAME_OPENED", function() C_Timer.After(0.5, Follow) end)
