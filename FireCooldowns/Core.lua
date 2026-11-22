@@ -1,10 +1,11 @@
 -- FireCooldowns: when Transmute and other cooldowns are ready, on every
--- character. What's tracked:
+-- character. Only what you turn on (db.on) is shown and announced. Found for
+-- you to turn on (Options.lua), their timers kept meanwhile:
 --   - crafts with a cooldown: the transmutes and Mooncloth on any character
 --     that knows them, and any other recipe once it's on cooldown (used, or
 --     seen in the profession window);
---   - anything you add (Options.lua, /fcd track): a spell, or an item's use;
--- and each can be turned off (db.off).
+--   - anything else you've used this session with a cooldown.
+-- Or add one yourself (/fcd track, or the options' box): a spell, or an item's use.
 --
 -- Times are saved as server time (when the cooldown ends), so an alt's
 -- cooldown keeps counting down while you play someone else.
@@ -121,16 +122,23 @@ end
 -- Saved cooldowns: db.chars[GUID] = { name, class, cds = { [spellID] = entry } }
 -- entry = { name, icon, readyAt (server time; 0 = ready), told (ready was
 -- announced), test (the pretend one from /fcd test) }
--- db.custom[spellID] = true: added by you. db.off[name] = true: turned off.
--- Turning off goes by the name before any ":", so "Transmute" covers them all.
+-- db.custom[spellID] = true: added by you. db.on[name] = true: turned on.
+-- Turning on goes by the name before any ":", so "Transmute" covers them all.
 ---------------------------------------------------------------------------
 local function Prefix(name)
 	return name:match("^(.-):") or name
 end
 ns.Prefix = Prefix
 
-function ns.IsOff(e)
-	return db.off[Prefix(e.name)] == true
+function ns.IsOn(e)
+	return e.test or db.on[Prefix(e.name)] == true
+end
+
+-- The first time something is found, say where to turn it on.
+local function Hint(key)
+	if db.on[key] or db.hinted[key] then return end
+	db.hinted[key] = true
+	Print(("found %s. Turn it on in /fcd to track it."):format(key))
 end
 
 local function Track(id)
@@ -140,6 +148,7 @@ local function Track(id)
 	if not name then return nil end
 	e = { name = name, icon = icon, readyAt = 0, told = true }
 	me.cds[id] = e
+	Hint(Prefix(name))
 	return e
 end
 
@@ -231,11 +240,11 @@ local function ClassName(c)
 end
 ns.ClassName = ClassName
 
--- A character's cooldowns that aren't turned off.
+-- A character's cooldowns that are turned on.
 local function Entries(c)
 	local list = {}
 	for _, e in pairs(c.cds) do
-		if not ns.IsOff(e) then list[#list + 1] = e end
+		if ns.IsOn(e) then list[#list + 1] = e end
 	end
 	return list
 end
@@ -258,7 +267,7 @@ local function List()
 		if #parts > 0 then lines[#lines + 1] = "  " .. ClassName(c) .. ": " .. table.concat(parts, ", ") end
 	end
 	if #lines == 0 then
-		Print("nothing tracked yet.")
+		Print("nothing turned on. Pick what to track in /fcd.")
 		return
 	end
 	Print("cooldowns:")
@@ -296,7 +305,7 @@ local function Check(login)
 		for _, e in pairs(c.cds) do
 			if not e.told and e.readyAt <= now then
 				e.told = true
-				if not ns.IsOff(e) then fresh[#fresh + 1] = e end
+				if ns.IsOn(e) then fresh[#fresh + 1] = e end
 			end
 		end
 		if #fresh > 0 then
@@ -322,29 +331,19 @@ local function Check(login)
 end
 
 ---------------------------------------------------------------------------
--- What you've used lately with a cooldown, to pick from in the options.
--- A craft is tracked straight away instead.
+-- What you've used lately with a cooldown, to turn on in the options.
+-- A craft is found (kept, its timer too) instead.
 ---------------------------------------------------------------------------
 local recent = {} -- newest first: { id, name, icon }
-
-function ns.Recent()
-	local list = {}
-	for _, r in ipairs(recent) do
-		if not me.cds[r.id] and not db.custom[r.id] then list[#list + 1] = r end
-	end
-	return list
-end
 
 local function CheckCast(id)
 	local left, duration = SpellCooldown(id)
 	if not (left and duration >= REAL_MIN and left > 0) then return end
-	if me.cds[id] then
-		SetLeft(me.cds[id], left)
-	elseif IsCraft(id) then
+	if me.cds[id] or IsCraft(id) then
 		local e = Track(id)
 		if not e then return end
 		SetLeft(e, left)
-		Print(("tracking %s (ready in %s)."):format(e.name, Left(left)))
+		ns.Display.Refresh()
 	else
 		local name, icon = SpellNameIcon(id)
 		if not name then return end
@@ -353,10 +352,7 @@ local function CheckCast(id)
 		end
 		table.insert(recent, 1, { id = id, name = name, icon = icon })
 		recent[RECENT_MAX + 1] = nil
-		ns.Options.Refresh()
-		return
 	end
-	ns.Display.Refresh()
 	ns.Options.Refresh()
 end
 
@@ -370,7 +366,7 @@ local function ScanRecipes()
 		recipes[id] = true
 		local left = RecipeCooldown(id)
 		if left and left > REAL_MIN then
-			local e = me.cds[id] or Track(id)
+			local e = Track(id)
 			if e then
 				SetLeft(e, left)
 				added = true
@@ -384,7 +380,7 @@ local function ScanRecipes()
 end
 
 ---------------------------------------------------------------------------
--- Adding and removing your own
+-- Turning on, adding and removing
 ---------------------------------------------------------------------------
 -- A spell ID, a spell's name, or a shift-clicked link: spell, recipe, or an
 -- item (its use).
@@ -410,53 +406,61 @@ function ns.FindSpell(text)
 	end
 end
 
--- Returns the name tracked, or nil and why not.
+-- Adds and turns on a spell or item. Returns its name, or nil and why not.
 function ns.Add(text)
 	local id = ns.FindSpell(text)
 	local name = id and SpellNameIcon(id)
 	if not name then return nil, "Not found. Try a spell ID or shift-click a link." end
 	db.custom[id] = true
-	db.off[Prefix(name)] = nil
+	db.on[Prefix(name)] = true
 	local left, duration = SpellCooldown(id)
-	if Knows(id) or (left and duration >= REAL_MIN and left > 0) then
+	local running = left and duration >= REAL_MIN and left > 0
+	if me.cds[id] or Knows(id) or running then
 		local e = Track(id)
-		if e and left and left > 0 and duration >= REAL_MIN then SetLeft(e, left) end
+		if e and running then SetLeft(e, left) end
 	end
 	ns.Display.Refresh()
 	ns.Options.Refresh()
 	return name
 end
 
--- Everything tracked on any character, by the name turning it off uses:
--- { key, icon, off, custom (added by you: can be removed) }.
-function ns.Tracked()
+-- Everything found or added, by the name turning it on uses:
+-- { key, icon, on, custom (added by you: can be removed), recentID (only
+-- used this session: turning it on adds it) }.
+function ns.Found()
 	local byKey, list = {}, {}
-	local function Add(key, icon, custom)
+	local function Add(key, icon)
 		local t = byKey[key]
 		if not t then
-			t = { key = key, icon = icon, off = db.off[key] == true }
+			t = { key = key, icon = icon, on = db.on[key] == true }
 			byKey[key] = t
 			list[#list + 1] = t
 		end
-		if custom then t.custom = true end
+		return t
 	end
 	for _, c in pairs(db.chars) do
-		for id, e in pairs(c.cds) do Add(Prefix(e.name), e.icon, db.custom[id]) end
+		for _, e in pairs(c.cds) do
+			if not e.test then Add(Prefix(e.name), e.icon) end
+		end
 	end
 	for id in pairs(db.custom) do
 		local name, icon = SpellNameIcon(id)
-		if name then Add(Prefix(name), icon, true) end
+		if name then Add(Prefix(name), icon).custom = true end
 	end
 	table.sort(list, function(a, b) return a.key < b.key end)
+	for _, r in ipairs(recent) do
+		local key = Prefix(r.name)
+		if not byKey[key] then Add(key, r.icon).recentID = r.id end
+	end
 	return list
 end
 
-function ns.SetOff(key, off)
-	db.off[key] = off or nil
+function ns.SetOn(key, on)
+	db.on[key] = on or nil
 	ns.Display.Refresh()
 end
 
--- Removes something you added (and the pretend test), from every character.
+-- Removes something you added, from every character.
 function ns.Remove(key)
 	for id in pairs(db.custom) do
 		local name = SpellNameIcon(id)
@@ -464,12 +468,13 @@ function ns.Remove(key)
 	end
 	for _, c in pairs(db.chars) do
 		for id, e in pairs(c.cds) do
-			if Prefix(e.name) == key and (e.test or (type(id) == "number" and not db.custom[id] and not IsCraft(id)
-				and not tContains(KNOWN, id))) then
+			if Prefix(e.name) == key and not e.test and not db.custom[id] and not IsCraft(id)
+				and not tContains(KNOWN, id) then
 				c.cds[id] = nil
 			end
 		end
 	end
+	db.on[key] = nil
 	ns.Display.Refresh()
 	ns.Options.Refresh()
 end
@@ -516,7 +521,7 @@ frame:SetScript("OnEvent", function(_, event, unit, _, spellID)
 		db = FireCooldownsDB
 		db.chars = db.chars or {}
 		db.custom = db.custom or {}
-		db.off = db.off or {}
+		db.hinted = db.hinted or {}
 		for k, v in pairs(DEFAULTS) do
 			if db[k] == nil then db[k] = v end
 		end
@@ -526,14 +531,23 @@ frame:SetScript("OnEvent", function(_, event, unit, _, spellID)
 		db.chars[guid] = me
 		me.name = UnitName("player")
 		me.class = select(2, UnitClass("player"))
-		-- Earlier versions tracked any spell with "/fcd test <spell>": those are yours now.
-		for _, c in pairs(db.chars) do
-			for id, e in pairs(c.cds) do
-				if e.test and type(id) == "number" then
-					e.test = nil
-					db.custom[id] = true
+		-- Earlier versions: spells tracked with "/fcd test <spell>" are yours
+		-- now, and what you added stays on (everything else starts off).
+		if not db.on then
+			db.on = {}
+			for _, c in pairs(db.chars) do
+				for id, e in pairs(c.cds) do
+					if e.test and type(id) == "number" then
+						e.test = nil
+						db.custom[id] = true
+					end
 				end
 			end
+			for id in pairs(db.custom) do
+				local name = SpellNameIcon(id)
+				if name and not (db.off and db.off[Prefix(name)]) then db.on[Prefix(name)] = true end
+			end
+			db.off = nil
 		end
 		ns.me = me
 		ns.Display.Init()
@@ -564,8 +578,8 @@ end)
 local function Help()
 	Print("commands:")
 	print("  /fcd - options: what's tracked, what's shown")
-	print("  /fcd list - cooldowns on all your characters, in chat")
-	print("  /fcd track <spell, ID or shift-click a link> - track it too")
+	print("  /fcd list - tracked cooldowns on all your characters, in chat")
+	print("  /fcd track <spell, ID or shift-click a link> - add and track it")
 	print("  /fcd test - a pretend transmute, ready in 10 seconds (/fcd test clear)")
 	print("  /fcd forget <character> - remove a character")
 end

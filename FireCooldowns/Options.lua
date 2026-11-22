@@ -1,9 +1,9 @@
 -- Options > AddOns > FireCooldowns (or /fcd). A self-drawn ("canvas") page,
 -- so the game's settings search never runs into it (see FireProcs/Options.lua).
 --   Show: the list on screen and the sound.
---   Tracked: everything tracked on any character, each turned on or off;
---   yours (added below) can be removed.
---   Recently used: what you've used this session with a cooldown, to track.
+--   Track: everything found (crafts with a cooldown, and what you've used
+--   this session with one), off until you turn it on; yours (added below)
+--   can be removed.
 --   Add: a spell ID, or shift-click a spell, recipe or item into the box.
 local _, ns = ...
 local Options = {}
@@ -92,15 +92,12 @@ local function Build()
 	y = y - 12
 
 	-------------------------------------------------------------------------
-	-- Tracked, recently used, add: laid out again whenever they change.
+	-- Track and add: laid out again whenever they change.
 	-------------------------------------------------------------------------
 	local top = y
-	local trackedHead = Heading("Tracked")
-	local trackedNote = Note()
-	trackedNote:SetText("Nothing yet. Crafts with a cooldown are added when you use them.")
-	local recentHead = Heading("Recently used")
-	local recentNote = Note()
-	recentNote:SetText("Things you use with a cooldown show here.")
+	local trackHead = Heading("Track")
+	local trackNote = Note()
+	trackNote:SetText("Nothing found yet. Crafts and things you use with a cooldown show here.")
 	local addHead = Heading("Add")
 
 	local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
@@ -132,18 +129,25 @@ local function Build()
 	Tip(test, "Try it", "A pretend transmute, ready in 10 seconds.")
 	local clear = Button(panel, "Clear test", 100, function() SlashCmdList.FIRECOOLDOWNS("test clear") end)
 
-	local trackedRows, recentRows = {}, {}
+	local rows = {}
 
-	local function TrackedRow(i)
-		local r = trackedRows[i]
+	local function Row(i)
+		local r = rows[i]
 		if r then return r end
 		r = CreateFrame("Frame", nil, panel)
 		r:SetSize(400, ROW)
 		r.check = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
 		r.check:SetSize(24, 24)
 		r.check:SetPoint("LEFT")
-		r.check:SetScript("OnClick", function(self) ns.SetOff(r.key, not self:GetChecked()) end)
-		Tip(r.check, "On", "Show it and remind you when it's ready.")
+		r.check:SetScript("OnClick", function(self)
+			if self:GetChecked() and r.recentID then
+				ns.Add(tostring(r.recentID))
+			else
+				ns.SetOn(r.key, self:GetChecked())
+				Layout()
+			end
+		end)
+		Tip(r.check, "Track", "Show it and remind you when it's ready, on all characters.")
 		r.icon = r:CreateTexture(nil, "ARTWORK")
 		r.icon:SetSize(18, 18)
 		r.icon:SetPoint("LEFT", r.check, "RIGHT", 2, 0)
@@ -152,26 +156,8 @@ local function Build()
 		r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0)
 		r.remove = Button(r, "Remove", 70, function() ns.Remove(r.key) end)
 		r.remove:SetPoint("LEFT", r.text, "RIGHT", 10, 0)
-		Tip(r.remove, "Remove", "Stop tracking it on all characters.")
-		trackedRows[i] = r
-		return r
-	end
-
-	local function RecentRow(i)
-		local r = recentRows[i]
-		if r then return r end
-		r = CreateFrame("Frame", nil, panel)
-		r:SetSize(400, ROW)
-		r.icon = r:CreateTexture(nil, "ARTWORK")
-		r.icon:SetSize(18, 18)
-		r.icon:SetPoint("LEFT", 4, 0)
-		r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-		r.text = r:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-		r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0)
-		r.track = Button(r, "Track", 70, function() ns.Add(tostring(r.id)) end)
-		r.track:SetPoint("LEFT", r.text, "RIGHT", 10, 0)
-		Tip(r.track, "Track", "On all characters that use it.")
-		recentRows[i] = r
+		Tip(r.remove, "Remove", "Take it off this list.")
+		rows[i] = r
 		return r
 	end
 
@@ -182,48 +168,28 @@ local function Build()
 
 	Layout = function()
 		local yy = top
-		Place(trackedHead, 16, yy)
+		Place(trackHead, 16, yy)
 		yy = yy - 20
-		local tracked = ns.Tracked()
-		trackedNote:SetShown(#tracked == 0)
-		if #tracked == 0 then
-			Place(trackedNote, 22, yy)
+		local found = ns.Found()
+		trackNote:SetShown(#found == 0)
+		if #found == 0 then
+			Place(trackNote, 22, yy)
 			yy = yy - 18
 		end
-		for i, t in ipairs(tracked) do
-			local r = TrackedRow(i)
-			r.key = t.key
-			r.check:SetChecked(not t.off)
+		for i, t in ipairs(found) do
+			local r = Row(i)
+			r.key, r.recentID = t.key, t.recentID
+			r.check:SetChecked(t.on)
 			r.icon:SetTexture(t.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-			r.icon:SetDesaturated(t.off)
+			r.icon:SetDesaturated(not t.on)
 			r.text:SetText(t.key)
-			r.text:SetFontObject(t.off and "GameFontDisable" or "GameFontHighlight")
+			r.text:SetFontObject(t.on and "GameFontHighlight" or "GameFontDisable")
 			r.remove:SetShown(t.custom == true)
 			Place(r, 18, yy)
 			r:Show()
 			yy = yy - ROW
 		end
-		for i = #tracked + 1, #trackedRows do trackedRows[i]:Hide() end
-		yy = yy - 10
-
-		Place(recentHead, 16, yy)
-		yy = yy - 20
-		local recent = ns.Recent()
-		recentNote:SetShown(#recent == 0)
-		if #recent == 0 then
-			Place(recentNote, 22, yy)
-			yy = yy - 18
-		end
-		for i, rc in ipairs(recent) do
-			local r = RecentRow(i)
-			r.id = rc.id
-			r.icon:SetTexture(rc.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-			r.text:SetText(rc.name)
-			Place(r, 18, yy)
-			r:Show()
-			yy = yy - ROW
-		end
-		for i = #recent + 1, #recentRows do recentRows[i]:Hide() end
+		for i = #found + 1, #rows do rows[i]:Hide() end
 		yy = yy - 10
 
 		Place(addHead, 16, yy)
