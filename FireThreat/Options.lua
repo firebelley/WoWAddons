@@ -35,10 +35,11 @@ local function Build()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Enemies you're fighting (needs enemy nameplates on). Red means act and is listed first.\n"
-		.. "Tank - green: on you. Yellow: about to be pulled. Red: on someone else.\n"
+		.. "Tank - green: on you. Yellow: about to lose it. Red: on someone else. Blue: on another tank.\n"
 		.. "Damage/healing - green: on someone else. Yellow: ease off. Red: on you.\n"
+		.. "Bar and %: your threat. 100% pulls it.\n"
 		.. "Hover an enemy to point an arrow at it.")
-	y = y - 62
+	y = y - 74
 
 	local lastButton
 	local function Button(text, tooltip, onClick)
