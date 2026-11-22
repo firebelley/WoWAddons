@@ -21,12 +21,29 @@ local function BlizzardBagFrames()
 	return list
 end
 
+-- What a Blizzard bag frame redraws its slots on. Hidden, it needn't: during
+-- a sort these come many times a second. (It signs up for them as it opens,
+-- so they're dropped again then.) Opening and closing still work.
+local REDRAW_EVENTS = {
+	"BAG_UPDATE", "ITEM_LOCK_CHANGED", "BAG_UPDATE_COOLDOWN", "UNIT_INVENTORY_CHANGED",
+	"INVENTORY_SEARCH_UPDATE", "BAG_NEW_ITEMS_UPDATED",
+}
+local function Mute(f)
+	if ns.blizzardBank then return end
+	for _, event in ipairs(REDRAW_EVENTS) do f:UnregisterEvent(event) end
+end
+
+local muteHooked = {}
 local function HideBlizzardBags()
-	for _, f in ipairs(BlizzardBagFrames()) do
+	local frames = BlizzardBagFrames()
+	if ContainerFrameCombinedBags then table.insert(frames, ContainerFrameCombinedBags) end
+	for _, f in ipairs(frames) do
 		f:SetParent(hiddenParent)
-	end
-	if ContainerFrameCombinedBags then
-		ContainerFrameCombinedBags:SetParent(hiddenParent)
+		Mute(f)
+		if not muteHooked[f] then
+			muteHooked[f] = true
+			f:HookScript("OnShow", Mute)
+		end
 	end
 end
 

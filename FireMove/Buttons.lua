@@ -376,8 +376,21 @@ for _, event in ipairs({
 }) do
 	pcall(events.RegisterEvent, events, event)
 end
+-- Bag changes come many times a second while bags are sorted: the buttons
+-- (item counts...) catch up once at the end of a burst.
+local bagsPending = false
+local function BagsChanged()
+	bagsPending = false
+	Each(Update)
+end
+
 events:SetScript("OnEvent", function(_, event, a, b, c)
-	if event == "ACTIONBAR_SLOT_CHANGED" then
+	if event == "BAG_UPDATE_DELAYED" then
+		if not bagsPending then
+			bagsPending = true
+			C_Timer.After(0.2, BagsChanged)
+		end
+	elseif event == "ACTIONBAR_SLOT_CHANGED" then
 		-- 0: all of them. Otherwise just ours, if it's one of ours.
 		if a == 0 then
 			Each(Update)

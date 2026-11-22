@@ -459,24 +459,51 @@ function sorter:CheckLastMove()
 	end
 end
 
-local SORT_EVENTS = { "BAG_UPDATE", "BAG_UPDATE_DELAYED", "ITEM_LOCK_CHANGED" }
+local SORT_EVENTS = { "BAG_UPDATE_DELAYED", "ITEM_LOCK_CHANGED" }
 
 local function StopSorting(message)
 	sorter:Hide()
 	for _, event in ipairs(SORT_EVENTS) do sorter:UnregisterEvent(event) end
 	sorter.groups = nil
 	wipe(records)
+	wipe(sorter.locked)
 	if message then ns.Print(message) end
 	for _, w in ipairs(ns.windows) do w:RequestRefresh() end
 end
 
--- The bags only need looking at again once something in them has changed
--- (items locking as moves go out, unlocking as they land).
-sorter:SetScript("OnEvent", function(self) self.dirty = true end)
+-- Is a slot locked (an item on its way)? Without making a table per call.
+local lockLoc = ItemLocation and ItemLocation.CreateEmpty and ItemLocation:CreateEmpty()
+local function SlotLocked(bag, slot)
+	if lockLoc and C_Item and C_Item.IsLocked and C_Item.DoesItemExist then
+		lockLoc:SetBagAndSlot(bag, slot)
+		if not C_Item.DoesItemExist(lockLoc) then return false end
+		local ok, locked = pcall(C_Item.IsLocked, lockLoc)
+		if ok and type(locked) == "boolean" then return locked end
+	end
+	local info = API.GetSlotInfo(bag, slot)
+	return info and info.isLocked or false
+end
+
+-- The bags only need looking at again once the last moves have all landed:
+-- slots lock as moves go out and unlock as they land, so the locked ones are
+-- counted, and the bags read once none are left.
+sorter.locked = {} -- [bag * 1000 + slot] = true
+sorter:SetScript("OnEvent", function(self, event, bag, slot)
+	if event == "ITEM_LOCK_CHANGED" and bag and slot then
+		self.locked[bag * 1000 + slot] = SlotLocked(bag, slot) or nil
+	end
+	if next(self.locked) == nil then self.dirty = true end
+end)
 
 sorter:SetScript("OnUpdate", function(self, elapsed)
 	self.timer = self.timer + elapsed
-	if self.timer < STEP_INTERVAL or (not self.dirty and self.timer < IDLE_STEP) then return end
+	if self.timer < STEP_INTERVAL then return end
+	if not self.dirty then
+		if self.timer < IDLE_STEP then return end
+		-- Now and then a look anyway, in case an unlock was missed (the read
+		-- below finds anything still locked).
+		wipe(self.locked)
+	end
 	self.timer = 0
 	self.dirty = false
 
@@ -542,6 +569,7 @@ function ns.SortBags(kind)
 	sorter.waitSince = nil
 	sorter.moves = 0
 	wipe(records)
+	wipe(sorter.locked)
 	for _, event in ipairs(SORT_EVENTS) do sorter:RegisterEvent(event) end
 	sorter:Show()
 end

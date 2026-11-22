@@ -389,6 +389,12 @@ end
 -- Sorting locks and unlocks every slot it touches, so this has to be cheap.
 function Window:UpdateSlot(bag, slot)
 	if not (bag and slot and self:IsShown() and self.fbLive) then return end
+	-- (Mid-sort, every slot locks and unlocks again and again: the slots are
+	-- redrawn together a few times a second instead - RequestRefresh.)
+	if ns.IsSorting() then
+		self:RequestRefresh()
+		return
+	end
 	local b = self.fbLive[bag .. ":" .. slot]
 	if b and self.shownButtons[b] then b:fbUpdate() end
 end
