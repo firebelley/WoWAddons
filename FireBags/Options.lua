@@ -208,7 +208,7 @@ local function Build()
 		function() ns.inventory:RequestRefresh() end)
 	Checkbox("newItemGlow", "Make new items glow", "Items you just got glow until you look at them.",
 		function() ns.inventory:RequestRefresh() end)
-	Checkbox("sortOnOpen", "Sort bags when opened", "Not in combat.")
+	Checkbox("sortOnOpen", "Sort bags when opened", "Every time you open your bags (not in combat).")
 	Checkbox("autoSellJunk", "Sell junk at vendors automatically",
 		"Grey items and items you marked as junk (Alt-right-click).")
 

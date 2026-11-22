@@ -234,8 +234,11 @@ local function ClearQueue()
 	queued, sent = 0, 0
 end
 
+local issecret = issecretvalue or function() return false end
+
 -- Reads every slot of every group. Returns nil if anything is still locked or
--- not loaded yet (so the caller waits); else whether anything changed since
+-- not loaded yet (so the caller waits), "hidden" if the game hides what's in
+-- a slot (as it may in combat); else true and whether anything changed since
 -- the last full read.
 local function ReadGroups(groups)
 	for _, group in ipairs(groups) do
@@ -244,6 +247,9 @@ local function ReadGroups(groups)
 		for i, s in ipairs(group.slots) do
 			local info = API.GetSlotInfo(s[1], s[2])
 			if info then
+				if issecret(info.hyperlink) or issecret(info.stackCount) or issecret(info.isLocked) then
+					return "hidden"
+				end
 				if info.isLocked or not info.hyperlink then return nil end
 				items[i] = Record(info)
 			else
@@ -533,6 +539,7 @@ local function Step(state)
 	if CursorHasItem() then return "wait" end
 	local groups = state.groups
 	local ready, changed = ReadGroups(groups)
+	if ready == "hidden" then return "hidden" end
 	if not ready then return "wait" end
 
 	-- If the last move into a special bag didn't happen (the bag refused the
@@ -702,6 +709,14 @@ local function StopSorting(message)
 	for _, w in ipairs(ns.windows) do w:RequestRefresh() end
 end
 
+-- If the game blocks a move after all (in combat, say), stop rather than
+-- keep trying. (Core.lua says which call it was.)
+local function Blocked(addon)
+	if addon == ns.ADDON and sorter:IsShown() then StopSorting("Sorting stopped: the game blocked it.") end
+end
+ns.On("ADDON_ACTION_BLOCKED", Blocked)
+ns.On("ADDON_ACTION_FORBIDDEN", Blocked)
+
 -- Is a slot locked (an item on its way)? Without making a table per call.
 local lockLoc = ItemLocation and ItemLocation.CreateEmpty and ItemLocation:CreateEmpty()
 local function SlotLocked(bag, slot)
@@ -732,6 +747,7 @@ sorter:SetScript("OnUpdate", function(self, elapsed)
 		ProfileFrame(self.profile, elapsed)
 		ns.Timed("(timing itself)", started)
 	end
+	-- (The game blocks moving items from addons in combat.)
 	if InCombatLockdown() then
 		StopSorting("Sorting stopped: entered combat.")
 		return
@@ -782,6 +798,8 @@ sorter:SetScript("OnUpdate", function(self, elapsed)
 		StopSorting()
 	elseif result == "stuck" then
 		StopSorting("Sorting stopped: some items wouldn't move.")
+	elseif result == "hidden" then
+		StopSorting("Sorting stopped: the game hides your bags' contents in combat.")
 	else
 		StopSorting("Sorting stopped: bags changed unexpectedly. Try again.")
 	end
