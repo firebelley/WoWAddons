@@ -21,6 +21,8 @@
 -- check found the cheapest just as they are on screen) - or, when the price
 -- came back cheaper than the screen said (new cheap ones, too few for N), the
 -- next click checks the number that fits them instead (see FollowUpSize).
+-- After a purchase (bought or not) the next click is a check too, without a
+-- refresh first (see Finish).
 --
 -- Quick buy shows once you press Start session for the item. The session -
 -- how many you've bought, what they cost, and a log - is kept until you press
@@ -349,6 +351,7 @@ local mode                    -- what a click on the button does now: "buy", "ch
 local checkPlan               -- { quantity, expected } a "check" click's price check
 local followUp                -- { id, quantity, at } the next check, after one that found new cheap ones
 local FOLLOW_UP_WINDOW = 2    -- seconds it's offered before the listings refresh instead
+local checkNext               -- itemID: with "Check for" on, a purchase just ended - the next click checks, no refresh first (see Finish)
 local REFRESH_ICON = "|TInterface\\Buttons\\UI-RefreshButton:16:16:0:0|t "
 
 -- Never act on listings that are about to be replaced or are old: while a
@@ -419,9 +422,13 @@ local function Update()
 			n = math.min(f.quantity, math.min(Remaining(itemID), math.floor(GetMoney() / max)))
 			if n < 1 then n = nil end
 		end
+		-- Right after a purchase: a check, whatever the (out of date) listings
+		-- say. Nothing to compare its price with, so a miss refreshes.
+		local direct = checkNext == itemID and CheckSize(itemID, max)
+		if direct then n = direct end
 		if n then
 			-- Nothing within "Up to" on screen: check the price of N.
-			checkPlan = { quantity = n, expected = CheapestTotal(itemID, n) }
+			checkPlan = { quantity = n, expected = not direct and CheapestTotal(itemID, n) or nil }
 			text = REFRESH_ICON .. ("Check for %d"):format(n)
 			mode, enabled = "check", not BlizzardDialogOpen()
 		elseif old or count <= 0 then
@@ -471,9 +478,16 @@ end
 -- was still busy), answers it without listings (right after a failed
 -- purchase it does), or no listings have come back a little later, it's
 -- sent again.
-local AFTER_PURCHASE = 0.2 -- seconds after a purchase before refreshing: the game finishes it first
+-- Seconds after a purchase before refreshing: the next frame. The game is
+-- ready for it the moment a purchase ends; one answered without listings
+-- (it often is, then) is sent again at once (below). A wait here didn't stop
+-- that, and held up every refresh after a purchase.
+local AFTER_PURCHASE = 0
 local RESEND_AFTER = 1.5   -- seconds without listings before sending the refresh again (they take ~0.2s)
-local RESENDS = 3          -- times a refresh answered without listings is sent again, at most
+-- Times a refresh answered without listings is sent again at once, at most.
+-- Right after a purchase the game answers so for up to ~0.4s, ~0.1s an
+-- answer, with no wait before the next; past this, RESEND_AFTER.
+local EMPTY_RESENDS = 10
 local refreshWaiting = false -- resend when the auction house is ready
 local refreshRetried = false
 local refreshResends = 0
@@ -517,7 +531,7 @@ ns.On("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", function()
 	refreshAnswered = true
 	local count, id, sent = refreshCount, itemID, refreshSentAt
 	C_Timer.After(0, function()
-		if count == refreshCount and id == itemID and not pending and refreshResends < RESENDS
+		if count == refreshCount and id == itemID and not pending and refreshResends < EMPTY_RESENDS
 			and not (resultsAt and resultsAt >= sent) then
 			ns.Debug("quick buy: answered without listings")
 			Refresh(true, true)
@@ -588,6 +602,7 @@ end
 -- a refresh goes out (the old ones are cleared) and as more pages load.
 local function Refreshed()
 	resultsAt = GetTime()
+	checkNext = nil -- listings to go by again
 	if itemID and Settings(itemID).active then ns.SafeCall(Snapshot, itemID) end
 	if refreshSentAt and consumed and refreshSentAt >= consumed.at then consumed = nil end
 	if holdSince and refreshSentAt and refreshSentAt >= holdSince then holdSince = nil end
@@ -744,6 +759,14 @@ end
 -- Blizzard's Buy popup does whenever it closes - an open one can hold back
 -- the refresh, leaving the list stuck on "Searching..."), then refresh a
 -- moment later, once the game has finished with it.
+--
+-- With "Check for" on, no refresh: the next click checks the price straight
+-- away. What's left of a lot, or the next one, is found by the check itself
+-- and confirmed a step (~0.6s) sooner than a refresh and a Buy after it -
+-- a step that, against other buyers, decides most races (your log: 76% of
+-- checks that found them were bought, 62% of Buys from the listings, which
+-- also lose ~30% before the price comes back). A refresh would also hold up
+-- that check for its own turn. A miss refreshes as usual.
 local function Finish(text, why)
 	if why then ns.Debug("quick buy: not bought - " .. why) end
 	AttemptEnd(why)
@@ -752,16 +775,24 @@ local function Finish(text, why)
 	if pending and pending.stage == "buying" and not pending.done then
 		gaveUp = { itemID = pending.itemID, quantity = pending.quantity, total = pending.total, at = GetTime() }
 	end
+	local id = pending and pending.itemID or itemID
 	pending = nil
 	message = text
-	holdSince = GetTime()
 	-- Bought or not, the listings on screen are out of date: until refreshed
-	-- ones come in, the button refreshes instead of buying from them.
-	staleSince = holdSince
+	-- ones come in, the button refreshes (or checks) instead of buying from them.
+	staleSince = GetTime()
+	local max = id and Settings(id).max
+	if id == itemID and max and max > 0 and CheckSize(id, max) then
+		checkNext = id
+		ns.Debug("quick buy: checking next, no refresh")
+		Update()
+		return
+	end
+	checkNext = nil
+	holdSince = staleSince
 	holdText = text and "Not bought" or "Buying..."
 	if C_Timer then
-		-- A refresh sent in the same moment the purchase ends gets no listings
-		-- back (the list stays on "Searching...").
+		-- Not from inside the purchase's own event: the next frame.
 		C_Timer.After(AFTER_PURCHASE, function()
 			if not pending then Refresh() end
 		end)
@@ -807,7 +838,7 @@ local function Check()
 	local max = Settings(itemID).max or 0
 	local n = checkPlan.quantity
 	local follow = followUp ~= nil and followUp.id == itemID and followUp.quantity == n
-	followUp = nil
+	followUp, checkNext = nil, nil
 	pending = { itemID = itemID, quantity = n, total = max * n, limit = max * n, stage = "quote", at = GetTime(),
 		check = true, expected = checkPlan.expected, follow = follow or nil,
 		age = resultsAt and math.floor((GetTime() - resultsAt) * 1000 + 0.5) / 1000 or nil }
@@ -914,6 +945,7 @@ end
 ns.On("AUCTION_HOUSE_SHOW", function() wipe(accepted) end)
 ns.On("AUCTION_HOUSE_CLOSED", function()
 	wipe(accepted)
+	checkNext = nil
 	StaticPopup_Hide("FIREAUCTION_QUICKBUY_ASK")
 end)
 
@@ -1053,34 +1085,67 @@ ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
 end)
 
 -- A purchase went through: the button flashes gold, and "Purchase
--- successful!" shows after the status line for a moment.
-local flash
+-- successful!" shows after the status line for a moment. With "Check for"
+-- on the button stays red and clickable (see Finish), where a flash only
+-- looks like it lit up: a green "+29" rises from it instead (Gained).
+local flash, gained
 
-local function Flash()
-	if not (panel and panel:IsVisible() and button.CreateAnimationGroup) then return end
-	if not flash then
-		local t = button:CreateTexture(nil, "OVERLAY")
-		t:SetTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
-		t:SetTexCoord(0, 0.625, 0, 0.6875)
-		t:SetBlendMode("ADD")
-		t:SetVertexColor(1, 0.8, 0.2)
-		t:SetAllPoints()
-		t:SetAlpha(0)
-		local g = t:CreateAnimationGroup()
-		local on = g:CreateAnimation("Alpha")
-		on:SetOrder(1)
-		on:SetDuration(0.08)
-		on:SetFromAlpha(0)
-		on:SetToAlpha(1)
-		local off = g:CreateAnimation("Alpha")
-		off:SetOrder(2)
-		off:SetDuration(0.6)
-		off:SetFromAlpha(1)
-		off:SetToAlpha(0)
-		flash = g
+-- "+N" over the button, rising and fading.
+local function Gained(quantity)
+	if not gained then
+		local text = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+		text:SetTextColor(0.3, 1, 0.3)
+		text:SetPoint("BOTTOM", button, "TOP", 0, -6)
+		text:Hide()
+		local g = text:CreateAnimationGroup()
+		local rise = g:CreateAnimation("Translation")
+		rise:SetOffset(0, 26)
+		rise:SetDuration(0.9)
+		rise:SetSmoothing("OUT")
+		local fade = g:CreateAnimation("Alpha")
+		fade:SetStartDelay(0.4)
+		fade:SetDuration(0.5)
+		fade:SetFromAlpha(1)
+		fade:SetToAlpha(0)
+		g:SetScript("OnFinished", function() text:Hide() end)
+		text.anim = g
+		gained = text
 	end
-	flash:Stop()
-	flash:Play()
+	gained.anim:Stop()
+	gained:SetText("+" .. quantity)
+	gained:Show()
+	gained.anim:Play()
+end
+
+local function Flash(quantity)
+	if not (panel and panel:IsVisible() and button.CreateAnimationGroup) then return end
+	if checkNext == itemID and quantity then
+		Gained(quantity)
+	else
+		if not flash then
+			local t = button:CreateTexture(nil, "OVERLAY")
+			t:SetTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+			t:SetTexCoord(0, 0.625, 0, 0.6875)
+			t:SetBlendMode("ADD")
+			t:SetVertexColor(1, 0.8, 0.2)
+			t:SetAllPoints()
+			t:SetAlpha(0)
+			local g = t:CreateAnimationGroup()
+			local on = g:CreateAnimation("Alpha")
+			on:SetOrder(1)
+			on:SetDuration(0.08)
+			on:SetFromAlpha(0)
+			on:SetToAlpha(1)
+			local off = g:CreateAnimation("Alpha")
+			off:SetOrder(2)
+			off:SetDuration(0.6)
+			off:SetFromAlpha(1)
+			off:SetToAlpha(0)
+			flash = g
+		end
+		flash:Stop()
+		flash:Play()
+	end
 
 	if not done then
 		local text = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1134,7 +1199,7 @@ ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
 		left and (left > 0 and (" (%d more to go)"):format(left) or " - that's all you wanted") or ""))
 	if left == 0 then Summary(id) end
 	Finish(nil)
-	ns.SafeCall(Flash) -- after Finish: the status line says what was bought by now
+	ns.SafeCall(Flash, quantity) -- after Finish: the status line says what was bought by now
 end)
 
 ns.On("COMMODITY_PURCHASE_FAILED", function()
