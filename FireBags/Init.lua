@@ -55,10 +55,29 @@ function ns.On(event, fn)
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
+	local started = ns.timings and debugprofilestop()
 	for _, fn in ipairs(handlers[event]) do
 		ns.SafeCall(fn, ...)
 	end
+	if started then ns.Timed(event, started) end
 end)
+
+---------------------------------------------------------------------------
+-- Timings (only while /fbags profile runs): ns.timings[label] = { total,
+-- worst, count } in ms. ns.Timed(label, debugprofilestop() from before).
+---------------------------------------------------------------------------
+function ns.Timed(label, started)
+	local timings = ns.timings
+	if not timings then return end
+	local ms = debugprofilestop() - started
+	local t = timings[label]
+	if not t then
+		t = { total = 0, worst = 0, count = 0 }
+		timings[label] = t
+	end
+	t.total, t.count = t.total + ms, t.count + 1
+	if ms > t.worst then t.worst = ms end
+end
 
 ---------------------------------------------------------------------------
 -- Saved settings

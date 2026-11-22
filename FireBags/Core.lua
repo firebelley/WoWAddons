@@ -231,6 +231,9 @@ SlashCmdList.FIREBAGS = function(input)
 		ns.DebugBank()
 	elseif cmd == "sort" then
 		ns.SortBags("inventory")
+	elseif cmd == "profile" then
+		ns.SortBags("inventory", true) -- sorts, then says what took the time
+		ns.Print("Sorting (timing it)...")
 	elseif cmd == "reset" then
 		wipe(ns.db.positions)
 		for _, w in ipairs(ns.windows) do w:ApplyPosition() end

@@ -332,11 +332,18 @@ function Window:LayoutSections(sections, acquire)
 					local b = acquire(entry.bag, slot, section)
 					local col = index % cols
 					local row = math.floor(index / cols)
-					b:ClearAllPoints()
-					b:SetPoint("TOPLEFT", self, "TOPLEFT",
-						m.left + col * (SLOT + SPACING),
-						y - row * (SLOT + SPACING))
-					b:fbSetTint(tint[1], tint[2], tint[3])
+					-- (Placed and tinted only when that changed: this runs on
+					-- every change to the bags.)
+					local x, by = m.left + col * (SLOT + SPACING), y - row * (SLOT + SPACING)
+					if b.fbX ~= x or b.fbY ~= by then
+						b:ClearAllPoints()
+						b:SetPoint("TOPLEFT", self, "TOPLEFT", x, by)
+						b.fbX, b.fbY = x, by
+					end
+					if b.fbTint ~= tint then
+						b:fbSetTint(tint[1], tint[2], tint[3])
+						b.fbTint = tint
+					end
 					if not b:IsShown() then b:Show() end
 					b:fbUpdate()
 					self.shownButtons[b] = true
@@ -368,10 +375,19 @@ function Window:LayoutSections(sections, acquire)
 	self:SetSize(width, height)
 end
 
+-- Lay the window out again (and time it, while /fbags profile runs).
+function Window:Refresh()
+	local started = ns.timings and debugprofilestop()
+	self.opts.refresh(self)
+	if started then ns.Timed("redraw " .. self.opts.key, started) end
+end
+
 -- Refresh of visible buttons (locks, cooldowns) without relayout.
 function Window:UpdateButtons()
 	if not self:IsShown() then return end
+	local started = ns.timings and debugprofilestop()
 	for b in pairs(self.shownButtons) do b:fbUpdate() end
+	if started then ns.Timed("slots " .. self.opts.key, started) end
 end
 
 -- The same, once on the next frame however many times it's asked for in this
@@ -413,7 +429,7 @@ function Window:RequestRefresh()
 				ns.SafeCall(self.UpdateButtons, self) -- (still dirty: laid out after)
 			else
 				self.dirty = false
-				ns.SafeCall(self.opts.refresh, self)
+				ns.SafeCall(self.Refresh, self)
 			end
 		end
 	end)
@@ -498,7 +514,7 @@ function ns.CreateWindow(opts)
 
 	f:HookScript("OnShow", function(self)
 		self.dirty = false
-		ns.SafeCall(self.opts.refresh, self)
+		ns.SafeCall(self.Refresh, self)
 		if opts.openSound then PlaySound(opts.openSound) end
 	end)
 	f:HookScript("OnHide", function()

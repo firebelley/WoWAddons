@@ -43,6 +43,7 @@ function FireBags.AddButtonHook(fn)
 end
 
 function FireBags.UpdateButtons()
+	IB.Invalidate() -- (something not read from the slot changed: redraw all)
 	for _, w in ipairs(ns.windows or {}) do w:RequestButtonUpdate() end
 end
 
@@ -242,7 +243,39 @@ end
 -- Shared visuals for both kinds of button.
 -- v: texture, count, quality, locked, isNew, isJunk, questKind, hasLoot, link
 ---------------------------------------------------------------------------
+-- A button is only redrawn when something it shows has changed (redrawing a
+-- whole bag's worth takes long enough to hitch the game, and the bags are
+-- redrawn on every change to them). What isn't in v: the search, the item's
+-- lock mark, the glow option, and the rest (junk marks, other addons' hooks)
+-- by a version number, bumped when any of those change.
+local VISUAL_KEYS = { "texture", "count", "quality", "locked", "isNew", "isJunk", "questKind", "hasLoot", "link", "isBound" }
+local visualVersion = 0
+
+function IB.Invalidate()
+	visualVersion = visualVersion + 1
+end
+
+-- (Items loading can change whether they match the search.)
+ns.On("GET_ITEM_INFO_RECEIVED", function() if searchText then IB.Invalidate() end end)
+
+local function Unchanged(b, v, mark)
+	local last = b.fbShown
+	if not (last and last.version == visualVersion and last.search == searchText
+		and last.mark == mark and last.glowOption == ns.db.newItemGlow) then
+		return false
+	end
+	for _, k in ipairs(VISUAL_KEYS) do
+		if last[k] ~= v[k] then return false end
+	end
+	return true
+end
+
 local function ApplyVisual(b, v)
+	local mark = (b.fbBag and ns.Marks.IsLocked(b.fbBag, b.fbSlot)) or false
+	if Unchanged(b, v, mark) then return end
+	v.version, v.search, v.mark, v.glowOption = visualVersion, searchText, mark, ns.db.newItemGlow
+	b.fbShown = v
+
 	local texture = v.texture
 	SetItemButtonTexture(b, texture)
 	b.fbEmptyIcon:SetShown(not texture)
@@ -267,7 +300,7 @@ local function ApplyVisual(b, v)
 
 	b.fbJunk:SetShown(texture and v.isJunk or false)
 	b.fbLoot:SetShown(texture and v.hasLoot or false)
-	b.fbLock:SetShown(texture and b.fbBag and ns.Marks.IsLocked(b.fbBag, b.fbSlot) or false)
+	b.fbLock:SetShown(texture and mark or false)
 	b.fbDim:SetShown(texture and not MatchesSearch(v.link) or false)
 	SetGlow(b, texture and v.isNew, quality)
 
@@ -366,13 +399,20 @@ local function UpdateLive(b)
 
 	IB.ApplyGuard(b, texture and ns.Marks.IsLocked(bag, slot), IB.Guarding())
 
-	local cooldown = b.Cooldown or _G[b:GetName() .. "Cooldown"]
+	if b.fbCooldown == nil then b.fbCooldown = b.Cooldown or _G[b:GetName() .. "Cooldown"] or false end
+	local cooldown = b.fbCooldown
 	if cooldown then
-		if texture then
-			local start, duration, enable = API.GetCooldown(bag, slot)
-			CooldownFrame_Set(cooldown, start or 0, duration or 0, enable)
-		else
-			cooldown:Hide()
+		-- (Only when it changed, like the rest.)
+		local start, duration, enable
+		if texture then start, duration, enable = API.GetCooldown(bag, slot) end
+		start, duration = start or 0, duration or 0
+		if start ~= b.fbCdStart or duration ~= b.fbCdDuration or enable ~= b.fbCdEnable then
+			b.fbCdStart, b.fbCdDuration, b.fbCdEnable = start, duration, enable
+			if texture then
+				CooldownFrame_Set(cooldown, start, duration, enable)
+			else
+				cooldown:Hide()
+			end
 		end
 	end
 
