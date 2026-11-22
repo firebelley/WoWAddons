@@ -1,0 +1,13 @@
+## Interface: 16001
+## Title: FireCooldowns
+## Notes: Keeps Transmute and other crafting cooldowns on screen for all your characters, and tells you when one is ready. /fcd
+## IconTexture: Interface\Icons\INV_Misc_StoneTablet_05
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariables: FireCooldownsDB
+
+FireEditMode.lua
+Core.lua
+Display.lua
+EditMode.lua
+Options.lua
