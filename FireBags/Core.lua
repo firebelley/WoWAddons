@@ -56,13 +56,18 @@ function ns.CloseBlizzardBags()
 	end
 end
 
+-- Our window open without Blizzard's (opened over the game menu or settings,
+-- below).
+local detached = false
+
 local syncPending = false
 local function SyncWithBlizzard()
 	syncPending = false
 	local open = IsBlizzardInventoryOpen()
+	if open then detached = false end
 	if open and not ns.inventory:IsShown() then
 		ns.inventory:Show()
-	elseif not open and ns.inventory:IsShown() then
+	elseif not open and ns.inventory:IsShown() and not detached then
 		ns.inventory:Hide()
 	end
 end
@@ -75,6 +80,35 @@ local function RequestSync()
 	C_Timer.After(0, SyncWithBlizzard)
 end
 
+-- While the game menu or settings are up, Blizzard won't open bags (no other
+-- window over a "center" panel), so the bag key did nothing. Ours open
+-- anyway, on their own; once the menu's gone, the next toggle closes them.
+local function BlockedByPanel()
+	if not ContainerFrame_AllowedToOpenBags or ContainerFrame_AllowedToOpenBags() then return false end
+	-- (Not where the game turns bags off altogether.)
+	local rule = Enum.GameRule and Enum.GameRule.BagsUIDisabled
+	if rule and C_GameRules and C_GameRules.IsGameRuleActive and C_GameRules.IsGameRuleActive(rule) then
+		return false
+	end
+	return true
+end
+
+local function OnToggle()
+	if ns.blizzardBank then return end
+	if BlockedByPanel() then
+		if ns.inventory:IsShown() then
+			ns.inventory:Hide()
+		else
+			detached = true
+			ns.inventory:Show()
+		end
+	elseif detached then
+		-- Blizzard's bags were closed, so this toggle opened them: it's
+		-- meant to close ours (which closes Blizzard's again).
+		ns.inventory:Hide()
+	end
+end
+
 local function HookBlizzardBagFunctions()
 	for _, name in ipairs({
 		"OpenBag", "CloseBag", "ToggleBag",
@@ -85,6 +119,12 @@ local function HookBlizzardBagFunctions()
 			hooksecurefunc(name, RequestSync)
 		end
 	end
+	for _, name in ipairs({ "ToggleAllBags", "ToggleBackpack" }) do
+		if type(_G[name]) == "function" then
+			hooksecurefunc(name, function() ns.SafeCall(OnToggle) end)
+		end
+	end
+	ns.inventory:HookScript("OnHide", function() detached = false end)
 end
 
 ---------------------------------------------------------------------------

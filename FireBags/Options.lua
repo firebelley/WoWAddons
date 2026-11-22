@@ -190,6 +190,8 @@ local function Build()
 		function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, ns.ApplyWindowSettings)
 	Slider("columns", "Bag slots", "How many slots fit in one row of the bag window.", 6, 24, 1, Slots, RefreshWindows)
 	Slider("bankColumns", "Bank slots", "How many slots fit in one row of the bank window.", 6, 24, 1, Slots, RefreshWindows)
+	Slider("slotSpacing", "Slot spacing", "The gap between slots, in both windows.", 0, 12, 1,
+		function(v) return ("%d px"):format(v) end, RefreshWindows)
 	EndSliders()
 	Checkbox("locked", "Lock window positions", "Stop the windows from being dragged by accident.")
 	Choice("background", "Background:", "What's behind the slots.", {

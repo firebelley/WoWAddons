@@ -4,7 +4,7 @@ local _, ns = ...
 local API = ns.API
 
 local SLOT = 37
-local SPACING = 4
+local SPACING = 4 -- default gap between slots (option: slotSpacing)
 local SECTION_TITLE = 18
 local SECTION_GAP = 8
 local FOOTER_HEIGHT = 20
@@ -288,6 +288,7 @@ end
 function Window:LayoutSections(sections, acquire)
 	local m = self.metrics
 	local cols = ns.db[self.opts.columnsKey]
+	local SPACING = ns.db.slotSpacing or SPACING
 
 	-- Buttons that stay put aren't hidden and re-shown (that's slow for a
 	-- whole bag's worth); only the ones no longer used are hidden at the end.
