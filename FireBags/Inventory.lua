@@ -209,6 +209,17 @@ window.searchBox = search
 -- Closing the bags clears the search.
 window:HookScript("OnHide", function() search:SetText("") end)
 
+-- Sort on open (option). After a moment, and after any junk selling (a vendor
+-- opens your bags and sells straight away) so the two don't cross.
+local function SortOnOpen()
+	if not (ns.db.sortOnOpen and window:IsShown()) or InCombatLockdown() or ns.IsSorting() then return end
+	if ns.Junk.IsSelling() then return C_Timer.After(0.5, SortOnOpen) end
+	ns.SortBags("inventory")
+end
+window:HookScript("OnShow", function()
+	if ns.db.sortOnOpen then C_Timer.After(0.5, SortOnOpen) end
+end)
+
 ---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ local DEFAULTS = {
 	showKeyring = true,
 	newItemGlow = true,
 	autoSellJunk = true, -- sell junk (and items marked as junk) when a vendor opens
+	sortOnOpen = false,  -- sort your bags each time the bag window opens
 	tooltipCounts = true, -- "Bags: 12  Bank: 40" on item tooltips
 	craftCounts = true,   -- profession windows count your bank too
 	craftVendor = true,   -- ...and show how many more you could make by buying vendor reagents
