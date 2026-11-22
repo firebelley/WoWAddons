@@ -21,7 +21,7 @@ local function JunkSlots()
 	for _, bag in ipairs(ns.GetInventoryBagIDs()) do
 		for slot = 1, API.GetNumSlots(bag) do
 			local info = API.GetSlotInfo(bag, slot)
-			local junk = info and (info.quality == 0 or ns.Marks.IsForSale(info.itemID))
+			local junk = info and (info.quality == 0 or ns.Marks.IsForSale(info.itemID, bag, slot))
 			if junk and not info.hasNoValue and not info.isLocked and not ns.Marks.IsLocked(bag, slot) then
 				local price = select(11, API.GetItemInfo(info.hyperlink or info.itemID)) or 0
 				if price > 0 then

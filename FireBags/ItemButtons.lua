@@ -388,7 +388,7 @@ local function UpdateLive(b)
 		quality = info and info.quality,
 		locked = info and info.isLocked,
 		isNew = ns.NewItems.IsNew(bag, slot),
-		isJunk = info and (info.quality == 0 or ns.Marks.IsForSale(info.itemID)) and not info.hasNoValue,
+		isJunk = info and (info.quality == 0 or ns.Marks.IsForSale(info.itemID, bag, slot)) and not info.hasNoValue,
 		questKind = IB.QuestKind(bag, slot, info),
 		hasLoot = info and info.hasLoot,
 		link = info and info.hyperlink,
@@ -490,7 +490,7 @@ function IB.AcquireLive(window, bag, slot)
 			ns.Marks.ToggleLock(self.fbBag, self.fbSlot)
 		elseif button == "RightButton" then
 			local info = API.GetSlotInfo(self.fbBag, self.fbSlot)
-			if info then ns.Marks.ToggleSell(info.itemID, info.hyperlink) end
+			if info then ns.Marks.ToggleSell(info.itemID, info.hyperlink, self.fbBag, self.fbSlot) end
 		end
 	end
 	b:HookScript("OnClick", function(self, button)
@@ -520,7 +520,7 @@ local function UpdateCached(b)
 		texture = item and item.i,
 		count = item and item.c,
 		quality = item and item.q,
-		isJunk = item and (item.q == 0 or ns.Marks.IsForSale(tonumber(item.l and item.l:match("item:(%d+)")))),
+		isJunk = item and (item.q == 0 or ns.Marks.IsForSale(tonumber(item.l and item.l:match("item:(%d+)")), b.fbBag, b.fbSlot, true)),
 		questKind = item and item.k,
 		hasLoot = item and item.o,
 		link = item and item.l,

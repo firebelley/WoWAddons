@@ -236,6 +236,17 @@ end
 
 local issecret = issecretvalue or function() return false end
 
+-- Gear marked as junk (Marks.lua: that piece, not its twins) is told apart
+-- from an unmarked copy, so it's the one that goes with the junk.
+local function MarkedGear(r)
+	local m = r.marked
+	if not m then
+		m = setmetatable({ link = r.link .. "#junk", marked = false, forSale = true }, { __index = r })
+		r.marked = m
+	end
+	return m
+end
+
 -- Reads every slot of every group. Returns nil if anything is still locked or
 -- not loaded yet (so the caller waits), "hidden" if the game hides what's in
 -- a slot (as it may in combat); else true and whether anything changed since
@@ -251,7 +262,11 @@ local function ReadGroups(groups)
 					return "hidden"
 				end
 				if info.isLocked or not info.hyperlink then return nil end
-				items[i] = Record(info)
+				local r = Record(info)
+				if (r.classID == 2 or r.classID == 4) and ns.Marks.IsForSale(r.id, s[1], s[2]) then
+					r = MarkedGear(r)
+				end
+				items[i] = r
 			else
 				items[i] = false
 			end
@@ -332,7 +347,7 @@ local function Layout(items, n)
 	local keep, junk = {}, {}
 	for _, r in ipairs(items) do
 		if r then
-			local isJunk = r.quality == 0 or ns.Marks.IsForSale(r.id) -- (grey, or marked as junk)
+			local isJunk = r.quality == 0 or r.forSale or ns.Marks.IsForSale(r.id) -- (grey, or marked as junk)
 			table.insert(isJunk and junk or keep, r)
 		end
 	end

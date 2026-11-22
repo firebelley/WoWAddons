@@ -1,14 +1,50 @@
 -- Options > AddOns > FireCooldowns (or /fcd). A self-drawn ("canvas") page,
 -- so the game's settings search never runs into it (see FireProcs/Options.lua).
+--   Show: the list on screen and the sound.
+--   Tracked: everything tracked on any character, each turned on or off;
+--   yours (added below) can be removed.
+--   Recently used: what you've used this session with a cooldown, to track.
+--   Add: a spell ID, or shift-click a spell, recipe or item into the box.
 local _, ns = ...
 local Options = {}
 ns.Options = Options
 
-local category
+local category, panel, Layout
+local ROW = 24
+
+local function Tip(owner, title, text)
+	owner:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(title, 1, 1, 1)
+		if text then GameTooltip:AddLine(text, nil, nil, nil, true) end
+		GameTooltip:Show()
+	end)
+	owner:SetScript("OnLeave", function() GameTooltip:Hide() end)
+end
+
+local function Button(parent, text, width, onClick)
+	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+	b:SetSize(width, 22)
+	b:SetText(text)
+	b:SetScript("OnClick", onClick)
+	return b
+end
+
+local function Heading(text)
+	local h = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	h:SetText(text)
+	return h
+end
+
+local function Note()
+	local n = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	n:SetJustifyH("LEFT")
+	return n
+end
 
 local function Build()
 	local db = ns.db
-	local panel = CreateFrame("Frame")
+	panel = CreateFrame("Frame")
 	panel:Hide()
 	local refreshers = {}
 	local y = -16
@@ -22,8 +58,8 @@ local function Build()
 	about:SetPoint("TOPLEFT", 16, y)
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
-	about:SetText("Transmute and other crafting cooldowns, on all your characters. Move the list in Edit Mode.")
-	y = y - 30
+	about:SetText("Cooldowns on all your characters. Move the list in Edit Mode.")
+	y = y - 26
 
 	local function Checkbox(key, label, tooltip, indent)
 		local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
@@ -38,55 +74,185 @@ local function Build()
 			ns.Display.Refresh()
 			for _, fn in ipairs(refreshers) do fn() end
 		end)
-		cb:SetScript("OnEnter", function(self)
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:SetText(label, 1, 1, 1)
-			GameTooltip:AddLine(tooltip, nil, nil, nil, true)
-			GameTooltip:Show()
-		end)
-		cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		Tip(cb, label, tooltip)
 		refreshers[#refreshers + 1] = function()
 			cb:SetChecked(db[key])
 			if indent then
-				local on = db.shown
-				cb:SetEnabled(on)
-				text:SetFontObject(on and "GameFontHighlight" or "GameFontDisable")
+				cb:SetEnabled(db.shown)
+				text:SetFontObject(db.shown and "GameFontHighlight" or "GameFontDisable")
 			end
 		end
-		y = y - 28
+		y = y - 26
 	end
 
 	Checkbox("shown", "Show on screen", "Each cooldown and its time left. Ready ones stay until used.")
 	Checkbox("alts", "Other characters", "Their cooldowns too, with their name.", 20)
 	Checkbox("readyOnly", "Only when ready", "Hide cooldowns still counting down.", 20)
 	Checkbox("sound", "Sound", "When a cooldown is ready.")
-	y = y - 10
+	y = y - 12
 
-	local test = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	test:SetSize(100, 22)
-	test:SetText("Try it")
-	test:SetPoint("TOPLEFT", 20, y)
-	test:SetScript("OnClick", function() SlashCmdList.FIRECOOLDOWNS("test") end)
-	test:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:SetText("Try it", 1, 1, 1)
-		GameTooltip:AddLine("A pretend transmute, ready in 10 seconds.", nil, nil, nil, true)
-		GameTooltip:Show()
-	end)
-	test:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	-------------------------------------------------------------------------
+	-- Tracked, recently used, add: laid out again whenever they change.
+	-------------------------------------------------------------------------
+	local top = y
+	local trackedHead = Heading("Tracked")
+	local trackedNote = Note()
+	trackedNote:SetText("Nothing yet. Crafts with a cooldown are added when you use them.")
+	local recentHead = Heading("Recently used")
+	local recentNote = Note()
+	recentNote:SetText("Things you use with a cooldown show here.")
+	local addHead = Heading("Add")
 
-	local clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	clear:SetSize(100, 22)
-	clear:SetText("Clear tests")
-	clear:SetPoint("LEFT", test, "RIGHT", 8, 0)
-	clear:SetScript("OnClick", function() SlashCmdList.FIRECOOLDOWNS("test clear") end)
+	local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+	box:SetSize(220, 20)
+	box:SetAutoFocus(false)
+	local addError = Note()
+	local function AddFromBox()
+		local name, why = ns.Add(box:GetText())
+		if name then
+			box:SetText("")
+			box:ClearFocus()
+			addError:SetText("")
+		else
+			addError:SetText(why)
+		end
+	end
+	box:SetScript("OnEnterPressed", AddFromBox)
+	box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+	Tip(box, "Spell ID or link", "Shift-click a spell, recipe or item while typing here.")
+	local addButton = Button(panel, "Add", 60, AddFromBox)
+	-- Shift-clicking a link while the box is focused puts it in the box.
+	local function OnInsertLink(link)
+		if box:HasFocus() and type(link) == "string" then box:SetText(link) end
+	end
+	if ChatEdit_InsertLink then hooksecurefunc("ChatEdit_InsertLink", OnInsertLink) end
+	if ChatFrameUtil and ChatFrameUtil.InsertLink then hooksecurefunc(ChatFrameUtil, "InsertLink", OnInsertLink) end
+
+	local test = Button(panel, "Try it", 100, function() SlashCmdList.FIRECOOLDOWNS("test") end)
+	Tip(test, "Try it", "A pretend transmute, ready in 10 seconds.")
+	local clear = Button(panel, "Clear test", 100, function() SlashCmdList.FIRECOOLDOWNS("test clear") end)
+
+	local trackedRows, recentRows = {}, {}
+
+	local function TrackedRow(i)
+		local r = trackedRows[i]
+		if r then return r end
+		r = CreateFrame("Frame", nil, panel)
+		r:SetSize(400, ROW)
+		r.check = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
+		r.check:SetSize(24, 24)
+		r.check:SetPoint("LEFT")
+		r.check:SetScript("OnClick", function(self) ns.SetOff(r.key, not self:GetChecked()) end)
+		Tip(r.check, "On", "Show it and remind you when it's ready.")
+		r.icon = r:CreateTexture(nil, "ARTWORK")
+		r.icon:SetSize(18, 18)
+		r.icon:SetPoint("LEFT", r.check, "RIGHT", 2, 0)
+		r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+		r.text = r:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0)
+		r.remove = Button(r, "Remove", 70, function() ns.Remove(r.key) end)
+		r.remove:SetPoint("LEFT", r.text, "RIGHT", 10, 0)
+		Tip(r.remove, "Remove", "Stop tracking it on all characters.")
+		trackedRows[i] = r
+		return r
+	end
+
+	local function RecentRow(i)
+		local r = recentRows[i]
+		if r then return r end
+		r = CreateFrame("Frame", nil, panel)
+		r:SetSize(400, ROW)
+		r.icon = r:CreateTexture(nil, "ARTWORK")
+		r.icon:SetSize(18, 18)
+		r.icon:SetPoint("LEFT", 4, 0)
+		r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+		r.text = r:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0)
+		r.track = Button(r, "Track", 70, function() ns.Add(tostring(r.id)) end)
+		r.track:SetPoint("LEFT", r.text, "RIGHT", 10, 0)
+		Tip(r.track, "Track", "On all characters that use it.")
+		recentRows[i] = r
+		return r
+	end
+
+	local function Place(region, x, yy)
+		region:ClearAllPoints()
+		region:SetPoint("TOPLEFT", panel, "TOPLEFT", x, yy)
+	end
+
+	Layout = function()
+		local yy = top
+		Place(trackedHead, 16, yy)
+		yy = yy - 20
+		local tracked = ns.Tracked()
+		trackedNote:SetShown(#tracked == 0)
+		if #tracked == 0 then
+			Place(trackedNote, 22, yy)
+			yy = yy - 18
+		end
+		for i, t in ipairs(tracked) do
+			local r = TrackedRow(i)
+			r.key = t.key
+			r.check:SetChecked(not t.off)
+			r.icon:SetTexture(t.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+			r.icon:SetDesaturated(t.off)
+			r.text:SetText(t.key)
+			r.text:SetFontObject(t.off and "GameFontDisable" or "GameFontHighlight")
+			r.remove:SetShown(t.custom == true)
+			Place(r, 18, yy)
+			r:Show()
+			yy = yy - ROW
+		end
+		for i = #tracked + 1, #trackedRows do trackedRows[i]:Hide() end
+		yy = yy - 10
+
+		Place(recentHead, 16, yy)
+		yy = yy - 20
+		local recent = ns.Recent()
+		recentNote:SetShown(#recent == 0)
+		if #recent == 0 then
+			Place(recentNote, 22, yy)
+			yy = yy - 18
+		end
+		for i, rc in ipairs(recent) do
+			local r = RecentRow(i)
+			r.id = rc.id
+			r.icon:SetTexture(rc.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+			r.text:SetText(rc.name)
+			Place(r, 18, yy)
+			r:Show()
+			yy = yy - ROW
+		end
+		for i = #recent + 1, #recentRows do recentRows[i]:Hide() end
+		yy = yy - 10
+
+		Place(addHead, 16, yy)
+		yy = yy - 22
+		Place(box, 24, yy)
+		addButton:ClearAllPoints()
+		addButton:SetPoint("LEFT", box, "RIGHT", 8, 0)
+		addError:ClearAllPoints()
+		addError:SetPoint("LEFT", addButton, "RIGHT", 8, 0)
+		yy = yy - 36
+
+		Place(test, 20, yy)
+		clear:ClearAllPoints()
+		clear:SetPoint("LEFT", test, "RIGHT", 8, 0)
+	end
 
 	panel:SetScript("OnShow", function()
 		for _, fn in ipairs(refreshers) do fn() end
+		addError:SetText("")
+		Layout()
 	end)
 
 	category = Settings.RegisterCanvasLayoutCategory(panel, "FireCooldowns")
 	Settings.RegisterAddOnCategory(category)
+end
+
+-- After something is tracked, removed or used.
+function Options.Refresh()
+	if panel and panel:IsShown() and Layout then Layout() end
 end
 
 function Options.Open()
