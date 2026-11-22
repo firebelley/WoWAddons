@@ -1,5 +1,7 @@
 -- Marks you put on items with an Alt-click (again to take it off):
---   Locked (Alt+left-click):  the item stays where it is when sorting.
+--   Locked (Alt+left-click):  the item stays where it is when sorting, and
+--                             can't be sold, deposited, mailed, traded or
+--                             disenchanted (ItemButtons.lua guards it).
 --   Junk (Alt+right-click):   the item is sold along with your junk.
 --
 -- Both are per character. A lock belongs to that one item (by its GUID, which

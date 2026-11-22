@@ -17,6 +17,7 @@ local GLOW_ATLAS = "bags-glow-white"
 local GLOW_FALLBACK = "Interface\\Buttons\\UI-ActionButton-Border"
 local LOOT_ICON = "Interface\\Cursor\\Pickup" -- the loot hand cursor
 local LOCK_ICON = "Interface\\AddOns\\FireBags\\Lock" -- Lock.tga
+local JUNK_ICON = "Interface\\AddOns\\FireBags\\Junk" -- Junk.tga (not a coin: FireAuction marks valuable items with one)
 
 -- Alt held, and neither Shift nor Ctrl.
 local function AltOnly()
@@ -156,6 +157,17 @@ local function AddDecorations(b)
 	lock:Hide()
 	b.fbLock = lock
 
+	-- Junk (grey, or marked as junk): a red bin in the top corner, in place
+	-- of Blizzard's coin.
+	local junk = b:CreateTexture(nil, "OVERLAY", nil, 5)
+	junk:SetTexture(JUNK_ICON)
+	junk:SetVertexColor(1, 0.4, 0.3)
+	junk:SetSize(16, 16)
+	junk:SetPoint("TOPLEFT", 0, 0)
+	junk:Hide()
+	b.fbJunk = junk
+	if b.JunkIcon then b.JunkIcon:SetAlpha(0) end
+
 	-- Search: darkens items that don't match.
 	local dim = b:CreateTexture(nil, "OVERLAY", nil, 7)
 	dim:SetAllPoints()
@@ -253,7 +265,7 @@ local function ApplyVisual(b, v)
 		b.fbBorder:Hide()
 	end
 
-	if b.JunkIcon then b.JunkIcon:SetShown(texture and v.isJunk or false) end
+	b.fbJunk:SetShown(texture and v.isJunk or false)
 	b.fbLoot:SetShown(texture and v.hasLoot or false)
 	b.fbLock:SetShown(texture and b.fbBag and ns.Marks.IsLocked(b.fbBag, b.fbSlot) or false)
 	b.fbDim:SetShown(texture and not MatchesSearch(v.link) or false)
@@ -269,6 +281,64 @@ local function RefreshTooltip(b)
 	if GameTooltip:IsOwned(b) and b:GetScript("OnEnter") then
 		b:GetScript("OnEnter")(b)
 	end
+end
+
+---------------------------------------------------------------------------
+-- Guarding locked items (Marks.lua): one can't be sold, deposited, mailed,
+-- traded, posted or disenchanted from its slot. While a vendor, bank,
+-- mailbox, trade, auction house or guild bank is open, or a spell wants an
+-- item (Disenchant, Prospecting...), its button takes no clicks or drags -
+-- Blizzard's click handler is what would hand it over, and replacing that
+-- would stop items being used. Alt-clicks still work, to unlock it.
+---------------------------------------------------------------------------
+local HANDOVER_FRAMES = {
+	"MerchantFrame", "MailFrame", "TradeFrame", "AuctionHouseFrame", "AuctionFrame",
+	"GuildBankFrame", "VoidStorageFrame",
+}
+
+function IB.Guarding()
+	if SpellIsTargeting and SpellIsTargeting() then return true end
+	if ns.Junk.atMerchant or ns.atBank then return true end
+	for _, name in ipairs(HANDOVER_FRAMES) do
+		local f = _G[name]
+		if type(f) == "table" and f.IsShown and f:IsShown() then return true end
+	end
+	return false
+end
+
+function IB.ApplyGuard(b, locked, guarding)
+	local guard = (locked and guarding) and true or false
+	if b.fbGuard == guard then return end
+	b.fbGuard = guard
+	if guard then
+		b:RegisterForClicks() -- (none)
+		b:RegisterForDrag()
+	else
+		b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		b:RegisterForDrag("LeftButton")
+	end
+end
+
+-- When one of those opens or closes, or a spell starts or stops wanting an item.
+local wasGuarding = false
+local function UpdateGuards()
+	local now = IB.Guarding()
+	if now == wasGuarding then return end
+	wasGuarding = now
+	for _, w in ipairs(ns.windows or {}) do
+		for _, b in pairs(w.fbLive or {}) do
+			IB.ApplyGuard(b, b.hasItem and ns.Marks.IsLocked(b.fbBag, b.fbSlot), now)
+		end
+	end
+end
+local function UpdateGuardsSoon() C_Timer.After(0.1, UpdateGuards) end -- (once frames have shown/hidden)
+for _, event in ipairs({
+	"PLAYER_INTERACTION_MANAGER_FRAME_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME_HIDE",
+	"MERCHANT_SHOW", "MERCHANT_CLOSED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
+	"MAIL_SHOW", "MAIL_CLOSED", "TRADE_SHOW", "TRADE_CLOSED",
+	"AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "GUILDBANKFRAME_OPENED", "GUILDBANKFRAME_CLOSED",
+}) do
+	ns.On(event, UpdateGuardsSoon)
 end
 
 ---------------------------------------------------------------------------
@@ -294,18 +364,7 @@ local function UpdateLive(b)
 	b.hasItem = texture and 1 or nil
 	b.readable = info and info.isReadable
 
-	-- A locked item isn't sold by right-clicking it at a vendor: there the
-	-- button stops taking right-clicks (Blizzard's click handler would sell
-	-- it, and replacing that handler would stop items being used).
-	local noSell = texture and ns.Junk.atMerchant and ns.Marks.IsLocked(bag, slot) or false
-	if b.fbNoSell ~= noSell then
-		b.fbNoSell = noSell
-		if noSell then
-			b:RegisterForClicks("LeftButtonUp")
-		else
-			b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-		end
-	end
+	IB.ApplyGuard(b, texture and ns.Marks.IsLocked(bag, slot), IB.Guarding())
 
 	local cooldown = b.Cooldown or _G[b:GetName() .. "Cooldown"]
 	if cooldown then
@@ -333,7 +392,10 @@ local function RefreshTargetCursor(b) -- b: the slot hovered (else the one under
 	if b and b.fbUpdate == UpdateLive then ResetCursor() end
 end
 
-ns.On("CURRENT_SPELL_CAST_CHANGED", function() C_Timer.After(0, RefreshTargetCursor) end)
+ns.On("CURRENT_SPELL_CAST_CHANGED", function()
+	C_Timer.After(0, RefreshTargetCursor)
+	UpdateGuards()
+end)
 
 -- Blizzard's template works out which bag a button belongs to from its
 -- parent's ID, so each bag gets an invisible holder frame per window.
@@ -383,20 +445,25 @@ function IB.AcquireLive(window, bag, slot)
 
 	-- Alt-click: left locks the item in place, right marks it as junk
 	-- (Marks.lua). The game does nothing else with an Alt-click on a bag item.
-	b:HookScript("OnClick", function(self, button)
-		if not AltOnly() or CursorHasItem() then return end
+	local function AltClick(self, button)
 		if button == "LeftButton" then
 			ns.Marks.ToggleLock(self.fbBag, self.fbSlot)
 		elseif button == "RightButton" then
 			local info = API.GetSlotInfo(self.fbBag, self.fbSlot)
 			if info then ns.Marks.ToggleSell(info.itemID, info.hyperlink) end
 		end
+	end
+	b:HookScript("OnClick", function(self, button)
+		if AltOnly() and not CursorHasItem() then AltClick(self, button) end
 	end)
 
-	-- (Says why a right-click on a locked item did nothing at a vendor.)
+	-- A guarded button gets no clicks (above), only this.
 	b:HookScript("OnMouseUp", function(self, button)
-		if button == "RightButton" and self.fbNoSell and not CursorHasItem() then
-			UIErrorsFrame:AddMessage("Locked items aren't sold.", 1, 0.1, 0.1)
+		if not self.fbGuard or CursorHasItem() then return end
+		if AltOnly() then
+			AltClick(self, button)
+		else
+			UIErrorsFrame:AddMessage("Locked. Alt-click to unlock.", 1, 0.1, 0.1)
 		end
 	end)
 

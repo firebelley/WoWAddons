@@ -92,7 +92,6 @@ end
 
 ns.On("MERCHANT_SHOW", function()
 	Junk.atMerchant = true
-	FireBags.UpdateButtons() -- (locked items stop taking right-clicks)
 	if ns.UpdateJunkTab then ns.UpdateJunkTab() end
 	-- (A moment later, once the vendor's window is up.)
 	if ns.db.autoSellJunk then
@@ -104,7 +103,6 @@ end)
 
 ns.On("MERCHANT_CLOSED", function()
 	Junk.atMerchant = false
-	FireBags.UpdateButtons()
 	if ticker then StopSelling() end
 	if ns.UpdateJunkTab then ns.UpdateJunkTab() end
 end)

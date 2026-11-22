@@ -45,7 +45,7 @@ local ARMOR_GROUP = {
 --   other:              item class, lowest first (containers, gems, trade goods, recipes, quest items...);
 --                       then subtype, highest first; then item level, highest first
 --                       (TrinityCore's has item ID here; Blizzard's sort of your bank went by item level)
--- Ties: item ID, then the bigger stack first. Junk (grey) goes at the end
+-- Ties: item ID, then the bigger stack first. Junk (grey, or marked as junk) goes at the end
 -- instead, filling from the last slot back.
 
 local function MakeRecord(info)
@@ -292,7 +292,10 @@ end
 local function Layout(items, n)
 	local keep, junk = {}, {}
 	for _, r in ipairs(items) do
-		if r then table.insert(r.quality == 0 and junk or keep, r) end
+		if r then
+			local isJunk = r.quality == 0 or ns.Marks.IsForSale(r.id) -- (grey, or marked as junk)
+			table.insert(isJunk and junk or keep, r)
+		end
 	end
 	table.sort(keep, Compare)
 	table.sort(junk, Compare)
