@@ -7,7 +7,10 @@ local _, ns = ...
 local BagIcons = {}
 ns.BagIcons = BagIcons
 
-local COIN = "Interface\\MoneyFrame\\UI-GoldIcon"
+-- Valuable.tga: a gold coin with a black outline (shows on any item art), in
+-- the style of FireBags' padlock and bin. Its colour is in the image (so the
+-- shine stays white), not tinted here.
+local COIN = "Interface\\AddOns\\FireAuction\\Valuable"
 
 local function IsValuable(link, isBound)
 	local db = ns.db
@@ -25,8 +28,8 @@ local function Decorate(button, link, isBound)
 		if not valuable then return end
 		icon = button:CreateTexture(nil, "OVERLAY", nil, 7)
 		icon:SetTexture(COIN)
-		icon:SetSize(13, 13)
-		icon:SetPoint("TOPRIGHT", -2, -2)
+		icon:SetSize(16, 16)
+		icon:SetPoint("TOPRIGHT", 0, 0)
 		button.faValuable = icon
 	end
 	icon:SetShown(valuable)
