@@ -422,39 +422,103 @@ end
 
 ---------------------------------------------------------------------------
 -- Guarding locked items (Marks.lua): one can't be sold, deposited, mailed,
--- traded, posted or disenchanted from its slot. While a vendor, bank,
--- mailbox, trade, auction house or guild bank is open, or a spell wants an
--- item (Disenchant, Prospecting...), its button takes no clicks or drags -
--- Blizzard's click handler is what would hand it over, and replacing that
--- would stop items being used. Alt-clicks still work, to unlock it.
+-- traded, posted or disenchanted. Blizzard's click handler is what would hand
+-- it over (and replacing that would stop items being used), so:
+--   - While a vendor, bank, mailbox, trade, auction house or guild bank is
+--     open, its button takes no right-clicks (those hand it over). It can
+--     still be picked up and moved round your bags; while it's on the cursor
+--     those windows are covered by a catcher that puts it back.
+--   - While a spell wants an item (Disenchant, Prospecting...), its button
+--     takes no clicks or drags at all.
+-- Alt-clicks still work, to unlock it.
 ---------------------------------------------------------------------------
 local HANDOVER_FRAMES = {
 	"MerchantFrame", "MailFrame", "TradeFrame", "AuctionHouseFrame", "AuctionFrame",
 	"GuildBankFrame", "VoidStorageFrame",
 }
 
+local function Shown(name)
+	local f = _G[name]
+	return type(f) == "table" and f.IsShown and f:IsShown() and f or nil
+end
+
+-- "all", "right" (right-clicks only), or false.
 function IB.Guarding()
-	if SpellIsTargeting and SpellIsTargeting() then return true end
-	if ns.Junk.atMerchant or ns.atBank then return true end
+	if SpellIsTargeting and SpellIsTargeting() then return "all" end
+	if ns.Junk.atMerchant or ns.atBank then return "right" end
 	for _, name in ipairs(HANDOVER_FRAMES) do
-		local f = _G[name]
-		if type(f) == "table" and f.IsShown and f:IsShown() then return true end
+		if Shown(name) then return "right" end
 	end
 	return false
 end
 
 function IB.ApplyGuard(b, locked, guarding)
-	local guard = (locked and guarding) and true or false
+	local guard = locked and guarding or false
 	if b.fbGuard == guard then return end
 	b.fbGuard = guard
-	if guard then
+	if guard == "all" then
 		b:RegisterForClicks() -- (none)
 		b:RegisterForDrag()
+	elseif guard == "right" then
+		b:RegisterForClicks("LeftButtonUp")
+		b:RegisterForDrag("LeftButton")
 	else
 		b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 		b:RegisterForDrag("LeftButton")
 	end
 end
+
+-- A locked item on the cursor: the windows it could be handed over to catch
+-- it and put it back (dropped on the bank window too, if it's from your bags).
+local picked -- { bag, slot } last picked up from a FireBags slot (older clients)
+local function LockedOnCursor() -- the bag it's from, or nil
+	if not CursorHasItem() then return nil end
+	local loc = C_Cursor and C_Cursor.GetCursorItem and C_Cursor.GetCursorItem()
+	local bag, slot
+	if loc and loc.IsBagAndSlot and loc:IsBagAndSlot() then
+		bag, slot = loc:GetBagAndSlot()
+	elseif picked then
+		bag, slot = picked[1], picked[2]
+	end
+	if bag and ns.Marks.IsLocked(bag, slot) then return bag end
+end
+
+local catchers = {} -- [frame] = catcher
+local function Refuse()
+	ClearCursor() -- (back to its slot)
+	UIErrorsFrame:AddMessage("Locked. Alt-click to unlock.", 1, 0.1, 0.1)
+end
+local function Catcher(target)
+	local c = catchers[target]
+	if not c then
+		c = CreateFrame("Frame", nil, target)
+		c:SetAllPoints(target)
+		c:EnableMouse(true)
+		c:SetScript("OnMouseUp", Refuse)
+		c:SetScript("OnReceiveDrag", Refuse)
+		catchers[target] = c
+	end
+	-- Over everything in that window (but not windows above it, like ours).
+	c:SetFrameLevel(math.min(target:GetFrameLevel() + 300, 9000))
+	return c
+end
+
+local function UpdateCatchers()
+	local from = IB.Guarding() and LockedOnCursor()
+	for _, c in pairs(catchers) do c:Hide() end
+	if not from then return end
+	for _, name in ipairs(HANDOVER_FRAMES) do
+		local f = Shown(name)
+		if f then Catcher(f):Show() end
+	end
+	if ns.atBank and ns.bank and ns.bank:IsShown() and ns.IsInventoryBag(from) then
+		Catcher(ns.bank):Show()
+	end
+end
+ns.On("CURSOR_CHANGED", function()
+	if not CursorHasItem() then picked = nil end
+	UpdateCatchers()
+end)
 
 -- When one of those opens or closes, or a spell starts or stops wanting an item.
 local wasGuarding = false
@@ -467,6 +531,7 @@ local function UpdateGuards()
 			IB.ApplyGuard(b, b.hasItem and ns.Marks.IsLocked(b.fbBag, b.fbSlot), now)
 		end
 	end
+	UpdateCatchers()
 end
 local function UpdateGuardsSoon() C_Timer.After(0.1, UpdateGuards) end -- (once frames have shown/hidden)
 for _, event in ipairs({
@@ -599,12 +664,24 @@ function IB.AcquireLive(window, bag, slot)
 		end
 	end
 	b:HookScript("OnClick", function(self, button)
-		if AltOnly() and not CursorHasItem() then AltClick(self, button) end
+		if CursorHasItem() then
+			picked = { self.fbBag, self.fbSlot }
+			UpdateCatchers()
+		elseif AltOnly() then
+			AltClick(self, button)
+		end
+	end)
+	b:HookScript("OnDragStart", function(self)
+		if CursorHasItem() then
+			picked = { self.fbBag, self.fbSlot }
+			UpdateCatchers()
+		end
 	end)
 
-	-- A guarded button gets no clicks (above), only this.
+	-- Clicks a guarded button doesn't take (above) come here.
 	b:HookScript("OnMouseUp", function(self, button)
 		if not self.fbGuard or CursorHasItem() then return end
+		if self.fbGuard == "right" and button ~= "RightButton" then return end
 		if AltOnly() then
 			AltClick(self, button)
 		else
