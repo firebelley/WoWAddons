@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: FireChat
+## Notes: A cleaner chat window: no borders, tabs and buttons show when you mouse over it, flat input box. /fchat
+## IconTexture: Interface\Icons\INV_Letter_15
+## Author: Firebelley
+## Version: 0.1.0
+## SavedVariables: FireChatDB
+
+Core.lua
+Options.lua
