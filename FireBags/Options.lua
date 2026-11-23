@@ -208,6 +208,8 @@ local function Build()
 		function() ns.inventory:RequestRefresh() end)
 	Checkbox("newItemGlow", "Make new items glow", "Items you just got glow until you look at them.",
 		function() ns.inventory:RequestRefresh() end)
+	Checkbox("redUnusable", "Show items you can't use in red", "Gear and items your character can't use yet, or at all.",
+		function() FireBags.UpdateButtons() end)
 	Checkbox("sortOnOpen", "Sort bags when opened", "Every time you open your bags (not in combat).")
 	Checkbox("autoSellJunk", "Sell junk at vendors automatically",
 		"Grey items and items you marked as junk (Alt-right-click).")

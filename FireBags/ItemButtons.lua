@@ -240,6 +240,97 @@ function IB.SetSearch(text)
 end
 
 ---------------------------------------------------------------------------
+-- Can't use: the game writes what you don't meet (class, level, armor or
+-- weapon type, profession...) in red on the item's tooltip. Read once per
+-- item link; again when you level up or learn something.
+---------------------------------------------------------------------------
+local unusable = {} -- [link] = true / false
+local unusablePending = false -- an item wasn't loaded yet (read it when it is)
+local issecret = issecretvalue or function() return false end
+
+local function IsRed(c)
+	if type(c) ~= "table" then return false end
+	local r, g, bl = c.r, c.g, c.b
+	if issecret(r) or type(r) ~= "number" then return false end
+	return r > 0.95 and g < 0.2 and bl < 0.2
+end
+
+local scanner
+local function ScanLines(link) -- returns true/false, or nil if it can't tell yet
+	local T = C_TooltipInfo
+	if T and T.GetHyperlink then
+		local ok, data = pcall(T.GetHyperlink, link)
+		if not (ok and type(data) == "table" and type(data.lines) == "table" and #data.lines > 1) then return nil end
+		for _, line in ipairs(data.lines) do
+			if issecret(line.leftText) then return nil end
+			if IsRed(line.leftColor) or IsRed(line.rightColor) then return true end
+		end
+		return false
+	end
+	-- (Older clients: a hidden tooltip of our own.)
+	if not scanner then
+		scanner = CreateFrame("GameTooltip", "FireBagsScanTooltip", nil, "GameTooltipTemplate")
+	end
+	scanner:SetOwner(WorldFrame, "ANCHOR_NONE")
+	scanner:SetHyperlink(link)
+	local n = scanner:NumLines()
+	if n < 2 then return nil end
+	for i = 1, n do
+		for _, side in ipairs({ "Left", "Right" }) do
+			local fs = _G["FireBagsScanTooltipText" .. side .. i]
+			if fs and fs:IsShown() then
+				local r, g, bl = fs:GetTextColor()
+				if IsRed({ r = r, g = g, b = bl }) then return true end
+			end
+		end
+	end
+	return false
+end
+
+function IB.Unusable(link)
+	if not link then return false end
+	local known = unusable[link]
+	if known ~= nil then return known end
+	if not API.GetItemInfo(link) then
+		unusablePending = true
+		return false
+	end
+	local result = ScanLines(link)
+	if result == nil then
+		unusablePending = true
+		return false
+	end
+	unusable[link] = result
+	return result
+end
+
+-- Something you learned may make items usable: those are read again.
+-- (A second after: the level and skills are up to date by then. Not in
+-- combat, where weapon skills go up often and it'd redraw for nothing.)
+local recheckPending = false
+local function Recheck()
+	recheckPending = false
+	if InCombatLockdown() then recheckPending = true return end
+	local any = false
+	for link, v in pairs(unusable) do
+		if v then unusable[link] = nil any = true end
+	end
+	if any then FireBags.UpdateButtons() end
+end
+local function RecheckSoon()
+	if recheckPending then return end
+	recheckPending = true
+	C_Timer.After(1, Recheck)
+end
+for _, event in ipairs({
+	"PLAYER_LEVEL_UP", "SKILL_LINES_CHANGED", "LEARNED_SPELL_IN_TAB", "NEW_RECIPE_LEARNED",
+	"CHARACTER_POINTS_CHANGED",
+}) do
+	ns.On(event, RecheckSoon)
+end
+ns.On("PLAYER_REGEN_ENABLED", function() if recheckPending then C_Timer.After(1, Recheck) end end)
+
+---------------------------------------------------------------------------
 -- Shared visuals for both kinds of button.
 -- v: texture, count, quality, locked, isNew, isJunk, questKind, hasLoot, link
 ---------------------------------------------------------------------------
@@ -248,15 +339,21 @@ end
 -- redrawn on every change to them). What isn't in v: the search, the item's
 -- lock mark, the glow option, and the rest (junk marks, other addons' hooks)
 -- by a version number, bumped when any of those change.
-local VISUAL_KEYS = { "texture", "count", "quality", "locked", "isNew", "isJunk", "questKind", "hasLoot", "link", "isBound" }
+local VISUAL_KEYS = { "texture", "count", "quality", "locked", "isNew", "isJunk", "questKind", "hasLoot", "link", "isBound", "unusable" }
 local visualVersion = 0
 
 function IB.Invalidate()
 	visualVersion = visualVersion + 1
 end
 
--- (Items loading can change whether they match the search.)
-ns.On("GET_ITEM_INFO_RECEIVED", function() if searchText then IB.Invalidate() end end)
+-- (Items loading can change whether they match the search, or show whether
+-- they can be used.)
+ns.On("GET_ITEM_INFO_RECEIVED", function()
+	if searchText or unusablePending then
+		unusablePending = false
+		IB.Invalidate()
+	end
+end)
 
 local function Unchanged(b, v, mark)
 	local last = b.fbShown
@@ -281,6 +378,13 @@ local function ApplyVisual(b, v)
 	b.fbEmptyIcon:SetShown(not texture)
 	SetItemButtonCount(b, v.count or 0)
 	SetItemButtonDesaturated(b, v.locked or false)
+	-- (Red like a vendor's items you can't use.)
+	local icon = HasIcon(b)
+	if texture and v.unusable then
+		icon:SetVertexColor(0.9, 0.15, 0.15)
+	else
+		icon:SetVertexColor(1, 1, 1)
+	end
 
 	if texture and v.questKind then
 		b.fbQuest:SetTexture(v.questKind == "bang" and QUEST_BANG or QUEST_BORDER)
@@ -393,6 +497,7 @@ local function UpdateLive(b)
 		hasLoot = info and info.hasLoot,
 		link = info and info.hyperlink,
 		isBound = info and info.isBound or false,
+		unusable = texture and ns.db.redUnusable and IB.Unusable(info.hyperlink) or false,
 	})
 	b.hasItem = texture and 1 or nil
 	b.readable = info and info.isReadable
@@ -524,6 +629,7 @@ local function UpdateCached(b)
 		questKind = item and item.k,
 		hasLoot = item and item.o,
 		link = item and item.l,
+		unusable = item and ns.db.redUnusable and IB.Unusable(item.l) or false,
 	})
 	local cooldown = b.Cooldown or _G[b:GetName() .. "Cooldown"]
 	if cooldown then cooldown:Hide() end

@@ -11,6 +11,7 @@ local DEFAULTS = {
 	locked = false,
 	showKeyring = true,
 	newItemGlow = true,
+	redUnusable = true,  -- tint items you can't use red
 	autoSellJunk = true, -- sell junk (and items marked as junk) when a vendor opens
 	sortOnOpen = false,  -- sort your bags each time the bag window opens
 	tooltipCounts = true, -- "Bags: 12  Bank: 40" on item tooltips
