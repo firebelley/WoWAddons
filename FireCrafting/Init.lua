@@ -18,6 +18,22 @@ function ns.SafeCall(fn, ...)
 	return xpcall(fn, ns.ReportError, ...)
 end
 
+-- /firecrafting debug: chat notes on what the Craft button does.
+function ns.Debug(msg)
+	if ns.db and ns.db.debug then print("|cff80a0ffFireCrafting debug|r: " .. msg) end
+end
+
+SLASH_FIRECRAFTING1 = "/firecrafting"
+SlashCmdList.FIRECRAFTING = function(arg)
+	if not ns.db then return end
+	if (arg or ""):lower():match("^%s*debug") then
+		ns.db.debug = not ns.db.debug or nil
+		ns.Print("debug " .. (ns.db.debug and "on" or "off") .. ".")
+	else
+		ns.Print("/firecrafting debug - chat notes on what the Craft button does.")
+	end
+end
+
 ---------------------------------------------------------------------------
 -- Events: ns.On(event, fn). Events this client doesn't have are ignored.
 ---------------------------------------------------------------------------

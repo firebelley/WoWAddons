@@ -266,20 +266,56 @@ local function Casting()
 	return (UnitCastingInfo and UnitCastingInfo("player")) ~= nil or (UnitChannelInfo and UnitChannelInfo("player")) ~= nil
 end
 
--- The recipe's row in Blizzard's recipe list, if it's on screen.
+-- The recipe's row in Blizzard's recipe list, if it's on screen, and whether
+-- the list already counts that row as selected (clicking it then does nothing).
 local function BlizzardRow(recipeID)
-	local box = page.RecipeList and page.RecipeList.ScrollBox
+	local list = page.RecipeList
+	local box = list and list.ScrollBox
 	local frames = box and box.GetFrames and box:GetFrames()
 	for _, frame in ipairs(frames or {}) do
 		local node = frame:IsVisible() and frame.GetElementData and frame:GetElementData()
 		local data = node and node.GetData and node:GetData()
 		local info = data and data.recipeInfo
-		if info then
-			if info.recipeID == recipeID then return frame end
-			local highest = Professions and Professions.GetHighestLearnedRecipe and Professions.GetHighestLearnedRecipe(info)
-			if highest and highest.recipeID == recipeID then return frame end
+		local match = info and info.recipeID == recipeID
+		if info and not match and Professions and Professions.GetHighestLearnedRecipe then
+			local highest = Professions.GetHighestLearnedRecipe(info)
+			match = highest and highest.recipeID == recipeID
+		end
+		if match then
+			local sb = list.selectionBehavior
+			local ok, selected = pcall(sb and sb.IsElementDataSelected or function() end, sb, node)
+			return frame, ok and selected or false
 		end
 	end
+end
+
+-- The slow way: ask the game to open the recipe. Blizzard holds the answer
+-- while its recipe list is rebuilding (just after opening, after a craft)
+-- until the list's next update, so wait for the rebuild to finish first.
+local function OpenRecipeWhenReady(recipeID, tries)
+	tries = tries or 0
+	local TS = C_TradeSkillUI
+	if TS.IsDataSourceChanging and TS.IsDataSourceChanging() and tries < 60 then
+		C_Timer.After(0.05, function() OpenRecipeWhenReady(recipeID, tries + 1) end)
+		return
+	end
+	if tries > 0 then ns.Debug(("waited %.2fs for the list to finish rebuilding"):format(tries * 0.05)) end
+	if TS.OpenRecipe then TS.OpenRecipe(recipeID) end
+end
+
+-- Debug: did the selection happen?
+local function CheckSelected(recipeID, name)
+	C_Timer.After(0.5, function()
+		local info = SelectedRecipe()
+		if info and info.recipeID == recipeID then
+			ns.Debug(name .. " selected.")
+		else
+			local pending = ProfessionsFrame and ProfessionsFrame.openRecipeResponse
+			ns.Debug(("%s NOT selected after 0.5s (showing %s; Blizzard holding a request: %s; list rebuilding: %s)"):format(
+				name, info and info.name or "nothing", pending and tostring(pending.recipeID) or "no",
+				tostring(C_TradeSkillUI.IsDataSourceChanging and C_TradeSkillUI.IsDataSourceChanging())))
+		end
+	end)
 end
 
 -- Addons can't craft (CraftRecipe is Blizzard-only), so the button is a
@@ -306,7 +342,7 @@ local function RefreshCraft(result)
 		return
 	end
 	if id ~= selected then
-		b.selectID = id
+		b.selectID, b.selectName = id, name
 		b:SetText("Select " .. name)
 		b:Enable()
 		return
@@ -607,15 +643,20 @@ local function Build()
 	-- before the secure click presses it.
 	craftButton:HookScript("PreClick", function(self)
 		if not self.selectID or InCombatLockdown() then return end
-		local row = BlizzardRow(self.selectID)
-		if row then
+		local id, name = self.selectID, self.selectName or "?"
+		local row, alreadySelected = BlizzardRow(id)
+		if row and not alreadySelected then
+			ns.Debug("select " .. name .. ": clicking its row")
 			self:SetAttribute("type", "click")
 			self:SetAttribute("clickbutton", row)
 		else
+			ns.Debug("select " .. name .. ": " .. (row and "its row is already marked selected" or "row not on screen")
+				.. ", asking the game to open it")
 			self:SetAttribute("type", nil)
 			self:SetAttribute("clickbutton", nil)
-			if C_TradeSkillUI.OpenRecipe then C_TradeSkillUI.OpenRecipe(self.selectID) end
+			OpenRecipeWhenReady(id)
 		end
+		if ns.db.debug then CheckSelected(id, name) end
 	end)
 	craftButton:SetText("Craft")
 	local label = craftButton:GetFontString()
