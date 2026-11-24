@@ -85,7 +85,7 @@ local function Build()
 		y = y - 26
 	end
 
-	Checkbox("shown", "Show on screen", "Each cooldown and its time left. Ready ones stay until used.")
+	Checkbox("shown", "Show on screen", "Each cooldown and its time left. Ready ones stay until used or right-clicked.")
 	Checkbox("alts", "Other characters", "Their cooldowns too, with their name.", 20)
 	Checkbox("readyOnly", "Only when ready", "Hide cooldowns still counting down.", 20)
 	Checkbox("sound", "Sound", "When a cooldown is ready.")

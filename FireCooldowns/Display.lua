@@ -45,6 +45,26 @@ function Display.ResetPosition()
 	Display.Place()
 end
 
+-- The game blocks setting up click pass-through in combat: a row made
+-- mid-fight gets its clicks once the fight ends.
+local clicksPending = {}
+local function EnableClicks(r)
+	if InCombatLockdown() then
+		clicksPending[r] = true
+		return
+	end
+	r:EnableMouse(true)
+	if r.SetPassThroughButtons then pcall(r.SetPassThroughButtons, r, "LeftButton") end
+end
+local regen = CreateFrame("Frame")
+regen:RegisterEvent("PLAYER_REGEN_ENABLED")
+regen:SetScript("OnEvent", function()
+	for r in pairs(clicksPending) do
+		clicksPending[r] = nil
+		EnableClicks(r)
+	end
+end)
+
 local function CreateRow()
 	local r = CreateFrame("Frame", nil, frame)
 	r.icon = r:CreateTexture(nil, "ARTWORK")
@@ -63,6 +83,25 @@ local function CreateRow()
 	a:SetToAlpha(0.3)
 	a:SetDuration(0.8)
 	r.pulse = pulse
+	-- Right-click a ready one to dismiss it until it's used again; left
+	-- clicks go through to the world.
+	EnableClicks(r)
+	r:SetScript("OnMouseUp", function(self, button)
+		local item = self.item
+		if button ~= "RightButton" or not (item and item.ready and item.entries) then return end
+		for _, e in ipairs(item.entries) do e.dismissed = true end
+		GameTooltip:Hide()
+		Display.Refresh()
+	end)
+	r:SetScript("OnEnter", function(self)
+		local item = self.item
+		if not (item and item.ready and item.entries) then return end
+		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+		GameTooltip:SetText(item.plain .. " ready", 1, 1, 1)
+		GameTooltip:AddLine("Right-click to dismiss until it's used again.", 0.8, 0.8, 0.8)
+		GameTooltip:Show()
+	end)
+	r:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	return r
 end
 
@@ -80,10 +119,15 @@ local function Items()
 	end
 	local items = {}
 	for _, c in ipairs(chars) do
-		for _, g in ipairs(ns.Group(ns.Entries(c), now)) do
+		local shown = {}
+		for _, e in ipairs(ns.Entries(c)) do
+			if not (e.dismissed and e.readyAt <= now) then shown[#shown + 1] = e end
+		end
+		for _, g in ipairs(ns.Group(shown, now)) do
 			if g.ready or not db.readyOnly then
 				items[#items + 1] = {
 					label = c == me and g.label or (ns.ClassName(c) .. ": " .. g.label),
+					plain = g.label, entries = g.entries,
 					icon = g.icon, ready = g.ready, left = g.left, mine = c == me,
 				}
 			end
@@ -113,6 +157,7 @@ function Display.Refresh()
 		r.icon:SetTexture(item.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
 		r.name:SetFont(font[1], size, font[2])
 		r.time:SetFont(font[1], size, font[2])
+		r.item = item
 		r.name:SetText(item.label)
 		if item.ready then
 			r.time:SetText("Ready")

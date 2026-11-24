@@ -234,6 +234,7 @@ local function SetLeft(e, left, duration)
 	if math.abs(readyAt - (e.readyAt or 0)) > REAL_MIN then
 		e.readyAt = readyAt
 		e.told = false
+		e.dismissed = nil -- (a new cooldown: its reminder comes back)
 	end
 end
 
@@ -299,10 +300,11 @@ local function Group(entries, now)
 			end
 		end
 		if not found then
-			found = { prefix = prefix, ready = ready, readyAt = e.readyAt, icon = e.icon, names = {} }
+			found = { prefix = prefix, ready = ready, readyAt = e.readyAt, icon = e.icon, names = {}, entries = {} }
 			groups[#groups + 1] = found
 		end
 		found.names[#found.names + 1] = e.name
+		found.entries[#found.entries + 1] = e
 	end
 	for _, g in ipairs(groups) do
 		g.label = #g.names == 1 and g.names[1] or g.prefix
@@ -414,7 +416,10 @@ end
 function ns.AnnounceReady(key)
 	local now = Now()
 	for _, e in pairs(me.cds) do
-		if Prefix(e.name) == key and e.readyAt <= now then e.told = false end
+		if Prefix(e.name) == key and e.readyAt <= now then
+			e.told = false
+			e.dismissed = nil
+		end
 	end
 	Check(false)
 end

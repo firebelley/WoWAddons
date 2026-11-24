@@ -29,28 +29,35 @@ local last = {} -- [spellID] = { cost, cast } at the previous check
 local ratios = {} -- every spell's cast time now / before, this check (kept between checks)
 
 -- A talent's effect that lasts a while after it triggers: "lasts 10 sec",
--- "for 10 sec", "your next Soul Fire", "cast under the effect of Decimation".
+-- "for 10 sec", "for the next 10 sec" (Decimation), "your next Soul Fire",
+-- "cast under the effect of Decimation".
 -- (Not "by 2 sec": that's a permanent cast time reduction, like Bane.)
 local function Temporary(d, name)
-	return d:find("lasts", 1, true) or d:find("for %d+%.?%d* sec") or d:find("your next", 1, true)
-		or d:find("effect of " .. name:lower(), 1, true)
+	return d:find("lasts", 1, true) or d:find("for %d+%.?%d* sec") or d:find("next %d+%.?%d* sec")
+		or d:find("your next", 1, true) or d:find("effect of " .. name:lower(), 1, true)
 end
 
--- The talent behind a change, by its tooltip.
+-- The talent behind a change, by its tooltip. Best: it mentions the spell and
+-- a chance; next: the spell and a short-lived effect; last: it's the only
+-- talent of yours that mentions the spell at all.
 local function FindPassive(spellName)
-	local fallback
+	local temporary, only, mentions = nil, nil, 0
 	for _, p in ipairs(Spells.passives or {}) do
 		local d = Spells.PassiveText(p) -- (re-read if it was still loading)
 		if spellName then
 			if d:find(spellName:lower(), 1, true) then
 				if d:find("chance", 1, true) then return p end
-				if not fallback and Temporary(d, p.name) then fallback = p end
+				if not temporary and Temporary(d, p.name) then temporary = p end
+				if p.talent then
+					mentions = mentions + 1
+					only = p
+				end
 			end
 		elseif d:find("chance", 1, true) and (d:find("mana cost", 1, true) or d:find("clearcasting", 1, true)) then
 			return p
 		end
 	end
-	return fallback
+	return temporary or (mentions == 1 and only or nil)
 end
 
 local WHAT = { free = " is free", instant = " is instant", faster = " casts faster" }
