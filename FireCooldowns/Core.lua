@@ -100,6 +100,79 @@ local function SpellCooldown(id)
 	return math.max(0, start + duration - GetTime()), duration
 end
 
+---------------------------------------------------------------------------
+-- Items, by key "item:<itemID>" (spells are keyed by their spell ID). An
+-- item's use cooldown is its own: the spell it casts may show none (Soulstone).
+---------------------------------------------------------------------------
+local function ItemID(key)
+	return type(key) == "string" and tonumber(key:match("^item:(%d+)$")) or nil
+end
+
+local function ItemNameIcon(itemID)
+	local name, icon
+	if C_Item and C_Item.GetItemNameByID then
+		local ok, n = pcall(C_Item.GetItemNameByID, itemID)
+		if ok then name = n end
+	end
+	if not name and GetItemInfo then name = GetItemInfo(itemID) end
+	if C_Item and C_Item.GetItemIconByID then
+		local ok, i = pcall(C_Item.GetItemIconByID, itemID)
+		if ok then icon = i end
+	end
+	if not icon and GetItemIcon then icon = GetItemIcon(itemID) end
+	-- (Names of items not seen lately can take a moment to load: keep them.)
+	if name then db.itemNames[itemID] = name else name = db.itemNames[itemID] end
+	return name, icon
+end
+
+local function ItemCooldown(itemID)
+	if InCombatLockdown() then return nil end
+	local fn = (C_Container and C_Container.GetItemCooldown) or (C_Item and C_Item.GetItemCooldown) or GetItemCooldown
+	if not fn then return nil end
+	local ok, start, duration, enabled = pcall(fn, itemID)
+	if not ok or start == nil or duration == nil or Secret(start) or Secret(duration) then return nil end
+	if enabled == false or enabled == 0 then return nil end
+	if start <= 0 or duration <= 0 then return 0, 0 end
+	return math.max(0, start + duration - GetTime()), duration
+end
+
+-- Remembers which spell an item casts (db.itemSpells), so casting it counts
+-- as the item. Asks the game to load the item if it doesn't know it yet.
+local function MapItemSpell(itemID)
+	local fn = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+	if not fn then return end
+	local ok, _, spellID = pcall(fn, itemID)
+	if ok and type(spellID) == "number" and not Secret(spellID) then
+		db.itemSpells[spellID] = itemID
+		return spellID
+	end
+	if C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, itemID) end
+end
+
+local function NameIcon(key)
+	local item = ItemID(key)
+	if item then return ItemNameIcon(item) end
+	if type(key) == "number" then return SpellNameIcon(key) end
+end
+ns.NameIcon = NameIcon
+
+local function Cooldown(key)
+	local item = ItemID(key)
+	if item then return ItemCooldown(item) end
+	if type(key) == "number" then return SpellCooldown(key) end
+end
+
+-- Knows the spell, or has the item.
+local function Has(key)
+	local item = ItemID(key)
+	if item then
+		local fn = (C_Item and C_Item.GetItemCount) or GetItemCount
+		local ok, n = pcall(fn, item)
+		return ok and type(n) == "number" and n > 0
+	end
+	return type(key) == "number" and Knows(key)
+end
+
 -- From the profession window, when it's open.
 local function RecipeCooldown(id)
 	if not (C_TradeSkillUI and C_TradeSkillUI.GetRecipeCooldown) then return nil end
@@ -119,10 +192,11 @@ local function IsCraft(id)
 end
 
 ---------------------------------------------------------------------------
--- Saved cooldowns: db.chars[GUID] = { name, class, cds = { [spellID] = entry } }
+-- Saved cooldowns: db.chars[GUID] = { name, class, cds = { [key] = entry } }
+-- (key: spell ID, "item:<itemID>", or "test")
 -- entry = { name, icon, readyAt (server time; 0 = ready), told (ready was
 -- announced), test (the pretend one from /fcd test) }
--- db.custom[spellID] = true: added by you. db.on[name] = true: turned on.
+-- db.custom[key] = true: added by you. db.on[name] = true: turned on.
 -- Turning on goes by the name before any ":", so "Transmute" covers them all.
 ---------------------------------------------------------------------------
 local function Prefix(name)
@@ -144,7 +218,7 @@ end
 local function Track(id)
 	local e = me.cds[id]
 	if e then return e end
-	local name, icon = SpellNameIcon(id)
+	local name, icon = NameIcon(id)
 	if not name then return nil end
 	e = { name = name, icon = icon, readyAt = 0, told = true }
 	me.cds[id] = e
@@ -154,7 +228,8 @@ end
 
 -- A cooldown seen running: save when it ends. A new cooldown means its "ready"
 -- hasn't been announced yet.
-local function SetLeft(e, left)
+local function SetLeft(e, left, duration)
+	if duration and duration >= REAL_MIN then e.duration = duration end -- (for when the game stops saying)
 	local readyAt = Now() + math.floor(left + 0.5)
 	if math.abs(readyAt - (e.readyAt or 0)) > REAL_MIN then
 		e.readyAt = readyAt
@@ -165,25 +240,29 @@ end
 -- Only running cooldowns are believed: right after logging in the game can
 -- briefly report everything as ready, and saved times end on their own anyway.
 -- Something you added shows on a character once it knows it or has used it.
+local mappedItems = {} -- [itemID] = true once its spell is known this session
+
 local function Refresh()
 	if InCombatLockdown() then return end
 	for _, id in ipairs(KNOWN) do
 		if not me.cds[id] and Knows(id) then Track(id) end
 	end
 	for id in pairs(db.custom) do
+		local item = ItemID(id)
+		if item and not mappedItems[item] and MapItemSpell(item) then mappedItems[item] = true end
 		if not me.cds[id] then
-			if Knows(id) then
+			if Has(id) then
 				Track(id)
 			else
-				local left, duration = SpellCooldown(id)
+				local left, duration = Cooldown(id)
 				if left and duration >= REAL_MIN and left > 0 then Track(id) end
 			end
 		end
 	end
 	for id, e in pairs(me.cds) do
-		if type(id) == "number" then
-			local left, duration = SpellCooldown(id)
-			if left and duration >= REAL_MIN and left > 0 then SetLeft(e, left) end
+		if not e.test then
+			local left, duration = Cooldown(id)
+			if left and duration >= REAL_MIN and left > 0 then SetLeft(e, left, duration) end
 		end
 	end
 end
@@ -330,22 +409,53 @@ local function Check(login)
 	end
 end
 
+-- Just turned on: if it's ready here, say so now (instead of only when a
+-- cooldown ends).
+function ns.AnnounceReady(key)
+	local now = Now()
+	for _, e in pairs(me.cds) do
+		if Prefix(e.name) == key and e.readyAt <= now then e.told = false end
+	end
+	Check(false)
+end
+
 ---------------------------------------------------------------------------
 -- What you've used lately with a cooldown, to turn on in the options.
 -- A craft is found (kept, its timer too) instead.
 ---------------------------------------------------------------------------
-local recent = {} -- newest first: { id, name, icon }
+local recent = {} -- newest first: { id (key), name, icon }
 
-local function CheckCast(id)
-	local left, duration = SpellCooldown(id)
-	if not (left and duration >= REAL_MIN and left > 0) then return end
-	if me.cds[id] or IsCraft(id) then
+-- A spell cast by an item counts as the item (its cooldown is the item's).
+-- castAt: when it was cast (GetTime), if not just now (in combat).
+local function CheckCast(spellID, castAt)
+	local item = db.itemSpells[spellID]
+	local id = item and ("item:" .. item) or spellID
+	local left, duration = Cooldown(id)
+	local running = left and duration >= REAL_MIN and left > 0
+	if not running and item then
+		-- Used up, the game may not say any more: the spell's cooldown, or
+		-- the item's cooldown last time.
+		local l2, d2 = SpellCooldown(spellID)
+		local e = me.cds[id]
+		if l2 and d2 >= REAL_MIN and l2 > 0 then
+			left, duration, running = l2, d2, true
+		else
+			-- The item's cooldown last time, or the spell's listed cooldown.
+			local length = (e and e.duration) or ns.BaseCooldown(spellID)
+			if length and length >= REAL_MIN then
+				left, duration = length - (GetTime() - (castAt or GetTime())), length
+				running = left > 0
+			end
+		end
+	end
+	if not running then return end
+	if me.cds[id] or (not item and IsCraft(id)) then
 		local e = Track(id)
 		if not e then return end
-		SetLeft(e, left)
+		SetLeft(e, left, duration)
 		ns.Display.Refresh()
 	else
-		local name, icon = SpellNameIcon(id)
+		local name, icon = NameIcon(id)
 		if not name then return end
 		for i = #recent, 1, -1 do
 			if recent[i].id == id then table.remove(recent, i) end
@@ -382,21 +492,18 @@ end
 ---------------------------------------------------------------------------
 -- Turning on, adding and removing
 ---------------------------------------------------------------------------
--- A spell ID, a spell's name, or a shift-clicked link: spell, recipe, or an
--- item (its use).
-function ns.FindSpell(text)
+-- The key for a spell ID, a spell's name, "item:<itemID>", or a shift-clicked
+-- link: spell, recipe, or item (its own cooldown).
+function ns.FindKey(text)
 	text = strtrim(text or "")
 	if text == "" then return nil end
 	local id = tonumber(text) or tonumber(text:match("|Hspell:(%d+)")) or tonumber(text:match("|Henchant:(%d+)"))
 	if id then return id end
-	local item = tonumber(text:match("|Hitem:(%d+)"))
+	local item = tonumber(text:match("|Hitem:(%d+)")) or ItemID(text)
 	if item then
-		local fn = (C_Item and C_Item.GetItemSpell) or GetItemSpell
-		if fn then
-			local ok, _, spellID = pcall(fn, item)
-			if ok then return spellID end
-		end
-		return nil
+		local name = text:match("|h%[(.-)%]|h")
+		if name and name ~= "" then db.itemNames[item] = name end
+		return "item:" .. item
 	end
 	if C_Spell and C_Spell.GetSpellInfo then
 		local ok, info = pcall(C_Spell.GetSpellInfo, text)
@@ -408,24 +515,98 @@ end
 
 -- Adds and turns on a spell or item. Returns its name, or nil and why not.
 function ns.Add(text)
-	local id = ns.FindSpell(text)
-	local name = id and SpellNameIcon(id)
+	local id = ns.FindKey(text)
+	local name = id and NameIcon(id)
 	if not name then return nil, "Not found. Try a spell ID or shift-click a link." end
 	db.custom[id] = true
 	db.on[Prefix(name)] = true
-	local left, duration = SpellCooldown(id)
+	local left, duration = Cooldown(id)
 	local running = left and duration >= REAL_MIN and left > 0
-	if me.cds[id] or Knows(id) or running then
+	if ItemID(id) then MapItemSpell(ItemID(id)) end
+	if me.cds[id] or Has(id) or running or ItemID(id) then
 		local e = Track(id)
-		if e and running then SetLeft(e, left) end
+		if e and running then SetLeft(e, left, duration) end
 	end
-	ns.Display.Refresh()
+	ns.AnnounceReady(Prefix(name))
 	ns.Options.Refresh()
 	return name
 end
 
+---------------------------------------------------------------------------
+-- Your abilities with a cooldown of a minute or more, to pick from.
+---------------------------------------------------------------------------
+local UNITS = { sec = 1, min = 60, hr = 3600, hour = 3600, day = 86400 }
+
+-- Seconds, from the game or else from the spell's tooltip ("2 min cooldown").
+local function BaseCooldown(id)
+	return ns.BaseCooldown(id)
+end
+function ns.BaseCooldown(id)
+	if GetSpellBaseCooldown then
+		local ok, ms = pcall(GetSpellBaseCooldown, id)
+		if ok and type(ms) == "number" and not Secret(ms) then return ms / 1000 end
+	end
+	if C_TooltipInfo and C_TooltipInfo.GetSpellByID then
+		local ok, data = pcall(C_TooltipInfo.GetSpellByID, id)
+		if ok and type(data) == "table" and data.lines then
+			for _, line in ipairs(data.lines) do
+				for _, text in ipairs({ line.leftText, line.rightText }) do
+					if type(text) == "string" and not Secret(text) then
+						local n, unit = text:match("([%d%.]+) (%a+) [Cc]ooldown")
+						unit = unit and UNITS[unit:lower():gsub("s$", "")]
+						if n and unit then return tonumber(n) * unit end
+					end
+				end
+			end
+		end
+	end
+	return 0
+end
+
+local abilities -- cached list, rebuilt when your spells change
+
+local function ScanAbilities()
+	abilities = {}
+	if not (C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookItemInfo) then return end
+	local bank = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player or 0
+	local spellType = Enum and Enum.SpellBookItemType and Enum.SpellBookItemType.Spell or 1
+	local seen = {}
+	local ok, lines = pcall(C_SpellBook.GetNumSpellBookSkillLines)
+	if not ok or type(lines) ~= "number" then return end
+	for l = 1, lines do
+		local okL, line = pcall(C_SpellBook.GetSpellBookSkillLineInfo, l)
+		if okL and type(line) == "table" and not line.shouldHide and not line.offSpecID then
+			for i = line.itemIndexOffset + 1, line.itemIndexOffset + line.numSpellBookItems do
+				local okI, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, bank)
+				local id = okI and type(info) == "table" and info.itemType == spellType and not info.isPassive and info.spellID
+				if id and not seen[id] and BaseCooldown(id) >= REAL_MIN then
+					seen[id] = true
+					abilities[#abilities + 1] = { id = id, name = info.name, icon = info.iconID }
+				end
+			end
+		end
+	end
+	table.sort(abilities, function(a, b) return a.name < b.name end)
+end
+
+-- Your abilities not already in the list above them: { key, icon, addID }.
+function ns.Abilities(found)
+	if not abilities then ScanAbilities() end
+	local taken = {}
+	for _, t in ipairs(found) do taken[t.key] = true end
+	local list = {}
+	for _, a in ipairs(abilities) do
+		local key = Prefix(a.name)
+		if not taken[key] then
+			taken[key] = true
+			list[#list + 1] = { key = key, icon = a.icon, addID = a.id }
+		end
+	end
+	return list
+end
+
 -- Everything found or added, by the name turning it on uses:
--- { key, icon, on, custom (added by you: can be removed), recentID (only
+-- { key, icon, on, custom (added by you: can be removed), addID (only
 -- used this session: turning it on adds it) }.
 function ns.Found()
 	local byKey, list = {}, {}
@@ -444,32 +625,32 @@ function ns.Found()
 		end
 	end
 	for id in pairs(db.custom) do
-		local name, icon = SpellNameIcon(id)
+		local name, icon = NameIcon(id)
 		if name then Add(Prefix(name), icon).custom = true end
 	end
 	table.sort(list, function(a, b) return a.key < b.key end)
 	for _, r in ipairs(recent) do
 		local key = Prefix(r.name)
-		if not byKey[key] then Add(key, r.icon).recentID = r.id end
+		if not byKey[key] then Add(key, r.icon).addID = r.id end
 	end
 	return list
 end
 
 function ns.SetOn(key, on)
 	db.on[key] = on or nil
-	ns.Display.Refresh()
+	if on then ns.AnnounceReady(key) else ns.Display.Refresh() end
 end
 
 -- Removes something you added, from every character.
 function ns.Remove(key)
 	for id in pairs(db.custom) do
-		local name = SpellNameIcon(id)
+		local name = NameIcon(id)
 		if name and Prefix(name) == key then db.custom[id] = nil end
 	end
 	for _, c in pairs(db.chars) do
 		for id, e in pairs(c.cds) do
-			if Prefix(e.name) == key and not e.test and not db.custom[id] and not IsCraft(id)
-				and not tContains(KNOWN, id) then
+			local craft = type(id) == "number" and (IsCraft(id) or tContains(KNOWN, id))
+			if Prefix(e.name) == key and not e.test and not db.custom[id] and not craft then
 				c.cds[id] = nil
 			end
 		end
@@ -477,6 +658,48 @@ function ns.Remove(key)
 	db.on[key] = nil
 	ns.Display.Refresh()
 	ns.Options.Refresh()
+end
+
+---------------------------------------------------------------------------
+-- Which spell each item in your bags casts (db.itemSpells), so using one
+-- counts as the item even once it's used up (a Soulstone). Something added as
+-- the spell an item casts becomes the item.
+---------------------------------------------------------------------------
+local function MoveToItem(spellID, item)
+	local key = "item:" .. item
+	local spellName = SpellNameIcon(spellID)
+	local itemName = NameIcon(key)
+	if not (spellName and itemName) then return end
+	db.custom[spellID] = nil
+	db.custom[key] = true
+	if db.on[Prefix(spellName)] then
+		db.on[Prefix(spellName)] = nil
+		db.on[Prefix(itemName)] = true
+	end
+	for _, c in pairs(db.chars) do c.cds[spellID] = nil end
+	Print(("tracking %s (the item) instead of %s."):format(itemName, spellName))
+	ns.Display.Refresh()
+	ns.Options.Refresh()
+end
+
+local function ScanBags()
+	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+	local itemAt = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
+	local itemSpell = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+	if not (numSlots and itemAt and itemSpell) then return end
+	for bag = 0, NUM_BAG_SLOTS or 4 do
+		local okN, n = pcall(numSlots, bag)
+		for slot = 1, (okN and type(n) == "number") and n or 0 do
+			local okI, item = pcall(itemAt, bag, slot)
+			if okI and type(item) == "number" then
+				local okS, _, spellID = pcall(itemSpell, item)
+				if okS and type(spellID) == "number" and not Secret(spellID) then
+					db.itemSpells[spellID] = item
+					if db.custom[spellID] then MoveToItem(spellID, item) end
+				end
+			end
+		end
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -513,8 +736,11 @@ if not pcall(frame.RegisterUnitEvent, frame, "UNIT_SPELLCAST_SUCCEEDED", "player
 	frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 end
 pcall(frame.RegisterEvent, frame, "TRADE_SKILL_LIST_UPDATE")
+frame:RegisterEvent("SPELLS_CHANGED")
+pcall(frame.RegisterEvent, frame, "BAG_UPDATE_DELAYED")
 
 local scanQueued = false
+local pendingCasts = {} -- [spellID] = GetTime() of casts in combat
 frame:SetScript("OnEvent", function(_, event, unit, _, spellID)
 	if event == "PLAYER_LOGIN" then
 		FireCooldownsDB = type(FireCooldownsDB) == "table" and FireCooldownsDB or {}
@@ -522,6 +748,8 @@ frame:SetScript("OnEvent", function(_, event, unit, _, spellID)
 		db.chars = db.chars or {}
 		db.custom = db.custom or {}
 		db.hinted = db.hinted or {}
+		db.itemNames = db.itemNames or {}   -- [itemID] = name
+		db.itemSpells = db.itemSpells or {} -- [spellID] = itemID that casts it
 		for k, v in pairs(DEFAULTS) do
 			if db[k] == nil then db[k] = v end
 		end
@@ -553,14 +781,18 @@ frame:SetScript("OnEvent", function(_, event, unit, _, spellID)
 		ns.Display.Init()
 		ns.EditMode.Init()
 		ns.Options.Init()
+		ScanBags()
 		C_Timer.After(5, function() Check(true) end) -- once the game has sent the cooldowns
 		C_Timer.NewTicker(TICK, function() Check(false) end)
 	elseif not me then
 		return
 	elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-		-- Out of combat only (in combat the cast details are hidden anyway).
-		if InCombatLockdown() or Secret(unit) or unit ~= "player" then return end
-		if Secret(spellID) or type(spellID) ~= "number" then return end
+		if Secret(unit) or unit ~= "player" or Secret(spellID) or type(spellID) ~= "number" then return end
+		-- In combat cooldowns are hidden: something tracked is checked once it ends.
+		if InCombatLockdown() then
+			if db.itemSpells[spellID] or me.cds[spellID] then pendingCasts[spellID] = GetTime() end
+			return
+		end
 		-- The cooldown starts a moment after the cast.
 		C_Timer.After(1, function() CheckCast(spellID) end)
 	elseif event == "TRADE_SKILL_LIST_UPDATE" then
@@ -570,10 +802,49 @@ frame:SetScript("OnEvent", function(_, event, unit, _, spellID)
 			scanQueued = false
 			ScanRecipes()
 		end)
+	elseif event == "BAG_UPDATE_DELAYED" then
+		if not InCombatLockdown() then ScanBags() end
+	elseif event == "SPELLS_CHANGED" then
+		abilities = nil -- found again when next needed
+		ns.Options.Refresh()
 	elseif event == "PLAYER_REGEN_ENABLED" then
+		for id, at in pairs(pendingCasts) do
+			pendingCasts[id] = nil
+			CheckCast(id, at)
+		end
 		Check(false)
 	end
 end)
+
+-- /fcd debug: what's saved for this character and what the game says now.
+local function Debug()
+	local now = Now()
+	local spellOf = {}
+	for spellID, item in pairs(db.itemSpells) do spellOf[item] = spellID end
+	local keys = {}
+	for id in pairs(me.cds) do keys[id] = true end
+	for id in pairs(db.custom) do keys[id] = true end
+	Print(("debug, combat %s:"):format(tostring(InCombatLockdown() and true or false)))
+	for id in pairs(keys) do
+		local e = me.cds[id]
+		local name = (e and e.name) or NameIcon(id) or "?"
+		local left, duration = Cooldown(id)
+		local line = ("  %s [%s] on=%s here=%s"):format(name, tostring(id), tostring(db.on[Prefix(name)] == true),
+			tostring(e ~= nil))
+		if e then
+			line = line .. (" readyIn=%s told=%s lastDur=%s"):format(
+				tostring(e.readyAt - now), tostring(e.told), tostring(e.duration))
+		end
+		line = line .. (" game: left=%s dur=%s has=%s"):format(tostring(left), tostring(duration), tostring(Has(id)))
+		local item = ItemID(id)
+		if item then
+			local spellID = spellOf[item]
+			local l2, d2 = spellID and SpellCooldown(spellID)
+			line = line .. (" spell=%s spellLeft=%s spellDur=%s"):format(tostring(spellID), tostring(l2), tostring(d2))
+		end
+		print(line)
+	end
+end
 
 local function Help()
 	Print("commands:")
@@ -582,6 +853,7 @@ local function Help()
 	print("  /fcd track <spell, ID or shift-click a link> - add and track it")
 	print("  /fcd test - a pretend transmute, ready in 10 seconds (/fcd test clear)")
 	print("  /fcd forget <character> - remove a character")
+	print("  /fcd debug - what's saved and what the game reports, per cooldown")
 end
 
 SLASH_FIRECOOLDOWNS1 = "/fcd"
@@ -600,6 +872,8 @@ SlashCmdList.FIRECOOLDOWNS = function(input)
 		Print(name and ("tracking %s."):format(name) or why)
 	elseif cmd == "test" then
 		Test(arg:lower())
+	elseif cmd == "debug" then
+		Debug()
 	elseif cmd == "forget" and arg ~= "" then
 		for guid, c in pairs(db.chars) do
 			if c ~= me and c.name and c.name:lower() == arg:lower() then

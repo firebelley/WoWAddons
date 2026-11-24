@@ -178,8 +178,8 @@ local function BuildMain()
 		"Chance buffs like Clearcasting, Flurry, Enrage. Mostly caught out of combat; the option below covers many "
 			.. "in combat.",
 		RefreshAuras)
-	Checkbox("detectChanges", "Spells that become free or instant",
-		"Missile Barrage, Clearcasting, Nightfall... Works in combat.")
+	Checkbox("detectChanges", "Spells that become free, instant or faster",
+		"Missile Barrage, Clearcasting, Nightfall, Decimation... Works in combat.")
 	Checkbox("detectAbilities", "Abilities that light up",
 		"Abilities that become usable after something happens: Overpower, Revenge, Riposte, Execute...")
 	Checkbox("glowButtons", "Make their action buttons glow",

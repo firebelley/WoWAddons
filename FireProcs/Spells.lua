@@ -44,29 +44,93 @@ local function IsDrainPassive(spellID)
 end
 
 -- Your learned talents, with their tooltip text: talents like Missile Barrage
--- aren't in the spellbook, so their text is read from a hidden tooltip.
+-- aren't in the spellbook, so their text is read from their tooltip.
+-- Tooltip text can still be loading (at login especially): it then comes back
+-- empty, and Spells.PassiveText reads it again when it's needed.
 local scanner
+local function TalentText(tab, i)
+	local lines = {}
+	local T = C_TooltipInfo
+	if T and T.GetTalent then
+		local ok, data = pcall(T.GetTalent, tab, i)
+		if ok and type(data) == "table" and type(data.lines) == "table" then
+			for l = 2, #data.lines do -- line 1 is the name
+				local text = data.lines[l].leftText
+				if type(text) == "string" and not API.IsSecret(text) then lines[#lines + 1] = text end
+			end
+		end
+	end
+	if #lines == 0 then
+		scanner = scanner or CreateFrame("GameTooltip", "FireProcsScanTooltip", nil, "GameTooltipTemplate")
+		scanner:SetOwner(UIParent, "ANCHOR_NONE")
+		if pcall(scanner.SetTalent, scanner, tab, i) then
+			for l = 2, scanner:NumLines() do
+				local fs = _G["FireProcsScanTooltipTextLeft" .. l]
+				local text = fs and fs:GetText()
+				if type(text) == "string" and not API.IsSecret(text) then lines[#lines + 1] = text end
+			end
+		end
+		scanner:Hide()
+	end
+	return table.concat(lines, " "):lower()
+end
+
+-- This client's talents are a talent tree (C_Traits), not the old talent
+-- tabs: each learned node gives a spell, whose tooltip is its description.
+-- Spells you can cast are skipped (they're in the spellbook already).
+local function AddTraitTalents(list, active)
+	local CT, T = C_ClassTalents, C_Traits
+	if not (CT and CT.GetActiveConfigID and T and T.GetConfigInfo and T.GetTreeNodes and T.GetNodeInfo
+		and T.GetEntryInfo and T.GetDefinitionInfo) then return end
+	local configID = CT.GetActiveConfigID()
+	local config = configID and T.GetConfigInfo(configID)
+	if not (config and config.treeIDs) then return end
+	local have = {}
+	for _, p in ipairs(list) do have[p.name] = true end
+	for _, treeID in ipairs(config.treeIDs) do
+		for _, nodeID in ipairs(T.GetTreeNodes(treeID) or {}) do
+			local node = T.GetNodeInfo(configID, nodeID)
+			local entryID = node and node.activeEntry and node.activeEntry.entryID
+			if entryID and ((node.ranksPurchased or 0) > 0 or (node.activeRank or 0) > 0) then
+				local entry = T.GetEntryInfo(configID, entryID)
+				local def = entry and entry.definitionID and T.GetDefinitionInfo(entry.definitionID)
+				local spellID = def and (def.overriddenSpellID or def.spellID)
+				local name, icon = API.SpellInfo(spellID)
+				if name and not have[name] and not active[name] then
+					have[name] = true
+					list[#list + 1] = {
+						name = name, id = spellID, icon = icon, talent = true,
+						desc = API.SpellDescription(spellID):lower(),
+					}
+				end
+			end
+		end
+	end
+end
+
 local function AddTalents(list)
 	if not (GetNumTalentTabs and GetNumTalents and GetTalentInfo) then return end
-	scanner = scanner or CreateFrame("GameTooltip", "FireProcsScanTooltip", nil, "GameTooltipTemplate")
 	for tab = 1, GetNumTalentTabs() or 0 do
 		for i = 1, GetNumTalents(tab) or 0 do
 			local name, icon, _, _, rank = GetTalentInfo(tab, i)
 			if name and type(rank) == "number" and rank > 0 then
-				local lines = {}
-				scanner:SetOwner(UIParent, "ANCHOR_NONE")
-				if pcall(scanner.SetTalent, scanner, tab, i) then
-					for l = 2, scanner:NumLines() do -- line 1 is the name
-						local fs = _G["FireProcsScanTooltipTextLeft" .. l]
-						local text = fs and fs:GetText()
-						if type(text) == "string" and not API.IsSecret(text) then lines[#lines + 1] = text end
-					end
-				end
-				scanner:Hide()
-				list[#list + 1] = { name = name, icon = icon, desc = table.concat(lines, " "):lower(), talent = true }
+				list[#list + 1] = { name = name, icon = icon, desc = TalentText(tab, i), talent = true, tab = tab, index = i }
 			end
 		end
 	end
+end
+
+-- A passive's or talent's lower-case tooltip text, read again if it was still
+-- loading before.
+function Spells.PassiveText(p)
+	if p.desc == "" then
+		if p.id then
+			p.desc = API.SpellDescription(p.id):lower()
+		elseif p.tab then
+			p.desc = TalentText(p.tab, p.index)
+		end
+	end
+	return p.desc
 end
 
 function Spells.Rebuild()
@@ -85,6 +149,8 @@ function Spells.Rebuild()
 			if not drain and IsDrainPassive(spellID) then drain = entry end
 		end
 	end)
+	local ok, err = pcall(AddTraitTalents, passives, active)
+	if not ok then ns.Trace("couldn't read your talent tree: " .. tostring(err)) end
 	pcall(AddTalents, passives)
 	Spells.drainPassive = drain
 	Spells.passives = passives -- passive spells and learned talents, with lower-case tooltip text
@@ -273,3 +339,6 @@ ns.On("LEARNED_SPELL_IN_TAB", RequestRebuild)
 ns.On("UPDATE_SHAPESHIFT_FORMS", RequestRebuild)
 ns.On("CHARACTER_POINTS_CHANGED", RequestRebuild)
 ns.On("PLAYER_TALENT_UPDATE", RequestRebuild)
+-- The talent tree: changed, or (at login) ready to be read.
+ns.On("TRAIT_CONFIG_UPDATED", RequestRebuild)
+ns.On("TRAIT_CONFIG_LIST_UPDATED", RequestRebuild)

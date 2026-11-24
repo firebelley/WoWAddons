@@ -6,8 +6,9 @@
 -- What they show, as the game's: icon, count and charges, cooldown, out of
 -- range and unusable colors, checked (current or auto-repeat), the attack
 -- flash, the equipped border, macro names, the key bound, the tooltip. Drag
--- spells on and off (locked bars: with the pick-up modifier). Keys: hover one
--- in Quick Keybind mode and press a key (Escape clears it).
+-- spells on and off (locked bars: with the pick-up modifier). Mouse clicks on
+-- release, keys as the game's setting. Keys: hover one in Quick Keybind mode
+-- and press a key (Escape clears it).
 local _, ns = ...
 
 local buttons = {} -- [button] = true
@@ -23,7 +24,22 @@ local function Call(name, ...)
 	if fn then return fn(...) end
 end
 
-local function Command(b) return "CLICK " .. b:GetName() .. ":LeftButton" end
+-- Keys click it as "Keybind", so it can tell them from the mouse (see Clicks).
+local function Command(b) return "CLICK " .. b:GetName() .. ":Keybind" end
+
+-- Keys bound before that (as a left click): moved to "Keybind". Never in combat.
+local function MoveOldBindings()
+	if InCombatLockdown() then return end
+	local moved
+	for b in pairs(buttons) do
+		local old = "CLICK " .. b:GetName() .. ":LeftButton"
+		for _, key in ipairs({ GetBindingKey(old) }) do
+			SetBinding(key, Command(b))
+			moved = true
+		end
+	end
+	if moved and SaveBindings and GetCurrentBindingSet then SaveBindings(GetCurrentBindingSet()) end
+end
 
 local function HasAction(b) return b.action ~= nil and Call("HasAction", b.action) and true or false end
 
@@ -309,11 +325,30 @@ function ns.SetButtonStyle(b, style)
 end
 
 ---------------------------------------------------------------------------
+-- Clicks, as the game's bars: the mouse uses it on release (a press may start
+-- a drag instead: Shift-dragging off a locked bar mustn't cast); a key on
+-- press or release, as the game's "cast on key down" setting says. Secure, so
+-- it works in combat.
+---------------------------------------------------------------------------
+
+local clicks = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
+local CLICK = [[
+	if button == "Keybind" then
+		self:SetAttribute("useOnKeyDown", nil)
+		return "LeftButton"
+	end
+	if down then return false end
+	self:SetAttribute("useOnKeyDown", false)
+]]
+
+---------------------------------------------------------------------------
 -- Setting one up
 ---------------------------------------------------------------------------
 
 function ns.SetupButton(b)
 	buttons[b] = true
+	clicks:WrapScript(b, "OnClick", CLICK)
+	MoveOldBindings()
 	b.HasAction = HasAction
 	b:SetAttribute("type", "action")
 	b:SetAttribute("checkselfcast", true)
@@ -403,6 +438,7 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
 		local button = bySlot[a]
 		if button then UpdateRange(button, c, b) end
 	elseif event == "UPDATE_BINDINGS" then
+		MoveOldBindings()
 		Each(UpdateHotkey)
 	elseif event == "ACTIONBAR_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
 		Each(UpdateCooldown)
