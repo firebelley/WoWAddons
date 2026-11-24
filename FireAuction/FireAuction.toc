@@ -27,5 +27,6 @@ Sales.lua
 Gold.lua
 Volume.lua
 Archive.lua
+Flip.lua
 Sync.lua
 Options.lua

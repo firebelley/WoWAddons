@@ -25,6 +25,7 @@ local SORTS = {
 	{ key = "price", label = "Price" },
 	{ key = "rising", label = "Rising" },
 	{ key = "falling", label = "Falling" },
+	{ key = "flip", label = "Flip" },
 }
 local sortIndex = 1
 
@@ -79,6 +80,7 @@ local function BuildResults()
 	if not realm then return end
 	local query = search and strtrim(search:GetText() or ""):lower() or ""
 	local sort = SORTS[sortIndex].key
+	local flips = sort == "flip" and (ns.Flip.All(View(), function() Window.Refresh() end) or {})
 	for id, rec in pairs(realm.items) do
 		local name = ns.Data.Name(id, rec)
 		if not name and C_Item and C_Item.RequestLoadItemDataByID then
@@ -87,15 +89,24 @@ local function BuildResults()
 		if query == "" or (name and name:lower():find(query, 1, true)) then
 			local entry = { id = id, rec = rec, name = name or ("item " .. id), fav = IsFavorite(id) }
 			if sort == "rising" or sort == "falling" then entry.pct = ns.Data.Trend(rec) end
-			-- Rising/falling only lists items with a trend - except favorites, which always show.
-			if (sort ~= "rising" and sort ~= "falling") or entry.pct or entry.fav then
+			if flips then
+				local f = flips[id]
+				entry.pct = f and f.gain
+			end
+			-- Rising/falling/flip only list items with one - except favorites, which always show.
+			if (sort ~= "rising" and sort ~= "falling" and sort ~= "flip") or entry.pct or entry.fav then
 				results[#results + 1] = entry
 			end
 		end
 	end
 	table.sort(results, function(a, b)
 		if a.fav ~= b.fav then return a.fav end
-		if sort == "price" then
+		if sort == "flip" then
+			if a.pct ~= b.pct then
+				if not a.pct or not b.pct then return a.pct ~= nil end
+				return a.pct > b.pct
+			end
+		elseif sort == "price" then
 			local ma, mb = ns.Data.Market(a.rec) or 0, ns.Data.Market(b.rec) or 0
 			if ma ~= mb then return ma > mb end
 		elseif sort == "rising" or sort == "falling" then
@@ -139,7 +150,14 @@ local function UpdateRows()
 	local scanned = t > 0 and (" - " .. (synced and "synced " or "scanned ") .. ns.TimeAgo(t)) or ""
 	if #results == 0 then
 		local empty = not realm or next(realm.items) == nil
-		countText:SetText(empty and "No prices yet - scan at the auction house." or ("No matches." .. scanned))
+		if empty then
+			countText:SetText("No prices yet - scan at the auction house.")
+		elseif SORTS[sortIndex].key == "flip" then
+			countText:SetText(ns.Flip.Working(View()) and "Working out flips..."
+				or "No flips yet - it needs scans from a few days.")
+		else
+			countText:SetText("No matches." .. scanned)
+		end
 	elseif #results > ROWS then
 		countText:SetText(("%d-%d of %d items%s"):format(offset + 1, math.min(offset + ROWS, #results), #results, scanned))
 	else
@@ -631,6 +649,11 @@ local function UpdateDetail()
 	else
 		info[#info + 1] = "|cff999999No trend yet - it needs prices from at least two days.|r"
 	end
+	local flip = ns.Flip.Get(selected, View())
+	if flip then
+		info[#info + 1] = ("Flip: buy at %s, list at %s  |cff999999(sold %d of %d days)|r"):format(
+			ns.Money(flip.buy), ns.Money(flip.list), flip.sold, flip.days)
+	end
 	local low, high
 	for _, price in pairs(rec.d) do
 		low, high = math.min(low or price, price), math.max(high or price, price)
@@ -747,7 +770,7 @@ local function Build()
 	-- Search and sort
 	local okSearch, box = pcall(CreateFrame, "EditBox", nil, prices, "SearchBoxTemplate")
 	if not okSearch then box = CreateFrame("EditBox", nil, prices, "InputBoxTemplate") end
-	box:SetSize(LIST_W - 84, 20)
+	box:SetSize(LIST_W - 96, 20)
 	box:SetPoint("TOPLEFT", 18, -32)
 	box:SetAutoFocus(false)
 	box:HookScript("OnTextChanged", function()
@@ -768,25 +791,41 @@ local function Build()
 	box:HookScript("OnLeave", function() GameTooltip:Hide() end)
 	search = box
 
-	sortButton = CreateFrame("Button", nil, prices, "UIPanelButtonTemplate")
-	sortButton:SetSize(74, 22)
-	sortButton:SetPoint("LEFT", box, "RIGHT", 6, 0)
-	sortButton:SetText(SORTS[sortIndex].label)
-	sortButton:SetScript("OnClick", function(self)
-		sortIndex = sortIndex % #SORTS + 1
-		self:SetText(SORTS[sortIndex].label)
+	local function SetSort(i)
+		sortIndex = i
 		offset = 0
 		ns.SafeCall(BuildResults)
 		UpdateRows()
-	end)
-	ns.ClickSound(sortButton)
-	sortButton:SetScript("OnEnter", function(self)
+	end
+	-- A dropdown of the sorts (a button that steps through them on clients
+	-- without the dropdown template).
+	local okDropdown, dd = pcall(CreateFrame, "DropdownButton", nil, prices, "WowStyle1DropdownTemplate")
+	if okDropdown and dd and dd.SetupMenu then
+		sortButton = dd
+		dd:SetWidth(86)
+		dd:SetupMenu(function(_, root)
+			for i, s in ipairs(SORTS) do
+				root:CreateRadio(s.label, function() return sortIndex == i end, function() SetSort(i) end)
+			end
+		end)
+	else
+		sortButton = CreateFrame("Button", nil, prices, "UIPanelButtonTemplate")
+		sortButton:SetSize(86, 22)
+		sortButton:SetText(SORTS[sortIndex].label)
+		sortButton:SetScript("OnClick", function(self)
+			SetSort(sortIndex % #SORTS + 1)
+			self:SetText(SORTS[sortIndex].label)
+		end)
+		ns.ClickSound(sortButton)
+	end
+	sortButton:SetPoint("LEFT", box, "RIGHT", 6, 0)
+	sortButton:HookScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:SetText("Sort by", 1, 1, 1)
-		GameTooltip:AddLine("Name, price, or the biggest price rises / falls over the trend period.", nil, nil, nil, true)
+		GameTooltip:AddLine("Name, price, the biggest price rises / falls over the trend period, or flips: items that dip and come back up within a day.", nil, nil, nil, true)
 		GameTooltip:Show()
 	end)
-	sortButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	sortButton:HookScript("OnLeave", function() GameTooltip:Hide() end)
 
 	-- Result rows
 	local list = CreateFrame("Frame", nil, prices)

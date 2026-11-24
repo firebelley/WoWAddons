@@ -477,6 +477,22 @@ function Archive.Ticks(house, id, from, to)
 	return out
 end
 
+-- The items with scans from day `from` to `to`: { [itemID] = true }.
+function Archive.TickItems(house, from, to)
+	local h = House(house)
+	local out = {}
+	if not h then return out end
+	for day = from, to do
+		for id in pairs(h.ticks[day] or {}) do out[id] = true end
+	end
+	return out
+end
+
+-- Whether the archive is loaded (Archive.DB loads it).
+function Archive.Loaded()
+	return db ~= nil
+end
+
 -- Seconds the day's scan pairs span (Volume.lua's "gone" covers that long).
 function Archive.Cover(house, day)
 	local h = House(house)
