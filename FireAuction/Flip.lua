@@ -1,8 +1,8 @@
 -- Items to flip over a day: ones that keep dipping and coming back up within
 -- a day - buy in the dip, list for 24 hours at the price it comes back to.
 --
--- From the archive's record of every scan (Archive.Ticks: items with plenty
--- listed, or ones in Quick buy or favorites), the last DAYS days:
+-- From the archive's record of every scan (Archive.Ticks), the last DAYS
+-- days:
 --   buy at: the low end - the market price a quarter of the scans were at
 --     or under.
 --   each day it dipped there (that day's first scan at or under it: one a

@@ -7,13 +7,13 @@
 -- FireAuctionHistoryDB = {
 --   v = 2,
 --   houses = { ["Realm - Horde"/"Realm - Neutral"] = {   (as ns.Realm's keys)
---     daily = { [bucket] = { [itemID] = records } }       kept DAILY_KEEP days
+--     daily = { [bucket] = { [itemID] = records } or packed } kept DAILY_KEEP days
 --       one record per day, appended when the day is over; bucket =
 --       floor(day / 32), day = floor(time() / 86400) (UTC, as Data.lua)
 --     today = { day, items = { [itemID] = { o, h, l, c, cl, ch, qsum, ql, qh,
 --       gone, n } } }  the day so far, unencoded
---     ticks = { [day] = { [itemID] = records } }          kept TICK_KEEP days
---       one record per scan, for active items only (TickWanted)
+--     ticks = { [day] = { [itemID] = records } or packed }  kept TICK_KEEP days
+--       one record per scan, for every item listed
 --     cover = { [day] = seconds }  how long the day's scan pairs span (for
 --       turning "gone" into a rate), kept DAILY_KEEP days
 --   } },
@@ -37,6 +37,11 @@
 --   tick record: minute of the day, market, market-cheapest, listed,
 --     gone+1 (0: no scan just before to compare with)
 -- (No sellers: Forever's full scan doesn't name them.)
+--
+-- Packed: a day's ticks once it's over, and a bucket of days once it's
+-- full, are one string, ";itemID:records;itemID:records..." (Pack). The
+-- game reads a saved file as Lua, which holds at most 2^18 different strings
+-- and numbers; a string per item per day would pass that within months.
 local _, ns = ...
 
 local Archive = {}
@@ -47,7 +52,6 @@ local BUCKET = 32
 local DAILY_KEEP = 366
 local TICK_KEEP = 90
 local EVENT_KEEP = 366
-local TICK_LISTED = 100 -- items with at least this many listed get a record per scan
 
 ---------------------------------------------------------------------------
 -- Numbers <-> text
@@ -88,10 +92,64 @@ end
 Archive.Num, Archive.Read = Num, Read
 
 ---------------------------------------------------------------------------
+-- Packed lists: { [itemID] = records } as one string
+---------------------------------------------------------------------------
+local function Pack(list)
+	local parts = {}
+	for id, s in pairs(list) do parts[#parts + 1] = ";" .. id .. ":" .. s end
+	return table.concat(parts)
+end
+
+-- A list, as a table (a packed one unpacked).
+local function Open(list)
+	if type(list) ~= "string" then return list end
+	local out = {}
+	for id, s in list:gmatch(";(%d+):([^;]*)") do out[tonumber(id)] = s end
+	return out
+end
+
+-- Where each item's records are in a packed list: { [id] = start, ... },
+-- with [-id] = end. Worked out when first read; let go when memory is
+-- collected.
+local where = setmetatable({}, { __mode = "v" })
+local function Where(s)
+	local w = where[s]
+	if not w then
+		w = {}
+		for id, from, to in s:gmatch(";(%d+):()[^;]*()") do
+			id = tonumber(id)
+			w[id], w[-id] = from, to - 1
+		end
+		where[s] = w
+	end
+	return w
+end
+
+-- An item's records in a list (table or packed), or nil.
+local function Entry(list, id)
+	if type(list) ~= "string" then return list and list[id] end
+	local w = Where(list)
+	local from = w[id]
+	return from and list:sub(from, w[-id]) or nil
+end
+
+-- The items in a list (table or packed): { [id] = true }, added to out.
+local function Items(list, out)
+	if type(list) == "string" then
+		for id in pairs(Where(list)) do
+			if id > 0 then out[id] = true end
+		end
+	else
+		for id in pairs(list or {}) do out[id] = true end
+	end
+	return out
+end
+
+---------------------------------------------------------------------------
 -- Loading
 ---------------------------------------------------------------------------
 local db, tried
-local AddEvents -- (further down)
+local AddEvents, PackOld -- (further down)
 
 -- The archive, loaded if it isn't yet; nil when FireAuctionHistory can't be
 -- loaded (not installed or disabled).
@@ -125,6 +183,8 @@ function Archive.DB()
 		end
 	end
 	Archive.MergeBlankRealm(db)
+	local today = math.floor(time() / 86400)
+	for _, h in pairs(db.houses) do PackOld(h, today) end
 	AddEvents(db)
 	return db
 end
@@ -197,7 +257,7 @@ local function Flush(h)
 	local t = h.today
 	if not t then return end
 	local bucket = math.floor(t.day / BUCKET)
-	local list = h.daily[bucket] or {}
+	local list = Open(h.daily[bucket]) or {}
 	h.daily[bucket] = list
 	for id, r in pairs(t.items) do
 		if r.n > 0 then list[id] = (list[id] or "") .. EncodeDay(t.day, r) end
@@ -205,15 +265,21 @@ local function Flush(h)
 	h.today = nil
 end
 
+-- Days over and full buckets: packed (see the top). Ones still being added
+-- to stay tables.
+function PackOld(h, today) -- (declared at the top)
+	for day, list in pairs(h.ticks or {}) do
+		if type(list) == "table" and day < today then h.ticks[day] = next(list) and Pack(list) or nil end
+	end
+	local current = math.floor(today / BUCKET)
+	for bucket, list in pairs(h.daily or {}) do
+		if type(list) == "table" and bucket < current then h.daily[bucket] = next(list) and Pack(list) or nil end
+	end
+end
+
 ---------------------------------------------------------------------------
 -- Collecting (Scan.lua, after a full scan)
 ---------------------------------------------------------------------------
--- Items worth a record every scan: plenty listed, or ones you deal in.
-local function TickWanted(id, listed)
-	if listed >= TICK_LISTED then return true end
-	return ns.db and ((ns.db.quickBuy and ns.db.quickBuy[id]) or (ns.db.favorites and ns.db.favorites[id])) and true or false
-end
-
 -- gone: Volume.lua's { [itemID] = units gone } (nil when this scan had no
 -- partner); gap: seconds since that partner.
 function Archive.Scanned(house, gone, gap)
@@ -225,6 +291,7 @@ function Archive.Scanned(house, gone, gap)
 	if h.today and h.today.day ~= today then
 		Flush(h)
 		Prune(h, today)
+		PackOld(h, today)
 	end
 	h.today = h.today or { day = today, items = {} }
 	local items = h.today.items
@@ -245,12 +312,10 @@ function Archive.Scanned(house, gone, gap)
 			r.cl, r.ch = math.min(r.cl, cheapest), math.max(r.ch, cheapest)
 			r.qsum, r.ql, r.qh = r.qsum + listed, math.min(r.ql, listed), math.max(r.qh, listed)
 			r.gone, r.n = r.gone + (g or 0), r.n + 1
-			if TickWanted(id, listed) then
-				ticks = ticks or h.ticks[today] or {}
-				h.ticks[today] = ticks
-				ticks[id] = (ticks[id] or "") .. Num(minute) .. Num(market) .. Num(market - cheapest) .. Num(listed)
-					.. Num(g and g + 1 or 0)
-			end
+			ticks = ticks or Open(h.ticks[today]) or {}
+			h.ticks[today] = ticks
+			ticks[id] = (ticks[id] or "") .. Num(minute) .. Num(market) .. Num(market - cheapest) .. Num(listed)
+				.. Num(g and g + 1 or 0)
 		end
 	end
 end
@@ -355,19 +420,24 @@ local function MergeHouse(a, b)
 	elseif tb then
 		a.today, b.today = tb, nil
 	end
+	-- (Packed lists are unpacked to merge; Archive.DB packs them again.)
 	for bucket, items in pairs(b.daily or {}) do
 		local list = a.daily[bucket]
 		if not list then
 			a.daily[bucket] = items
 		else
-			for id, s in pairs(items) do
+			list = Open(list)
+			a.daily[bucket] = list
+			for id, s in pairs(Open(items)) do
 				list[id] = list[id] and JoinDays(list[id] .. s, bucket) or s
 			end
 		end
 	end
 	-- A day flushed on one side that's still going on the other: one day.
 	if a.today then
-		local list = a.daily[math.floor(a.today.day / BUCKET)]
+		local bucket = math.floor(a.today.day / BUCKET)
+		local list = Open(a.daily[bucket])
+		a.daily[bucket] = list
 		for id, s in pairs(list or {}) do
 			local kept = {}
 			local pos, joined = 1, nil
@@ -394,7 +464,9 @@ local function MergeHouse(a, b)
 		if not list then
 			a.ticks[day] = items
 		else
-			for id, s in pairs(items) do
+			list = Open(list)
+			a.ticks[day] = list
+			for id, s in pairs(Open(items)) do
 				list[id] = list[id] and SortTicks(list[id] .. s) or s
 			end
 		end
@@ -435,7 +507,7 @@ function Archive.Days(house, id, from, to)
 	local out = {}
 	if not h then return out end
 	for bucket = math.floor(from / BUCKET), math.floor(to / BUCKET) do
-		local s = h.daily[bucket] and h.daily[bucket][id]
+		local s = Entry(h.daily[bucket], id)
 		local pos = 1
 		while s and pos <= #s do
 			local r
@@ -461,7 +533,7 @@ function Archive.Ticks(house, id, from, to)
 	local out = {}
 	if not h then return out end
 	for day = from, to do
-		local s = h.ticks[day] and h.ticks[day][id]
+		local s = Entry(h.ticks[day], id)
 		local pos = 1
 		while s and pos <= #s do
 			local v = {}
@@ -482,9 +554,7 @@ function Archive.TickItems(house, from, to)
 	local h = House(house)
 	local out = {}
 	if not h then return out end
-	for day = from, to do
-		for id in pairs(h.ticks[day] or {}) do out[id] = true end
-	end
+	for day = from, to do Items(h.ticks[day], out) end
 	return out
 end
 
