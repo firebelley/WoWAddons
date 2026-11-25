@@ -147,14 +147,14 @@ local function Book(id, list)
 		if #rows > 0 then return rows, 0, own end
 	end
 	local last = list[#list]
-	if last then return last.rows, time() - last.at, {} end
+	if last then return last.rows, ns.Now() - last.at, {} end
 	return nil
 end
 
 -- Copper an hour the price FLOOR_UNITS in has moved lately; nil if not
 -- watched long enough.
 local function Trend(list)
-	local now = time()
+	local now = ns.Now()
 	local xs, ys = {}, {}
 	for _, s in ipairs(list) do
 		if s.at >= now - TREND_SPAN then
@@ -347,7 +347,7 @@ function Ladder.Work(id, count, floor, custom)
 	if not book then return nil end
 	local prior = Prior(id)
 	local first = c.series[1]
-	local out = { rows = {}, trend = c.trend, age = age, seen = 0, span = first and time() - first[1] or 0 }
+	local out = { rows = {}, trend = c.trend, age = age, seen = 0, span = first and ns.Now() - first[1] or 0 }
 	local function Row(p)
 		local sp = c.speed[p]
 		if not sp then

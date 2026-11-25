@@ -29,7 +29,7 @@ local last = {} -- [house] = { t, groups } the previous scan
 -- Returns what went, { [itemID] = units } (items with none left out), and
 -- the seconds since the scan it's compared with; nil without one.
 function Volume.Scanned(house, groups)
-	local now = time()
+	local now = ns.Now()
 	local prev = last[house]
 	last[house] = { t = now, groups = groups }
 	if not prev then return nil end

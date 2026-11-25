@@ -183,7 +183,7 @@ function Archive.DB()
 		end
 	end
 	Archive.MergeBlankRealm(db)
-	local today = math.floor(time() / 86400)
+	local today = math.floor(ns.Now() / 86400)
 	for _, h in pairs(db.houses) do PackOld(h, today) end
 	AddEvents(db)
 	return db
@@ -286,7 +286,7 @@ function Archive.Scanned(house, gone, gap)
 	local h = House(house)
 	local realm = ns.Realm(house)
 	if not (h and realm) then return end
-	local now = time()
+	local now = ns.Now()
 	local today = math.floor(now / 86400)
 	if h.today and h.today.day ~= today then
 		Flush(h)
@@ -327,7 +327,7 @@ function AddEvents(d) -- (declared at the top)
 	local pending = ns.db and ns.db.archivePending
 	if not pending then return end
 	ns.db.archivePending = nil
-	local now = time()
+	local now = ns.Now()
 	for _, p in ipairs(pending) do
 		local list = d.chars[p[1]] or {}
 		d.chars[p[1]] = list
@@ -345,7 +345,7 @@ function Archive.Event(kind, item, qty, unit, house, extra, t)
 	local name = UnitName("player")
 	if not (name and item and ns.db) then return end
 	local key = name .. " - " .. ns.RealmName()
-	local e = { t or time(), kind, item, qty, unit and math.floor(unit + 0.5) or nil,
+	local e = { t or ns.Now(), kind, item, qty, unit and math.floor(unit + 0.5) or nil,
 		(house or ns.house) == "neutral" and "n" or "f", extra }
 	ns.db.archivePending = ns.db.archivePending or {}
 	table.insert(ns.db.archivePending, { key, e })

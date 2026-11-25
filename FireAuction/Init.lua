@@ -14,7 +14,7 @@ local DEFAULTS = {
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
 	quickBuyCheapest = false, -- Quick buy takes only the lowest price within "Up to" per click (QuickBuy.lua)
 	quickBuyAsk = 100000, -- copper: Quick buy asks before one click spends more (10g), once per AH visit (0 = never)
-	quickBuyLeaveSeed = true, -- Quick buy leaves one listed at the seed price when it would buy all of them there (QuickBuy.lua Walk)
+	quickBuyLeave = 1, -- Quick buy leaves at least this many listed under "Up to" (QuickBuy.lua Walk; 0 = off)
 	quickBuyMargin = 10, -- percent: Quick buy asks when "Up to" is within this of the market price, once per AH visit (0 = never)
 	historyDays = 30, -- how many days of prices to keep
 	trendDays = 7,    -- how far back the trend looks (and how far ahead it projects)
@@ -23,6 +23,15 @@ ns.DEFAULTS = DEFAULTS
 
 -- The game allows a full auction house scan about this often.
 ns.SCAN_COOLDOWN = 15 * 60
+
+-- Now, in seconds since 1970 (as time()), by the realm's clock: your PC's
+-- clock being wrong doesn't misdate anything, and guild members' scans share
+-- one clock. Your PC's when the game doesn't give it.
+function ns.Now()
+	local t = GetServerTime and GetServerTime()
+	if t and t > 0 then return t end
+	return time()
+end
 
 function ns.Print(msg)
 	print("|cffff8030FireAuction|r: " .. msg)
@@ -116,17 +125,17 @@ end
 local cancelled = {}
 if C_AuctionHouse and C_AuctionHouse.CancelAuction and hooksecurefunc then
 	hooksecurefunc(C_AuctionHouse, "CancelAuction", function(auctionID)
-		if auctionID then cancelled[auctionID] = time() end
+		if auctionID then cancelled[auctionID] = ns.Now() end
 	end)
 end
 function ns.YouCancelled(auctionID)
 	local at = auctionID and cancelled[auctionID]
-	return at ~= nil and time() - at < 300
+	return at ~= nil and ns.Now() - at < 300
 end
 -- An auction listed at `at` lasting `length` seconds has run its time (near
 -- enough: the game's clock and ours differ a little).
 function ns.TimeUp(at, length)
-	return at ~= nil and length ~= nil and time() >= at + length - 600
+	return at ~= nil and length ~= nil and ns.Now() >= at + length - 600
 end
 
 function ns.Money(copper)
@@ -149,7 +158,7 @@ function ns.Percent(pct)
 end
 
 function ns.TimeAgo(t)
-	local s = math.max(0, time() - (t or 0))
+	local s = math.max(0, ns.Now() - (t or 0))
 	if s < 60 then return "just now" end
 	if s < 3600 then
 		local m = math.floor(s / 60)
@@ -185,6 +194,9 @@ ns.On("ADDON_LOADED", function(name)
 	if name ~= ADDON then return end
 	FireAuctionDB = FireAuctionDB or {}
 	local db = FireAuctionDB
+	-- "Leave one at the seed price" became "leave N under Up to": off stays off.
+	if db.quickBuyLeaveSeed == false and db.quickBuyLeave == nil then db.quickBuyLeave = 0 end
+	db.quickBuyLeaveSeed = nil
 	for k, v in pairs(DEFAULTS) do
 		if db[k] == nil then db[k] = v end
 	end

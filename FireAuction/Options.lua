@@ -269,9 +269,8 @@ local function Build()
 		refreshers[#refreshers + 1] = function() box:SetText(tostring(ns.db[key] or 0)) end
 		y = y - 30
 	end
-	Checkbox("quickBuyLeaveSeed", "Quick buy: leave one at the seed price",
-		"When a click would buy every listing at or under your seed price, it buys one fewer, so one stays up. "
-			.. "Not when it would buy dearer ones too.")
+	NumberInput("quickBuyLeave", "Quick buy: leave", "listed under \"Up to\"",
+		"Buys that many fewer, so a low price stays up (yours count). Checks can still take them. 0: buy them all.")
 	NumberInput("quickBuyMargin", "Quick buy: ask when \"Up to\" is within", "% of market",
 		"Asks on the first buy each time you open the auction house when \"Up to\" is this close to the market "
 			.. "price, or over it. 0: never ask.")

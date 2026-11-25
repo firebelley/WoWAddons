@@ -24,7 +24,7 @@ local function AddPrice(tooltip, itemID)
 	end
 
 	local left = "Auction house"
-	if time() - (rec.s or 0) > 86400 then
+	if ns.Now() - (rec.s or 0) > 86400 then
 		left = left .. " |cff999999(" .. ns.TimeAgo(rec.s) .. ")|r"
 	end
 	tooltip:AddDoubleLine(left, right, 1, 0.82, 0, 1, 1, 1)

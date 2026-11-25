@@ -91,7 +91,7 @@ local function Settle(s, i, how, id)
 	end
 	if l.auctionID then
 		-- Kept with what it added, in case it turns out not to be over (Unsettle).
-		local now = time()
+		local now = ns.Now()
 		s.done = s.done or {}
 		s.done[l.auctionID] = { t = now, l = l, how = how, n = sold, income = income, lost = lost, ledger = ledger }
 		for id, d in pairs(s.done) do
@@ -157,7 +157,7 @@ end
 
 -- Past their time and not seen since: expired.
 local function Sweep()
-	local now = time()
+	local now = ns.Now()
 	Each(function(s, i, l, id)
 		if now > l.at + l.length + EXPIRE_GRACE and not l.soldSeen then Settle(s, i, "expired", id) end
 	end)
@@ -184,7 +184,7 @@ end
 -- What you post (from the Sell page; seeds are Seed.lua's)
 ---------------------------------------------------------------------------
 local function Prune()
-	local now = time()
+	local now = ns.Now()
 	for i = #posts, 1, -1 do
 		if now - posts[i].at > POST_TIME then table.remove(posts, i) end
 	end
@@ -205,7 +205,7 @@ end
 
 local function Posted(item, duration, quantity, unitPrice, commodity)
 	local ok, id = pcall(C_Item.GetItemID, item)
-	local p = { itemID = ok and id or nil, qty = quantity or 1, price = unitPrice, at = time(), after = ns.db and ns.db.newestAuction or 0,
+	local p = { itemID = ok and id or nil, qty = quantity or 1, price = unitPrice, at = ns.Now(), after = ns.db and ns.db.newestAuction or 0,
 		length = ns.DurationSeconds(duration), seed = ns.Seed and ns.Seed.Posting and ns.Seed.Posting() or nil }
 	if commodity and p.itemID and Session(p.itemID) then
 		local okD, deposit = pcall(AH.CalculateCommodityDeposit, p.itemID, duration, p.qty)
@@ -264,7 +264,7 @@ local function Adopt(s, id, a)
 	local p = TakePost(id, a)
 	local price = p and p.price or a.buyoutAmount
 	if not (price and price > 0) then return end
-	local now = time()
+	local now = ns.Now()
 	local at, length = now, nil
 	if p then
 		at, length = p.at, p.length
@@ -290,7 +290,7 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 		end
 	end
 	ns.db.newestAuction = newest
-	ns.db.ownedReadAt = time() -- when sales were last read (the Profit tab says)
+	ns.db.ownedReadAt = ns.Now() -- when sales were last read (the Profit tab says)
 
 	-- Your listings of each session's item since it started, oldest first.
 	Prune()
@@ -310,7 +310,7 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 	end
 
 	local full = not AH.HasFullOwnedAuctionResults or AH.HasFullOwnedAuctionResults()
-	local now = time()
+	local now = ns.Now()
 	Each(function(s, i, l, id)
 		if not l.auctionID then return end
 		local a = up[l.auctionID]

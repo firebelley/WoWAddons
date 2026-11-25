@@ -87,7 +87,7 @@ local function Record(id, quantity, total)
 	s.spent = (s.spent or 0) + total
 	s.boughtEver = (s.boughtEver or 0) + quantity -- never cleared: the market log takes it off (Ladder.lua)
 	s.log = s.log or {}
-	table.insert(s.log, 1, { quantity, total, time() })
+	table.insert(s.log, 1, { quantity, total, ns.Now() })
 	while #s.log > LOG_SIZE do table.remove(s.log) end
 	local visit = boughtNow[id] or { count = 0, total = 0 }
 	visit.count, visit.total = visit.count + quantity, visit.total + total
@@ -98,7 +98,7 @@ local function ClearSession(id)
 	local s = Settings(id)
 	s.bought, s.spent, s.log = nil, nil, nil
 	-- Seeding results too (Seed.lua); seeds listed before now no longer count.
-	s.seed, s.cleared = nil, time()
+	s.seed, s.cleared = nil, ns.Now()
 	-- And what you've listed of it (Listings.lua): still up, they keep counting
 	-- in the Profit tab until they end.
 	if s.listed and ns.Listings then ns.Listings.Keep(id, s.listed) end
@@ -157,22 +157,22 @@ local function Walk(id, maxPrice, quantity)
 		count = count + take
 		if r.quantity - gone > 0 then rows[#rows + 1] = { price = r.unitPrice, quantity = r.quantity - gone, take = take } end
 	end
-	if count > 0 and maxPrice ~= math.huge and ns.db.quickBuyLeaveSeed then
-		-- Leave one at the seed price: when everything it would buy is at or
-		-- under it and none would be left there (yours count), one fewer. Not
-		-- when it buys dearer ones too - the cheapest go first, so keeping one
-		-- would mean never buying those. (No requests: the listings on screen.)
-		local last
+	local keep = maxPrice ~= math.huge and ns.db.quickBuyLeave or 0
+	if count > 0 and keep > 0 then
+		-- Leave some under "Up to" (yours count), so a low price stays up: the
+		-- game sells the cheapest first, so it buys that many fewer and the
+		-- dearest of them stay. (Not checks: those buy blind - QuickBuy's
+		-- check mode takes them along with whatever it finds.)
+		local left = 0
 		for _, row in ipairs(rows) do
-			if row.take > 0 then last = row end
+			if row.price <= maxPrice then left = left + row.quantity - row.take end
 		end
-		local seed = ns.Seed and ns.Seed.Price and ns.Seed.Price(id)
-		if seed and last.price <= seed then
-			local left = false
-			for _, row in ipairs(rows) do
-				if row.price <= seed and row.quantity - row.take > 0 then left = true break end
-			end
-			if not left then last.take = last.take - 1 end
+		local short = keep - left
+		for i = #rows, 1, -1 do
+			if short <= 0 then break end
+			local row = rows[i]
+			local less = math.min(short, row.take)
+			row.take, short = row.take - less, short - less
 		end
 	end
 	return rows
@@ -551,7 +551,7 @@ end)
 --   follow: a follow-up check; mine: how many of it you've bought in all.
 ---------------------------------------------------------------------------
 local SNAPS_KEPT, CHECKS_KEPT, SNAP_ROWS = 4000, 8000, 20
-local clockBase = time() - GetTime()
+local clockBase = ns.Now() - GetTime()
 
 local function Stamp() return math.floor((clockBase + GetTime()) * 1000 + 0.5) / 1000 end
 
@@ -659,14 +659,14 @@ local attempt -- the one going on
 local function AttemptsDB()
 	local a = Store().attempts
 	if type(a) ~= "table" then
-		a = { since = time(), refreshes = 0, list = {} }
+		a = { since = ns.Now(), refreshes = 0, list = {} }
 		Store().attempts = a
 	end
 	return a
 end
 
 local function AttemptStart(p)
-	attempt = { t = time(), id = p.itemID, q = p.quantity, total = p.total, limit = p.limit, click = GetTime(), chk = p.check,
+	attempt = { t = ns.Now(), id = p.itemID, q = p.quantity, total = p.total, limit = p.limit, click = GetTime(), chk = p.check,
 		age = resultsAt and math.floor((GetTime() - resultsAt) * 1000 + 0.5) / 1000 or nil }
 end
 

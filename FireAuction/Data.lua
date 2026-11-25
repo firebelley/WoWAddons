@@ -29,7 +29,7 @@ ns.Data = Data
 local DAY = 86400
 
 function Data.Today()
-	return math.floor(time() / DAY)
+	return math.floor(ns.Now() / DAY)
 end
 
 function Data.DayTime(day)
@@ -83,7 +83,7 @@ end
 function Data.CommitScan(prices, complete, house)
 	local realm = ns.Realm(house)
 	if not realm then return end
-	local now, today = time(), Data.Today()
+	local now, today = ns.Now(), Data.Today()
 	for id, p in pairs(prices) do
 		local rec = realm.items[id]
 		if not rec then

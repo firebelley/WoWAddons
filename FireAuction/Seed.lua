@@ -126,7 +126,7 @@ local function Sweep()
 	local list, length = Seeds(), ns.DurationSeconds(DURATION)
 	for i = #list, 1, -1 do
 		local seed = list[i]
-		if time() - seed.at > length + EXPIRE_GRACE then
+		if ns.Now() - seed.at > length + EXPIRE_GRACE then
 			table.remove(list, i)
 			Settle(seed, "expired")
 		end
@@ -138,7 +138,7 @@ local function LiveSeed(id)
 	Sweep()
 	local list = Seeds()
 	for i = #list, 1, -1 do
-		if list[i].itemID == id and time() - list[i].at <= ns.DurationSeconds(DURATION) then return list[i] end
+		if list[i].itemID == id and ns.Now() - list[i].at <= ns.DurationSeconds(DURATION) then return list[i] end
 	end
 	return nil
 end
@@ -154,7 +154,7 @@ end
 local function AddSeed(p, auctionID)
 	local list = Seeds()
 	list[#list + 1] = { auctionID = auctionID, itemID = p.itemID, qty = p.qty, price = p.price, deposit = p.deposit,
-		at = time(), house = ns.house or "faction" }
+		at = ns.Now(), house = ns.house or "faction" }
 end
 
 local function RefreshSoon()
@@ -308,7 +308,7 @@ ns.On("OWNED_AUCTIONS_UPDATED", function()
 		if ok and a and a.auctionID then rows[a.auctionID] = a end
 	end
 	local full = not AH.HasFullOwnedAuctionResults or AH.HasFullOwnedAuctionResults()
-	local list, now, length = Seeds(), time(), ns.DurationSeconds(DURATION)
+	local list, now, length = Seeds(), ns.Now(), ns.DurationSeconds(DURATION)
 	for i = #list, 1, -1 do
 		local seed = list[i]
 		local a = seed.auctionID and rows[seed.auctionID]
@@ -480,7 +480,7 @@ local function Update(id)
 
 	local seed = LiveSeed(id)
 	if seed then
-		local left = math.max(0, math.floor((seed.at + ns.DurationSeconds(DURATION) - time()) / 60))
+		local left = math.max(0, math.floor((seed.at + ns.DurationSeconds(DURATION) - ns.Now()) / 60))
 		seedLine:SetText(("%d at %s each, %d min left"):format(seed.qty, ns.Money(seed.price), left))
 	else
 		seedLine:SetText(GREY .. "None up|r")

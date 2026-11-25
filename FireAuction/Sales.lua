@@ -104,7 +104,7 @@ local COMMODITY = Enum and Enum.ItemCommodityStatus and Enum.ItemCommodityStatus
 local function NoteDeposit(c, auctionID, each)
 	if not (auctionID and type(each) == "number") then return end
 	c.deposits = c.deposits or {}
-	c.deposits[auctionID] = { each = each, at = time() }
+	c.deposits[auctionID] = { each = each, at = ns.Now() }
 end
 
 -- What comes back with qty of it sold; nil if unknown.
@@ -184,7 +184,7 @@ local function ReadOwned()
 	local c = Char()
 	if not (c and AH and AH.GetNumOwnedAuctions and AH.GetOwnedAuctionInfo) then return end
 	local house = ns.house or "faction"
-	local now = time()
+	local now = ns.Now()
 	local fresh, sold = {}, {}
 	for i = 1, AH.GetNumOwnedAuctions() or 0 do
 		local ok, a = pcall(AH.GetOwnedAuctionInfo, i)
@@ -286,7 +286,7 @@ local function Posted(item, duration, quantity, unit, commodity)
 		okD, deposit = pcall(AH.CalculateItemDeposit, item, duration, quantity)
 	end
 	if ns.Archive then ns.SafeCall(ns.Archive.Event, "post", id, quantity, unit, ns.house, ns.DurationSeconds(duration)) end
-	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = ns.DurationSeconds(duration), at = time(),
+	lastPost = { id = id, link = link, qty = quantity, buyout = unit, length = ns.DurationSeconds(duration), at = ns.Now(),
 		each = okD and type(deposit) == "number" and quantity > 0 and deposit / quantity or nil }
 end
 if AH and hooksecurefunc then
@@ -312,9 +312,9 @@ end
 ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	local c, p = Char(), lastPost
 	lastPost = nil
-	if c and auctionID and p and time() - p.at < 60 then NoteDeposit(c, auctionID, p.each) end
-	if c and auctionID and p and not c.owned[auctionID] and time() - p.at < 60 then
-		local now = time()
+	if c and auctionID and p and ns.Now() - p.at < 60 then NoteDeposit(c, auctionID, p.each) end
+	if c and auctionID and p and not c.owned[auctionID] and ns.Now() - p.at < 60 then
+		local now = ns.Now()
 		c.owned[auctionID] = {
 			name = NameOf(p.link, p.id), link = p.link, id = p.id,
 			qty = p.qty, buyout = p.buyout, house = ns.house or "faction", seen = now,
@@ -331,7 +331,7 @@ function Sales.Log(c, which, t, qty, name)
 	if not (t and qty and qty > 0 and name) then return end
 	local log = c[which] or {}
 	c[which] = log
-	local now = time()
+	local now = ns.Now()
 	for i = #log, 1, -1 do
 		if now - log[i][1] > LOG_KEEP then table.remove(log, i) end
 	end
@@ -344,7 +344,7 @@ ns.On("AUCTION_CANCELED", function(auctionID)
 	-- Only yours: the game says "cancelled" when part of a listing sells, too.
 	if a and ns.YouCancelled(auctionID) and not a.cancelLogged then
 		a.cancelLogged = true
-		Sales.Log(c, "cancelLog", time(), a.qty or 1, a.name)
+		Sales.Log(c, "cancelLog", ns.Now(), a.qty or 1, a.name)
 		if ns.Archive then ns.SafeCall(ns.Archive.Event, "cancel", a.id or a.name, a.qty or 1, UnitPrice(a), a.house) end
 	end
 	QueryOwned(1)
@@ -379,7 +379,7 @@ function Sales.Listings()
 	local c = Char()
 	local list, total, seen, back = {}, 0, nil, 0
 	if not c then return list, 0, nil, 0 end
-	local now = time()
+	local now = ns.Now()
 	for auctionID, a in pairs(c.owned) do
 		local left = EndsIn(a, now)
 		if left and left <= 0 then
@@ -435,7 +435,7 @@ function Sales.AddListings(tooltip, max)
 	local list, total, _, back = Sales.Listings()
 	local n = #list
 	if n == 0 then return nil end
-	local now = time()
+	local now = ns.Now()
 	local net = total + back
 	local partSold = false
 	for _, a in ipairs(list) do if a.partSold then partSold = true end end
@@ -455,7 +455,7 @@ function Sales.PrintListings()
 		ns.Print("you have nothing listed (as of your last visit to the auction house).")
 		return
 	end
-	local now = time()
+	local now = ns.Now()
 	ns.Print(("%d auction%s listed, %s if all sell%s:"):format(#list, #list == 1 and "" or "s",
 		ns.Money(total + back),
 		seen and (" |cff999999(as of the auction house " .. ns.TimeAgo(seen) .. ")|r") or ""))
@@ -606,7 +606,7 @@ local function Sold(name, auctionID, auction)
 	if ns.Seed and ns.Seed.Sold then ns.SafeCall(ns.Seed.Sold, (auction and auction.name) or name, auctionID) end
 	local c = Char()
 	if not c then return end
-	local s = { name = name, t = time() }
+	local s = { name = name, t = ns.Now() }
 	local unit = auction and UnitPrice(auction)
 	local stack = auction and (auction.qty or 1) > 1
 	if auction then s.name = auction.name or name end
@@ -785,7 +785,7 @@ local function ReadInbox()
 		end
 	end
 
-	local keep, now = {}, time()
+	local keep, now = {}, ns.Now()
 	for _, s in ipairs(c.sales) do
 		local m = Take(mails, s)
 		if m then

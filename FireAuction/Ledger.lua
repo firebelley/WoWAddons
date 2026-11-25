@@ -33,7 +33,7 @@ local function DB()
 	db.kept.listed = db.kept.listed or {}
 	if not db.log then
 		db.log = {}
-		local now = time()
+		local now = ns.Now()
 		for id, item in pairs(db.items) do
 			for day, d in pairs(item.days) do
 				db.log[#db.log + 1] = ("%d %d d %d %d %d %d %d %d"):format(now, day, id, d.b, d.s, d.spent, d.income, d.lost)
@@ -47,7 +47,7 @@ local replayDay -- the day of the record being replayed (Rebuild)
 
 local function Log(kind, id, ...)
 	if replayDay then return end
-	local parts = { time(), ns.Data.Today(), kind, id }
+	local parts = { ns.Now(), ns.Data.Today(), kind, id }
 	for i = 1, select("#", ...) do parts[#parts + 1] = math.floor((select(i, ...)) or 0) end
 	local log = DB().log
 	log[#log + 1] = table.concat(parts, " ")

@@ -40,7 +40,7 @@ function Flip.Work(ticks)
 	local last = ticks[#ticks].t
 	local reached, seen = {}, {}
 	-- Days by your clock: the seconds it's ahead of UTC.
-	local now = time()
+	local now = ns.Now()
 	local zone = time(date("*t", now)) - time(date("!*t", now))
 	for i, t in ipairs(ticks) do
 		local day = t.market <= low and t.t + HOLD <= last + 6 * 3600 and math.floor((t.t + zone) / 86400)

@@ -232,7 +232,8 @@ local function DrawGraph(days, perDay, ahead)
 		for i, r in ipairs(days) do
 			if daily then
 				local d, share = Change(days, i, s.key)
-				v[i] = pct and share or d
+				-- (Daily %: nothing on days without your gold the day before.)
+				if pct then v[i] = share else v[i] = d end
 			elseif r[s.key] then
 				if not base[s.key] then base[s.key], baseAt[s.key] = r[s.key], i end
 				v[i] = r[s.key] - base[s.key]

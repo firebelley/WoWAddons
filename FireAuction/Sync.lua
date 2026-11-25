@@ -718,7 +718,7 @@ local function OnData(r, from)
 	st.last = GetTime()
 	local realm = ns.Realm(st.house)
 	if not realm then return end
-	local now = time()
+	local now = ns.Now()
 	local prev = 0
 	local ok, err = pcall(function()
 		while not r:Done() do

@@ -27,7 +27,7 @@ end
 function Scan.CooldownLeft()
 	local realm = ns.Realm()
 	if not realm then return 0 end
-	return math.max(0, (realm.lastRequest or 0) + ns.SCAN_COOLDOWN - time())
+	return math.max(0, (realm.lastRequest or 0) + ns.SCAN_COOLDOWN - ns.Now())
 end
 
 function Scan.Busy()
@@ -203,7 +203,7 @@ function Scan.Start(auto)
 	if not realm then return end
 
 	Scan.state = "waiting"
-	realm.lastRequest = time()
+	realm.lastRequest = ns.Now()
 	token = token + 1
 	local mine = token
 	AH.ReplicateItems()
