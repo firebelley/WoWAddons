@@ -279,6 +279,16 @@ local function BuildList(name, helpText, emptyText, items, onToggle, columns)
 	empty:SetPoint("TOPLEFT", 4, -4)
 	empty:SetText(emptyText)
 
+	-- Search: shows only entries whose name contains the text (any case).
+	local okSearch, search = pcall(CreateFrame, "EditBox", nil, panel, "SearchBoxTemplate")
+	if not okSearch then
+		search = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+		search:SetAutoFocus(false)
+	end
+	search:SetSize(180, 20)
+	search:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -20, -14)
+	search:SetMaxLetters(40)
+
 	local rows = {}
 	local function Row(i)
 		local row = rows[i]
@@ -302,6 +312,17 @@ local function BuildList(name, helpText, emptyText, items, onToggle, columns)
 
 	local function Refresh()
 		local list = items()
+		local filter = strtrim(search:GetText() or ""):lower()
+		if filter ~= "" then
+			local kept = {}
+			for _, item in ipairs(list) do
+				if item.key:lower():find(filter, 1, true) then kept[#kept + 1] = item end
+			end
+			empty:SetText(#list > 0 and "No matches." or emptyText)
+			list = kept
+		else
+			empty:SetText(emptyText)
+		end
 		table.sort(list, function(a, b) return a.key:lower() < b.key:lower() end)
 		child:SetWidth(math.max(scroll:GetWidth(), 1))
 		child:SetHeight(math.max(#list * ROW_HEIGHT, 1))
@@ -320,6 +341,12 @@ local function BuildList(name, helpText, emptyText, items, onToggle, columns)
 		end
 	end
 	panel:SetScript("OnShow", function() ns.SafeCall(Refresh) end)
+	search:HookScript("OnTextChanged", function()
+		scroll:SetVerticalScroll(0)
+		ns.SafeCall(Refresh)
+	end)
+	search:HookScript("OnEscapePressed", function(self) self:ClearFocus() end)
+	search:HookScript("OnEnterPressed", function(self) self:ClearFocus() end)
 
 	return Settings.RegisterCanvasLayoutSubcategory(category, panel, name)
 end
