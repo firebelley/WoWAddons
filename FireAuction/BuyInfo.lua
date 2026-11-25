@@ -22,7 +22,8 @@
 --                     many to sell and how many are then yours for free.
 --   If all sell       the profit if everything left sells at the price.
 --
--- Under So far, on both: how many to buy for 1g profit at what they cost you.
+-- Under So far, on both: the profit on each, and how many to buy for 1g
+-- profit, at what they cost you.
 --
 -- Everything after the auction house's cut (5%, the neutral one's 15%). Hover a line for how it's
 -- worked out.
@@ -111,12 +112,15 @@ local function BreakEvenRows(Add, short, net, have, label)
 	end
 end
 
--- How many to buy for 1g profit at what they've cost you on average,
--- resold at net each (after the cut).
+-- The profit on each, and how many to buy for 1g profit, at what they've
+-- cost you on average, resold at net each (after the cut).
 local function PerGoldRow(Add, bought, spent, net)
 	if bought <= 0 or not net then return end
 	local avg = spent / bought
 	local each = net - avg
+	Add("Profit each", nil, Signed(math.floor(each + 0.5)), nil, Tip("Profit each",
+		("Resold %s (%s), less your average cost (%s)."):format(CutPhrase(), ns.Money(net),
+			ns.Money(math.floor(avg + 0.5)))), avg > 0 and ns.Percent(each / avg * 100) or nil)
 	Add("Buy per 1g profit", nil, each > 0 and tostring(math.ceil(10000 / each)) or (GREY .. "no profit|r"), nil,
 		Tip("Buy per 1g profit", ("At your average cost (%s)."):format(ns.Money(math.floor(avg + 0.5)))))
 end
