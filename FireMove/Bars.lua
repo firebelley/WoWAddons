@@ -7,7 +7,9 @@
 -- In Edit Mode a bar shows like the game's: click it for its settings, drag
 -- it to move it (it lines up with bars it's dropped near). Its settings and
 -- place are kept with the Edit Mode layout, as the game keeps its bars'.
--- Which bars a character has (and their slots) is the character's own.
+-- Which bars there are comes with the layout too: load it on another
+-- character and they're there. Their slots are each character's own (one new
+-- to a bar gets free ones).
 -- Like the game's, changes wait for Edit Mode's Save (FireMove.lua).
 -- Nothing changes during combat: then once it ends.
 local _, ns = ...
@@ -45,7 +47,7 @@ local SELECTION = {
 }
 ns.SELECTION = SELECTION
 
-local CDB           -- FireMoveBarsChar: { [bar] = page }
+local CDB           -- FireMoveBarsChar: { pages = { [bar] = page } }: the character's slots for each bar
 local bars = {}     -- [bar] = frame, once made (a deleted one is kept, hidden)
 local editing, binding, dragging
 local selected      -- the bar whose settings are open
@@ -54,12 +56,13 @@ local loading       -- filling in the settings: not a change
 local dialog, newBox
 
 local function Locked() return InCombatLockdown and InCombatLockdown() end
-local function Live(n) return CDB ~= nil and CDB[n] ~= nil end
 
 ---------------------------------------------------------------------------
 -- Settings, kept with the layout
 ---------------------------------------------------------------------------
 
+-- This layout's bars: { [bar] = its settings, on = true while it has it }.
+-- A deleted one keeps its settings (a new one in its place gets them).
 local function Store(create)
 	local all = FireMoveLayers and FireMoveLayers.bars
 	if not all then return end
@@ -67,6 +70,14 @@ local function Store(create)
 	if create then all[key] = all[key] or {} end
 	return all[key]
 end
+
+local function InLayout(n)
+	local store = Store()
+	return store ~= nil and store[n] ~= nil and store[n].on == true
+end
+
+-- In this layout, with slots on this character.
+local function Live(n) return InLayout(n) and CDB ~= nil and CDB.pages[n] ~= nil end
 
 local function Get(n, key)
 	local store = Store()
@@ -109,22 +120,12 @@ end
 local function RevertBar(n)
 	local store = Store(true)
 	if not store then return end
+	local on = store[n] and store[n].on
 	local saved = ns.SavedBar and ns.SavedBar(n)
-	if saved then
-		store[n] = {}
-		for k, v in pairs(saved) do store[n][k] = type(v) == "table" and { unpack(v) } or v end
-	else
-		store[n] = nil
-	end
+	store[n] = {}
+	for k, v in pairs(saved or {}) do store[n][k] = type(v) == "table" and { unpack(v) } or v end
+	store[n].on = on
 	Apply(n)
-end
-
--- The character's bars (FireMove.lua keeps a saved copy, and puts it back).
-function ns.CharBars() return CDB end
-function ns.SetCharBars(t)
-	if not CDB then return end
-	wipe(CDB)
-	for n, page in pairs(t) do CDB[n] = page end
 end
 
 -- The next 12 slots no bar or stance uses, or nil.
@@ -140,10 +141,30 @@ local function FreePage()
 			if ok and page then taken[page] = true end
 		end
 	end
-	for _, page in pairs(CDB) do taken[page] = true end
+	for _, page in pairs(CDB.pages) do taken[page] = true end
 	for _, page in ipairs(PAGES) do
 		if not taken[page] then return page end
 	end
+end
+
+-- Slots for this layout's bars this character has none for yet (in order).
+local function GivePages()
+	local store = Store()
+	if not (CDB and store) then return end
+	local list = {}
+	for n, s in pairs(store) do
+		if type(n) == "number" and type(s) == "table" and s.on and not CDB.pages[n] then list[#list + 1] = n end
+	end
+	table.sort(list)
+	for _, n in ipairs(list) do CDB.pages[n] = FreePage() end
+end
+
+-- The bar a new one would be, and its slots (nil: none left).
+local function NextBar()
+	if not CDB then return end
+	local n = FIRST
+	while InLayout(n) do n = n + 1 end
+	return n, CDB.pages[n] or FreePage()
 end
 
 ---------------------------------------------------------------------------
@@ -260,7 +281,7 @@ function Apply(n)
 		Paint(bar)
 		return
 	end
-	local page = CDB[n]
+	local page = CDB.pages[n]
 	bar:SetAttribute("actionpage", page)
 	for _, b in ipairs(bar.actionButtons) do
 		if b:GetAttribute("actionpage") ~= page then b:SetAttribute("actionpage", page) end
@@ -539,16 +560,17 @@ ns.DeselectBar = function() Deselect() end
 local function UpdateNewBox()
 	if not newBox then return end
 	newBox:SetShown(editing == true)
-	newBox.button:SetEnabled(not Locked() and FreePage() ~= nil)
+	newBox.button:SetEnabled(not Locked() and select(2, NextBar()) ~= nil)
 end
 
 local function NewBar()
-	if Locked() or not CDB then return end
-	local page = FreePage()
-	if not page then return end
-	local n = FIRST
-	while CDB[n] do n = n + 1 end
-	CDB[n] = page
+	if Locked() then return end
+	local n, page = NextBar()
+	local store = Store(true)
+	if not (page and store) then return end
+	CDB.pages[n] = page
+	store[n] = store[n] or {}
+	store[n].on = true
 	Make(n)
 	Apply(n)
 	Select(n)
@@ -558,8 +580,8 @@ end
 
 -- Its slots keep what's on them: a new bar gets them back.
 function Delete(n)
-	if Locked() or not Live(n) then return end
-	CDB[n] = nil
+	if Locked() or not InLayout(n) then return end
+	Store()[n].on = nil
 	Deselect()
 	Apply(n)
 	UpdateNewBox()
@@ -606,8 +628,11 @@ local function ApplyAll()
 		return
 	end
 	pending = false
+	GivePages()
 	if selected and not Live(selected) then Deselect() end
-	for n in pairs(CDB) do Make(n) end
+	for n in pairs(CDB.pages) do
+		if Live(n) then Make(n) end
+	end
 	for n in pairs(bars) do Apply(n) end
 	if dialog and dialog:IsShown() then RefreshDialog() end
 	UpdateNewBox()
@@ -679,6 +704,32 @@ events:SetScript("OnEvent", function(_, event, addon)
 		if addon == "FireMove" then
 			FireMoveBarsChar = FireMoveBarsChar or {}
 			CDB = FireMoveBarsChar
+			-- Before bars came with the layout: { [bar] = page }, shown in every
+			-- layout. Those bars go into every layout known, once per character.
+			if not CDB.pages then
+				local old = {}
+				for n, page in pairs(CDB) do
+					if type(n) == "number" then old[n] = page end
+				end
+				wipe(CDB)
+				CDB.pages = old
+				local L = FireMoveLayers
+				if L and next(old) then
+					L.bars = L.bars or {}
+					local layouts = {}
+					for _, name in ipairs({ "profiles", "bars", "attach", "style", "popups" }) do
+						for key in pairs(L[name] or {}) do layouts[key] = true end
+					end
+					for key in pairs(layouts) do
+						local store = L.bars[key] or {}
+						L.bars[key] = store
+						for n in pairs(old) do
+							store[n] = store[n] or {}
+							store[n].on = true
+						end
+					end
+				end
+			end
 		elseif addon == "Blizzard_EditMode" then
 			HookEditMode()
 		end

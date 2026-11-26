@@ -161,7 +161,7 @@ local LAYERS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
 local LAYER_NAMES = { BACKGROUND = "Bottom", LOW = "Low", MEDIUM = "Middle", HIGH = "High", DIALOG = "Top" }
 -- FireMoveLayers: profiles = { [layout] = { [frame] = strata } },
 -- own = { [frame] = its own strata, before any change },
--- bars = { [layout] = { [bar] = its settings } } (Bars.lua),
+-- bars = { [layout] = { [bar] = its settings, on: the layout has it } } (Bars.lua),
 -- attach = { [layout] = { [frame] = { to, side, off, gap } } } (Attach.lua),
 -- style = { [layout] = { [bar] = "main" } } (Style.lua),
 -- popups = { [layout] = { rolls = { x, y }, alerts = { x, y } } } (Popups.lua)
@@ -455,7 +455,6 @@ local function Now()
 		attach = DeepCopy(LDB.attach),
 		style = DeepCopy(LDB.style),
 		popups = DeepCopy(LDB.popups),
-		char = DeepCopy(ns.CharBars and ns.CharBars() or {}),
 	}
 end
 
@@ -502,7 +501,6 @@ local function Restore(from)
 	LDB.attach = DeepCopy(from.attach or {})
 	LDB.style = DeepCopy(from.style or {})
 	LDB.popups = DeepCopy(from.popups or {})
-	if ns.SetCharBars then ns.SetCharBars(DeepCopy(from.char)) end
 	layers = nil
 	Switch()
 end
