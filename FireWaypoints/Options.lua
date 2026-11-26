@@ -23,8 +23,8 @@ local function Build()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Shift-click the world map to drop a pin, click it to track it, shift-right-click to remove it. Your group sees your pins if "
-		.. "they have FireWaypoints, and your guild shows on the map. /fwp 45.2 60.1 drops one at those coordinates. "
-		.. "Your group's tracked quests show on your minimap.")
+		.. "they have FireWaypoints, and your guild shows on the map. Paste coordinates into the box on the map to drop one there. "
+		.. "Your group's focused quests show on your map and minimap.")
 	y = y - 48
 
 	local function Checkbox(key, label, tooltip, onChange)

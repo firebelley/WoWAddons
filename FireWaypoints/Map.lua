@@ -193,6 +193,76 @@ local function OnMouseUp(_, button)
 	end
 end
 
+---------------------------------------------------------------------------
+-- The paste box (the map's top right corner): coordinates in any form drop
+-- a pin there on the map being looked at - at once when pasted, or on Enter
+-- when typed. It empties after each pin, ready for the next.
+---------------------------------------------------------------------------
+
+local BOX_WIDTH = 120
+
+local function PlacePasted(box)
+	local text = strtrim(box:GetText() or "")
+	if text == "" then return box:ClearFocus() end
+	local x, y = ns.Coords(text)
+	if not (x and y) then
+		ns.Print("type two numbers, like 45.2, 60.1.")
+		return
+	end
+	local map = WM:GetMapID()
+	if x > 100 or y > 100 or not map then
+		ns.Print("can't place a pin there.")
+		return
+	end
+	if ns.Add(map, x / 100, y / 100) then
+		if SOUNDKIT and SOUNDKIT.UI_MAP_WAYPOINT_CONTROL_CLICK then
+			pcall(PlaySound, SOUNDKIT.UI_MAP_WAYPOINT_CONTROL_CLICK)
+		end
+		box:SetText("")
+		box:ClearFocus()
+	else
+		ns.Print("pins can't go on this map - open a zone's map.")
+	end
+end
+
+local function CreatePasteBox()
+	local container = WM.GetCanvasContainer and WM:GetCanvasContainer() or WM.ScrollContainer
+	if not container then return end
+	-- On the map's border frame: above the map and its pins.
+	local box = CreateFrame("EditBox", nil, WM.BorderFrame or WM, "InputBoxTemplate")
+	box:SetSize(BOX_WIDTH, 20)
+	box:SetPoint("TOPRIGHT", container, "TOPRIGHT", -10, -6)
+	box:SetAutoFocus(false)
+	box:SetMaxLetters(60)
+	local hint = box:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	hint:SetPoint("LEFT", 2, 0)
+	hint:SetText("Paste coordinates")
+	local function UpdateHint() hint:SetShown(box:GetText() == "" and not box:HasFocus()) end
+	local before = 0 -- the text's length before the last change
+	box:SetScript("OnTextChanged", function(self, userInput)
+		local text = self:GetText() or ""
+		local pasted = userInput and #text - before > 1 -- (more than one character at once)
+		before = #text
+		UpdateHint()
+		if pasted and ns.Coords(text) then PlacePasted(self) end
+	end)
+	box:SetScript("OnEnterPressed", PlacePasted)
+	box:SetScript("OnEscapePressed", function(self)
+		self:SetText("")
+		self:ClearFocus()
+	end)
+	box:SetScript("OnEditFocusGained", UpdateHint)
+	box:SetScript("OnEditFocusLost", UpdateHint)
+	box:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+		GameTooltip:SetText("Paste coordinates", 1, 1, 1)
+		GameTooltip:AddLine("Drops a pin there on this map.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	box:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	UpdateHint()
+end
+
 local function Setup()
 	if WM or not WorldMapFrame or not WorldMapFrame.GetCanvas then return end
 	WM = WorldMapFrame
@@ -213,6 +283,8 @@ local function Setup()
 		sc:HookScript("OnMouseDown", OnMouseDown)
 		sc:HookScript("OnMouseUp", OnMouseUp)
 	end
+	local ok, err = pcall(CreatePasteBox)
+	if not ok and ns.debug then ns.Print("paste box: " .. tostring(err)) end
 	Map.Refresh()
 end
 

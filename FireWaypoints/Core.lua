@@ -578,13 +578,25 @@ local function PrintList()
 	for _, r in ipairs(rows) do print(r.text) end
 end
 
+-- The two numbers in pasted coordinates, however they're written: "10.1, 21.2",
+-- "(10.1, 21.2)", "10,21.2", "10.1 21.2"... Anything else around them is
+-- ignored. nil unless there are exactly two.
+local function Coords(text)
+	local x, y
+	for n in text:gmatch("%d*%.?%d+") do
+		if y then return nil end
+		if x then y = tonumber(n) else x = tonumber(n) end
+	end
+	return x, y
+end
+ns.Coords = Coords
+
 SLASH_FIREWAYPOINTS1 = "/fwp"
 SLASH_FIREWAYPOINTS2 = "/firewaypoints"
 SlashCmdList.FIREWAYPOINTS = function(input)
 	input = strtrim(input or "")
 	local cmd = input:lower()
-	local x, y = input:gsub(",", " "):match("^([%d%.]+)%s+([%d%.]+)$")
-	x, y = tonumber(x), tonumber(y)
+	local x, y = Coords(input)
 	if x and y then
 		local map = ns.PlayerPos()
 		map = map or (C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player"))
@@ -618,7 +630,7 @@ SlashCmdList.FIREWAYPOINTS = function(input)
 	else
 		ns.Print("commands:")
 		print("  shift-click the world map - drop a pin (click a pin to track it, shift-right-click to remove it)")
-		print("  /fwp 45.2 60.1 - drop a pin at those coordinates in your zone")
+		print("  /fwp 45.2, 60.1 - drop a pin at those coordinates in your zone (any format)")
 		print("  /fwp list - list the pins")
 		print("  /fwp clear - remove your pins (for your group too)")
 		print("  /fwp clear all - also hide your group's pins")
