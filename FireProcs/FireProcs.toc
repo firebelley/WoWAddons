@@ -19,6 +19,7 @@ Auras.lua
 SelfBuffs.lua
 BuffBars.lua
 Changes.lua
+TalentBuffs.lua
 Casts.lua
 Drain.lua
 Options.lua

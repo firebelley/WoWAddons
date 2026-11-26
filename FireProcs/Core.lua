@@ -92,6 +92,7 @@ SlashCmdList.FIREPROCS = function(input)
 			tostring(UnitAffectingCombat("player") and true or false), tostring(ns.API.AurasRestricted())))
 		print("  group: " .. ns.Drain.DescribeGroup())
 		print("  buff reminders: " .. ns.SelfBuffs.Describe())
+		print("  proc talents, looked up by name: " .. ns.TalentBuffs.Describe())
 		ns.SelfBuffs.DescribeCurrent()
 		local names = arg ~= "" and { arg } or { "Arcane Missiles", "Shadow Bolt", "Frostbolt", "Fireball", "Healing Touch", "Lightning Bolt" }
 		local any = false
