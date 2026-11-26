@@ -23,8 +23,9 @@ local function Build()
 	about:SetPoint("RIGHT", -16, 0)
 	about:SetJustifyH("LEFT")
 	about:SetText("Shift-click the world map to drop a pin, click it to track it, shift-right-click to remove it. Your group sees your pins if "
-		.. "they have FireWaypoints, and your guild shows on the map. /fwp 45.2 60.1 drops one at those coordinates.")
-	y = y - 36
+		.. "they have FireWaypoints, and your guild shows on the map. /fwp 45.2 60.1 drops one at those coordinates. "
+		.. "Your group's tracked quests show on your minimap.")
+	y = y - 48
 
 	local function Checkbox(key, label, tooltip, onChange)
 		local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
@@ -56,6 +57,9 @@ local function Build()
 	Checkbox("guild", "Show your guild on the map",
 		"Guild members with FireWaypoints show as dots on the map and minimap, and see where you are. Off: neither.",
 		function() ns.Guild.Changed() end)
+	Checkbox("quests", "Show your group's quest areas",
+		"The areas of quests your group is tracking, on your minimap, if they have FireWaypoints. They see yours. Off: neither.",
+		function() ns.Quests.Changed() end)
 	y = y - 10
 
 	-- A size slider (the classic options slider look).

@@ -5,7 +5,8 @@
 -- (an arrow on the minimap's edge points to it); shift-right-click one to
 -- remove it. Everyone in your group with FireWaypoints sees your pins (in your
 -- class color, with your name), and you see theirs. Guild members with
--- FireWaypoints show as dots on the map and minimap (Guild.lua).
+-- FireWaypoints show as dots on the map and minimap (Guild.lua). The areas of
+-- the quests your group is tracking show on your minimap (Quests.lua).
 --
 -- Sharing: addon messages to the group. Each change is sent as it happens;
 -- anyone joining (or reloading) says hello and the others send their pins.
@@ -17,7 +18,7 @@ local PREFIX = "FireWP"
 local MAX_MESSAGE = 240
 local MAX_PER_PLAYER = 100
 local RETRY = 5           -- seconds before resending pins the game wouldn't send
-local DEFAULTS = { minimap = true, share = true, minimapScale = 1, guild = true, guildScale = 1 }
+local DEFAULTS = { minimap = true, share = true, minimapScale = 1, guild = true, guildScale = 1, quests = true }
 
 ns.mine = {}   -- [id] = pin, your pins (saved)
 ns.shared = {} -- [owner] = { [id] = pin }, other players' pins
@@ -129,6 +130,10 @@ local function Channel()
 	if instance and IsInGroup(instance) and not (home and IsInGroup(home)) then return "INSTANCE_CHAT" end
 	return IsInRaid() and "RAID" or "PARTY"
 end
+ns.Channel = Channel
+
+-- A message sender's name as the group list has it (nil if not in the group).
+function ns.MemberKey(name) return FindMember(Roster(), name) end
 
 ---------------------------------------------------------------------------
 -- Where a pin is
@@ -503,6 +508,7 @@ local function OnRoster()
 		if changed then Changed() end
 		if not wasGrouped then C_Timer.After(2, Hello) end
 	end
+	if ns.Quests then ns.Quests.RosterChanged(grouped and not wasGrouped) end
 	wasGrouped = grouped
 end
 
@@ -600,6 +606,10 @@ SlashCmdList.FIREWAYPOINTS = function(input)
 		ns.Print("all pins cleared. Your group's come back if they drop new ones or you regroup.")
 	elseif cmd == "options" or cmd == "config" then
 		ns.Options.Open()
+	elseif cmd == "quests" then
+		ns.Quests.PrintStatus()
+	elseif cmd == "test" then
+		ns.Quests.Test()
 	elseif cmd == "debug" then
 		ns.debug = not ns.debug
 		local map, px, py = ns.PlayerPos()
@@ -612,6 +622,8 @@ SlashCmdList.FIREWAYPOINTS = function(input)
 		print("  /fwp list - list the pins")
 		print("  /fwp clear - remove your pins (for your group too)")
 		print("  /fwp clear all - also hide your group's pins")
+		print("  /fwp quests - your group's quest areas, and what you're sending")
+		print("  /fwp test - also show your own tracked quests' areas")
 		print("  /fwp options - open the options")
 	end
 end

@@ -1,9 +1,9 @@
 ## Interface: 16001
 ## Title: FireWaypoints
-## Notes: Shift-click the world map to drop as many pins as you like. They show on the map and minimap, and your group sees them too. Guild members show as dots on the map (if they have FireWaypoints).
+## Notes: Shift-click the world map to drop as many pins as you like. They show on the map and minimap, and your group sees them too. Guild members show as dots on the map, and the areas of quests your group is tracking show on your minimap (if they have FireWaypoints).
 ## IconTexture: Interface\Icons\INV_Misc_Map_01
 ## Author: Firebelley
-## Version: 0.1.0
+## Version: 0.2.0
 ## SavedVariables: FireWaypointsDB
 ## SavedVariablesPerCharacter: FireWaypointsCharDB
 
@@ -11,4 +11,5 @@ Core.lua
 Guild.lua
 Map.lua
 Minimap.lua
+Quests.lua
 Options.lua

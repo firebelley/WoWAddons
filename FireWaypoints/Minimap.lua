@@ -39,6 +39,8 @@ local function Facing()
 	return f
 end
 
+Minimap_.Radius, Minimap_.Facing = Radius, Facing -- (Quests.lua draws with these too)
+
 local function HideAll(from)
 	for i = from or 1, #pool do pool[i]:Hide() end
 	if not from and arrow then arrow:Hide() end
