@@ -1,20 +1,21 @@
--- Your group's quest areas on your minimap: the areas of the quests group
--- members are tracking in their zone, shaded in their class color, even
--- quests you don't have. Quests you're on yourself are left out (you have
--- them). Hover one to see whose quest it is. They see yours the same way.
--- One switch in the options turns it off both ways.
+-- Your group's quest areas on your minimap: the area of the quest each group
+-- member is following (the one the game points them to), shaded in their
+-- class color, even if you don't have it. Quests you're on yourself are left
+-- out (you have them). Hover one to see whose quest it is. They see yours
+-- the same way. One switch in the options turns it off both ways.
 --
 -- Finding an area: the game can't tell an addon a quest area's shape, so a
 -- hidden quest-area frame (the kind the world map draws them with) is set to
--- your zone and given one quest at a time; asking it what quest is under a
--- spot tells whether the spot is inside. A coarse pass over the whole map
--- finds where the area is, a finer one (up to 60x60 cells, at least 8 yards
--- each) over just that part gives its shape. It runs a few milliseconds a
--- frame, after your quests or zone change, and only while you're grouped.
+-- your zone and given the quest; asking it what quest is under a spot tells
+-- whether the spot is inside. A coarse pass over the whole map finds where
+-- the area is; then each row across it (up to 120 rows, at least 3 yards
+-- tall) is sampled, and each edge found exactly by halving. It runs a few
+-- milliseconds a frame, after your quest or zone changes, and only while
+-- you're grouped.
 --
 -- Sending: the whole set each time it changes (addon messages, own prefix):
--- B(egin), per quest Q (what it is) and D (its cells, in parts), E(nd). Each
--- row of cells is sent as runs of cells inside, a character per number.
+-- B(egin), per quest Q (what it is) and D (its rows, in parts), E(nd). Each
+-- row is sent as the spans inside it, each end as two characters.
 -- Anyone joining says H(ello) and the others send theirs again.
 local _, ns = ...
 
@@ -23,16 +24,19 @@ ns.Quests = Quests
 
 local PREFIX = "FireWPQ"
 local COARSE = 64      -- cells across the map in the first pass
-local MAX_CELLS = 60   -- cells across an area in the second
-local MIN_CELL = 8     -- yards
+local SAMPLES = 64     -- spots tried across each row, before finding its edges
+local MAX_ROWS = 120
+local ROW_YARDS = 3    -- rows at least this tall
+local EDGE_STEPS = 10  -- halvings to find an edge
+local SPAN = 4095      -- a span's ends in 1/4095ths of the area's width (two characters)
 local BUDGET = 3       -- milliseconds a frame for looking
 local DELAY = 1.5      -- seconds after a change before looking again
-local MAX_QUESTS = 10
-local CHUNK = 200      -- cell characters per message
+local CHUNK = 200      -- row characters per message
 local MAX_TITLE = 80
 local RETRY = 1        -- seconds before trying a message the game wouldn't send again
 local MAX_RETRIES = 60
 local ALPHA = 0.3      -- of the shading
+local MIN_PIXELS = 2   -- thinnest a drawn row may be on screen
 local SPOT_YARDS = 40  -- radius of the circle for a quest with no area, just an icon
 local SPOT_TEXTURE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 local INTERVAL = 0.05
@@ -52,41 +56,51 @@ local function Owner(owner) return owner ~= YOU and owner or nil end -- (nil: yo
 -- A quest area as text
 ---------------------------------------------------------------------------
 
--- One character per number (0-63), all safe in addon messages.
+-- Two characters per number (0-4095), all safe in addon messages.
 local CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 local VALUE = {}
 for i = 1, #CHARS do VALUE[CHARS:sub(i, i)] = i - 1 end
-local function Char(n) return CHARS:sub(n + 1, n + 1) end
+local function Chars(n)
+	local hi, lo = floor(n / 64), n % 64
+	return CHARS:sub(hi + 1, hi + 1) .. CHARS:sub(lo + 1, lo + 1)
+end
+local function Number(s, i)
+	local hi, lo = VALUE[s:sub(i, i)], VALUE[s:sub(i + 1, i + 1)]
+	return hi and lo and hi * 64 + lo
+end
 
--- A quest as sent (id, map, x0, y0, x1, y1 in 1/10000ths of the map, cols,
--- rows, title, data) into what the minimap draws: its box on the map, the
--- size of a cell, and the runs of cells inside (byRow[r] = { c, n, c, n... }).
--- cols 0: no area, just a spot (x0, y0). nil if it doesn't make sense.
+-- A quest as sent (id, map, x0, y0, x1, y1 in 1/10000ths of the map, rows,
+-- title, data) into what the minimap draws: its box on the map, the height
+-- of a row, and the spans inside each row as map positions (runs, and
+-- byRow[r] = { from, to, from, to... }). rows 0: no area, just a spot (x0, y0).
+-- nil if it doesn't make sense.
 local function Decode(q)
-	local id, map, cols, rows = q.id, q.map, q.cols, q.rows
-	if not (id and map and cols and rows) or cols > MAX_CELLS or rows > MAX_CELLS then return nil end
+	local id, map, rows = q.id, q.map, q.rows
+	if not (id and map and rows) or rows > MAX_ROWS then return nil end
 	for _, k in ipairs({ "x0", "y0", "x1", "y1" }) do
 		if not q[k] or q[k] < 0 or q[k] > 10000 then return nil end
 	end
 	local quest = { id = id, map = map, title = q.title ~= "" and q.title or nil,
 		x0 = q.x0 / 10000, y0 = q.y0 / 10000, x1 = q.x1 / 10000, y1 = q.y1 / 10000 }
-	if cols == 0 then
+	if rows == 0 then
 		quest.point = true
 		return quest
 	end
-	if rows == 0 or quest.x1 <= quest.x0 or quest.y1 <= quest.y0 then return nil end
-	quest.cw, quest.ch = (quest.x1 - quest.x0) / cols, (quest.y1 - quest.y0) / rows
+	if quest.x1 <= quest.x0 or quest.y1 <= quest.y0 then return nil end
+	quest.rows, quest.ch = rows, (quest.y1 - quest.y0) / rows
+	local width = quest.x1 - quest.x0
 	local runs, byRow, r = {}, {}, 0
 	for row in ((q.data or "") .. "."):gmatch("([^%.]*)%.") do
 		if r >= rows then break end
-		for i = 1, #row - 1, 2 do
-			local c, n = VALUE[row:sub(i, i)], VALUE[row:sub(i + 1, i + 1)]
-			if c and n and n > 0 and c + n <= cols then
-				runs[#runs + 1] = { r, c, n }
+		for i = 1, #row - 3, 4 do
+			local a, b = Number(row, i), Number(row, i + 2)
+			if a and b and b > a and b <= SPAN then
+				local ua, ub = quest.x0 + width * a / SPAN, quest.x0 + width * b / SPAN
+				runs[#runs + 1] = { r, ua, ub }
 				local list = byRow[r] or {}
 				byRow[r] = list
-				list[#list + 1] = c
-				list[#list + 1] = n
+				list[#list + 1] = ua
+				list[#list + 1] = ub
 			end
 		end
 		r = r + 1
@@ -118,29 +132,12 @@ local function ZoneMap()
 	return map
 end
 
--- Your tracked quests: the one you're following first, then the watch list.
-local function Tracked()
-	local list, seen = {}, {}
-	local function Add(id)
-		if id and not ns.IsSecret(id) and id > 0 and not seen[id] and #list < MAX_QUESTS then
-			seen[id] = true
-			list[#list + 1] = id
-		end
-	end
-	if C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID then
-		local ok, id = pcall(C_SuperTrack.GetSuperTrackedQuestID)
-		if ok then Add(id) end
-	end
-	local QL = C_QuestLog
-	if QL and QL.GetNumQuestWatches and QL.GetQuestIDForQuestWatchIndex then
-		for i = 1, QL.GetNumQuestWatches() or 0 do Add(QL.GetQuestIDForQuestWatchIndex(i)) end
-	elseif GetNumQuestWatches and GetQuestIndexForWatch and GetQuestLogTitle then
-		for i = 1, GetNumQuestWatches() or 0 do
-			local index = GetQuestIndexForWatch(i)
-			if index then Add(select(8, GetQuestLogTitle(index))) end
-		end
-	end
-	return list
+-- The quest you're following (the one the game points you to), if any.
+local function Focused()
+	if not (C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then return nil end
+	local ok, id = pcall(C_SuperTrack.GetSuperTrackedQuestID)
+	if not ok or not id or ns.IsSecret(id) or id <= 0 then return nil end
+	return id
 end
 
 local function Title(id)
@@ -225,30 +222,42 @@ local function Look(f, id, icon, width, height)
 	local bx0, by0 = Round(max(0, (x0 - 1) / COARSE)), Round(max(0, (y0 - 1) / COARSE))
 	local bx1, by1 = Round(min(1, (x1 + 2) / COARSE)), Round(min(1, (y1 + 2) / COARSE))
 	local u0, v0, u1, v1 = bx0 / 10000, by0 / 10000, bx1 / 10000, by1 / 10000
-	local bw, bh = (u1 - u0) * width, (v1 - v0) * height
-	local cell = max(MIN_CELL, max(bw, bh) / MAX_CELLS)
-	local cols = max(1, min(MAX_CELLS, ceil(bw / cell - 0.01)))
-	local rows = max(1, min(MAX_CELLS, ceil(bh / cell - 0.01)))
-	local cw, ch = (u1 - u0) / cols, (v1 - v0) / rows
-	local out, cells = {}, 0
+	local rows = max(1, min(MAX_ROWS, ceil((v1 - v0) * height / ROW_YARDS)))
+	local ch, bw = (v1 - v0) / rows, u1 - u0
+	local step = bw / SAMPLES
+	-- Where the edge is between a spot outside and one inside.
+	local function Edge(y, out, inside)
+		for _ = 1, EDGE_STEPS do
+			local mid = (out + inside) / 2
+			if Inside(f, id, mid, y) then inside = mid else out = mid end
+		end
+		return (out + inside) / 2
+	end
+	local function Code(x) return Chars(max(0, min(SPAN, floor((x - u0) / bw * SPAN + 0.5)))) end
+	local out, spans = {}, 0
 	for r = 0, rows - 1 do
 		local y = v0 + (r + 0.5) * ch
-		local row, start = {}, nil
-		for c = 0, cols do -- (one past the end closes a run)
-			if c < cols and Inside(f, id, u0 + (c + 0.5) * cw, y) then
-				start = start or c
-				cells = cells + 1
-			elseif start then
-				row[#row + 1] = Char(start) .. Char(c - start)
-				start = nil
+		local row, start, was = {}, nil, false
+		for c = 0, SAMPLES do
+			local x = u0 + c * step
+			local is = Inside(f, id, x, y)
+			if is and not was then
+				start = c == 0 and u0 or Edge(y, x - step, x)
+			elseif was and not is then
+				row[#row + 1] = Code(start) .. Code(Edge(y, x, x - step))
+				spans = spans + 1
 			end
+			was = is
+		end
+		if was then
+			row[#row + 1] = Code(start) .. Code(u1)
+			spans = spans + 1
 		end
 		out[r + 1] = table.concat(row)
 	end
-	if cells == 0 then return nil end
+	if spans == 0 then return nil end
 	while out[#out] == "" do out[#out] = nil end
-	return { x0 = bx0, y0 = by0, x1 = bx1, y1 = by1, cols = cols, rows = rows,
-		data = table.concat(out, "."), cells = cells }
+	return { x0 = bx0, y0 = by0, x1 = bx1, y1 = by1, rows = rows, data = table.concat(out, ".") }
 end
 
 local function Work()
@@ -262,7 +271,8 @@ local function Work()
 	if not (okSize and width and height and width > 0 and height > 0) then width, height = 1000, 1000 end
 	if f then pcall(f.SetMapID, f, map) end
 	local icons = Icons(map)
-	for _, id in ipairs(Tracked()) do
+	local id = Focused()
+	if id then
 		local title = Title(id)
 		local name = title ~= "" and title or ("quest " .. id)
 		local done = Done(id)
@@ -270,12 +280,12 @@ local function Work()
 		if area then
 			area.id, area.map, area.title = id, map, title
 			found[#found + 1] = area
-			lines[#lines + 1] = ("%s: area, %d cells"):format(name, area.cells)
+			lines[#lines + 1] = ("%s: area, %d rows"):format(name, area.rows)
 		elseif icons[id] and not done then
 			-- No area to be found, but there's an icon: that spot.
 			local x, y = Round(icons[id][1]), Round(icons[id][2])
 			found[#found + 1] = { id = id, map = map, title = title, x0 = x, y0 = y, x1 = x, y1 = y,
-				cols = 0, rows = 0, data = "" }
+				rows = 0, data = "" }
 			lines[#lines + 1] = name .. ": spot only"
 		else
 			lines[#lines + 1] = name .. (done and ": done" or ": nothing in this zone")
@@ -337,7 +347,7 @@ local function Messages(found)
 	for _, q in ipairs(found) do
 		local chunks = {}
 		for i = 1, #q.data, CHUNK do chunks[#chunks + 1] = q.data:sub(i, i + CHUNK - 1) end
-		local head = ("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d"):format(q.id, q.map, q.x0, q.y0, q.x1, q.y1, q.cols, q.rows)
+		local head = ("%d\t%d\t%d\t%d\t%d\t%d\t%d"):format(q.id, q.map, q.x0, q.y0, q.x1, q.y1, q.rows)
 		out[#out + 1] = ("Q\t%d\t%s\t%d\t%s"):format(seq, head, #chunks, q.title)
 		for i, chunk in ipairs(chunks) do out[#out + 1] = ("D\t%d\t%d\t%d\t%s"):format(seq, q.id, i, chunk) end
 		key[#key + 1] = head .. "\t" .. q.title .. "\t" .. q.data
@@ -457,11 +467,11 @@ local function OnMessage(prefix, text, channel, sender)
 	local set = incoming[from]
 	if not set or set.seq ~= seq then return end
 	if kind == "Q" then
-		local id, map, x0, y0, x1, y1, cols, rows, parts, title = strsplit("\t", rest)
+		local id, map, x0, y0, x1, y1, rows, parts, title = strsplit("\t", rest)
 		id = tonumber(id)
 		if not id then return end
 		set.quests[id] = { id = id, map = tonumber(map), x0 = tonumber(x0), y0 = tonumber(y0), x1 = tonumber(x1),
-			y1 = tonumber(y1), cols = tonumber(cols), rows = tonumber(rows), parts = tonumber(parts) or 0,
+			y1 = tonumber(y1), rows = tonumber(rows), parts = tonumber(parts) or 0,
 			title = title or "", chunks = {} }
 	elseif kind == "D" then
 		local id, part, data = strsplit("\t", rest)
@@ -606,11 +616,10 @@ local function Hovered(half)
 				local px, py = x - d.ox, y - d.oy
 				local u = (px * d.vy - py * d.vx) / det
 				local v = (d.ux * py - d.uy * px) / det
-				local c, r = floor((u - q.x0) / q.cw), floor((v - q.y0) / q.ch)
-				local row = q.byRow[r]
+				local row = q.byRow[floor((v - q.y0) / q.ch)]
 				if row then
 					for i = 1, #row, 2 do
-						if c >= row[i] and c < row[i] + row[i + 1] then inside = true break end
+						if u >= row[i] and u < row[i + 1] then inside = true break end
 					end
 				end
 			end
@@ -650,6 +659,9 @@ local function Draw()
 	local half = Minimap:GetWidth() / 2
 	local edge = half - 1
 	local perYard = half / ns.Minimap.Radius()
+	-- Screen pixels per minimap unit.
+	local screenH = GetPhysicalScreenSize and select(2, GetPhysicalScreenSize())
+	local pixels = (screenH and screenH > 0) and Minimap:GetEffectiveScale() * screenH / 768 or 1
 	local facing = ns.Minimap.Facing()
 	local cos, sin = 1, 0
 	if facing then cos, sin = math.cos(facing), math.sin(facing) end
@@ -692,20 +704,29 @@ local function Draw()
 					local hw, hh = (q.x1 - q.x0) / 2, (q.y1 - q.y0) / 2
 					local reach = sqrt((hw * ux) ^ 2 + (hw * uy) ^ 2) + sqrt((hh * vx) ^ 2 + (hh * vy) ^ 2)
 					if sqrt(cx * cx + cy * cy) - reach < half then
-						local thick = q.ch * sqrt(vx * vx + vy * vy)
-						for _, run in ipairs(q.runs) do
-							local v = q.y0 + (run[1] + 0.5) * q.ch
-							local ua, ub = q.x0 + run[2] * q.cw, q.x0 + (run[2] + run[3]) * q.cw
-							local ax, ay, bx, by = Clip(ox + ua * ux + v * vx, oy + ua * uy + v * vy,
-								ox + ub * ux + v * vx, oy + ub * uy + v * vy, edge)
-							if ax then
-								nLines = nLines + 1
-								local l = GetLine(nLines)
-								l:SetColorTexture(r, g, b, ALPHA)
-								l:SetThickness(thick)
-								l:SetStartPoint("CENTER", Minimap, ax, ay)
-								l:SetEndPoint("CENTER", Minimap, bx, by)
-								l:Show()
+						-- Rows thinner than MIN_PIXELS are drawn k at a time (the middle
+						-- one's spans), so see-through lines don't overlap into stripes.
+						local rowSize = q.ch * sqrt(vx * vx + vy * vy)
+						local k = max(1, ceil(MIN_PIXELS / (rowSize * pixels)))
+						for r0 = 0, q.rows - 1, k do
+							local n = min(k, q.rows - r0)
+							local spans = q.byRow[r0 + floor(n / 2)]
+							if spans then
+								local v = q.y0 + (r0 + n / 2) * q.ch
+								for i = 1, #spans, 2 do
+									local ua, ub = spans[i], spans[i + 1]
+									local ax, ay, bx, by = Clip(ox + ua * ux + v * vx, oy + ua * uy + v * vy,
+										ox + ub * ux + v * vx, oy + ub * uy + v * vy, edge)
+									if ax then
+										nLines = nLines + 1
+										local l = GetLine(nLines)
+										l:SetColorTexture(r, g, b, ALPHA)
+										l:SetThickness(rowSize * n)
+										l:SetStartPoint("CENTER", Minimap, ax, ay)
+										l:SetEndPoint("CENTER", Minimap, bx, by)
+										l:Show()
+									end
+								end
 							end
 						end
 						drawn[#drawn + 1] = d
@@ -741,7 +762,7 @@ function Quests.Test()
 	test = not test
 	if not test then shared[YOU] = nil end
 	Quests.Soon(false, 0)
-	ns.Print(test and "test on: your own tracked quests' areas show on your minimap." or "test off.")
+	ns.Print(test and "test on: your own quest's area shows on your minimap." or "test off.")
 end
 
 function Quests.PrintStatus()
@@ -751,11 +772,11 @@ function Quests.PrintStatus()
 	end
 	local report = Quests.report
 	if report then
-		ns.Print(("your tracked quests (%s):"):format(report.where))
-		if #report.lines == 0 then print("  none") end
+		ns.Print(("your quest (%s):"):format(report.where))
+		if #report.lines == 0 then print("  none followed") end
 		for _, line in ipairs(report.lines) do print("  " .. line) end
 	else
-		ns.Print(IsInGroup() and "your tracked quests: not looked at yet." or "not in a group (/fwp test to try it alone).")
+		ns.Print(IsInGroup() and "your quest: not looked at yet." or "not in a group (/fwp test to try it alone).")
 	end
 	for owner, list in pairs(shared) do
 		if owner ~= YOU then

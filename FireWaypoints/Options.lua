@@ -58,7 +58,7 @@ local function Build()
 		"Guild members with FireWaypoints show as dots on the map and minimap, and see where you are. Off: neither.",
 		function() ns.Guild.Changed() end)
 	Checkbox("quests", "Show your group's quest areas",
-		"The areas of quests your group is tracking, on your minimap, if they have FireWaypoints. They see yours. Off: neither.",
+		"The area of the quest each group member is following, on your minimap, if they have FireWaypoints. They see yours. Off: neither.",
 		function() ns.Quests.Changed() end)
 	y = y - 10
 

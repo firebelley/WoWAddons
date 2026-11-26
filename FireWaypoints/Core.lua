@@ -5,8 +5,8 @@
 -- (an arrow on the minimap's edge points to it); shift-right-click one to
 -- remove it. Everyone in your group with FireWaypoints sees your pins (in your
 -- class color, with your name), and you see theirs. Guild members with
--- FireWaypoints show as dots on the map and minimap (Guild.lua). The areas of
--- the quests your group is tracking show on your minimap (Quests.lua).
+-- FireWaypoints show as dots on the map and minimap (Guild.lua). The area of
+-- the quest each group member is following shows on your minimap (Quests.lua).
 --
 -- Sharing: addon messages to the group. Each change is sent as it happens;
 -- anyone joining (or reloading) says hello and the others send their pins.
@@ -623,7 +623,7 @@ SlashCmdList.FIREWAYPOINTS = function(input)
 		print("  /fwp clear - remove your pins (for your group too)")
 		print("  /fwp clear all - also hide your group's pins")
 		print("  /fwp quests - your group's quest areas, and what you're sending")
-		print("  /fwp test - also show your own tracked quests' areas")
+		print("  /fwp test - also show your own quest's area")
 		print("  /fwp options - open the options")
 	end
 end
