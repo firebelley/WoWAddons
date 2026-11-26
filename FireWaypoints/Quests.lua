@@ -52,6 +52,12 @@ function Quests.On() return ns.db ~= nil and ns.db.quests ~= false end
 
 local function Owner(owner) return owner ~= YOU and owner or nil end -- (nil: yours, to ns.OwnerColor)
 
+-- New quest areas: the world map redraws (if it's open; the minimap redraws
+-- itself 20 times a second).
+local function Redraw()
+	if ns.Map and ns.Map.Refresh then ns.Map.Refresh() end
+end
+
 ---------------------------------------------------------------------------
 -- A quest area as text
 ---------------------------------------------------------------------------
@@ -362,6 +368,7 @@ local function Finish(found, report)
 		local list = {}
 		for _, q in ipairs(found) do list[q.id] = Decode(q) end
 		shared[YOU] = next(list) and list or nil
+		Redraw()
 	end
 	if not (IsInGroup() and Quests.On()) then
 		lastKey, lastMessages, force = nil, nil, false
@@ -493,6 +500,7 @@ local function OnMessage(prefix, text, channel, sender)
 			end
 		end
 		shared[from] = n > 0 and list or nil
+		Redraw()
 		if ns.debug then ns.Print(("quests: %d from %s"):format(n, from)) end
 	end
 end
@@ -504,6 +512,7 @@ function Quests.RosterChanged(joined)
 	end
 	if not IsInGroup() then wipe(incoming) end
 	if joined then C_Timer.After(2, Hello) end
+	Redraw()
 	Quests.Soon()
 end
 
@@ -518,16 +527,21 @@ function Quests.Changed()
 		wipe(incoming)
 		if IsInGroup() then SendSet((Messages({}))) end
 		lastKey, lastMessages = nil, nil
+		Redraw()
 	end
 end
 
 ---------------------------------------------------------------------------
--- The minimap: each run of cells is a thick line in the owner's color, so
--- it turns with a rotating minimap, cut off at the minimap's edge. Under the
--- pins and guild dots.
+-- The minimap: each row is a thick line in the owner's color, so it turns
+-- with a rotating minimap, cut off at the minimap's edge. Drawn on the
+-- minimap's border frame, under the border ring (which hides where the lines
+-- end), and under the pins and guild dots. Hovering adds the quest to the
+-- game's minimap tooltip.
 ---------------------------------------------------------------------------
 
-local layer
+local layer -- runs the drawing
+local art   -- what the lines are drawn on: the border frame, else layer
+local hooked -- the game's minimap tooltip gets the quests added to it
 local lines, spots, drawn = {}, {}, {}
 
 -- A map's place in the world: its continent, the world position of its top
@@ -572,7 +586,7 @@ end
 local function GetLine(n)
 	local l = lines[n]
 	if not l then
-		l = layer:CreateLine(nil, "ARTWORK")
+		l = art:CreateLine(nil, "ARTWORK")
 		l:SetColorTexture(1, 1, 1, 1)
 		lines[n] = l
 	end
@@ -582,7 +596,7 @@ end
 local function GetSpot(n)
 	local t = spots[n]
 	if not t then
-		t = layer:CreateTexture(nil, "ARTWORK")
+		t = art:CreateTexture(nil, "ARTWORK")
 		t:SetTexture(SPOT_TEXTURE)
 		spots[n] = t
 	end
@@ -592,6 +606,16 @@ end
 local function HideFrom(nLines, nSpots)
 	for i = nLines + 1, #lines do lines[i]:Hide() end
 	for i = nSpots + 1, #spots do spots[i]:Hide() end
+end
+
+-- Is the spot (u, v) on a quest's own map inside its area?
+local function InArea(q, u, v)
+	local row = q.byRow[floor((v - q.y0) / q.ch)]
+	if not row then return false end
+	for i = 1, #row, 2 do
+		if u >= row[i] and u < row[i + 1] then return true end
+	end
+	return false
 end
 
 -- What the cursor is over: the drawn quests it's inside.
@@ -614,14 +638,7 @@ local function Hovered(half)
 			local det = d.ux * d.vy - d.uy * d.vx
 			if det ~= 0 then
 				local px, py = x - d.ox, y - d.oy
-				local u = (px * d.vy - py * d.vx) / det
-				local v = (d.ux * py - d.uy * px) / det
-				local row = q.byRow[floor((v - q.y0) / q.ch)]
-				if row then
-					for i = 1, #row, 2 do
-						if u >= row[i] and u < row[i + 1] then inside = true break end
-					end
-				end
+				inside = InArea(q, (px * d.vy - py * d.vx) / det, (d.ux * py - d.uy * px) / det)
 			end
 		end
 		if inside then found[#found + 1] = d end
@@ -629,17 +646,19 @@ local function Hovered(half)
 	return found
 end
 
-local function Tooltip(found)
+-- The quests under the cursor (found), in a tooltip owned by owner.
+local function Tooltip(found, owner)
+	owner = owner or layer
 	if found and #found > 0 then
-		if GameTooltip:IsShown() and not GameTooltip:IsOwned(layer) then return end
-		GameTooltip:SetOwner(layer, "ANCHOR_CURSOR")
+		if GameTooltip:IsShown() and not GameTooltip:IsOwned(owner) then return end
+		GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
 		for i, d in ipairs(found) do
 			local title = d.quest.title or ("Quest " .. d.quest.id)
 			if i == 1 then GameTooltip:SetText(title, 1, 0.82, 0) else GameTooltip:AddLine(title, 1, 0.82, 0) end
 			GameTooltip:AddLine(d.owner == YOU and "You" or d.owner, ns.OwnerColor(Owner(d.owner)))
 		end
 		GameTooltip:Show()
-	elseif GameTooltip:IsOwned(layer) then
+	elseif GameTooltip:IsOwned(owner) then
 		GameTooltip:Hide()
 	end
 end
@@ -736,7 +755,20 @@ local function Draw()
 		end
 	end
 	HideFrom(nLines, nSpots)
-	Tooltip(Hovered(half))
+	if not hooked then Tooltip(Hovered(half)) end
+end
+
+-- The game's minimap tooltip, refilled every frame the cursor is over the
+-- minimap: add the quests under the cursor.
+local function AddToTooltip(tt)
+	local found = Hovered(Minimap:GetWidth() / 2)
+	if not found or #found == 0 then return end
+	for _, d in ipairs(found) do
+		local title = d.quest.title or ("Quest " .. d.quest.id)
+		if tt:NumLines() == 0 then tt:SetText(title, 1, 0.82, 0) else tt:AddLine(title, 1, 0.82, 0) end
+		tt:AddLine(d.owner == YOU and "You" or d.owner, ns.OwnerColor(Owner(d.owner)))
+	end
+	tt:Show()
 end
 
 local function Setup()
@@ -744,6 +776,15 @@ local function Setup()
 	layer = CreateFrame("Frame", nil, Minimap)
 	layer:SetAllPoints(Minimap)
 	layer:SetFrameLevel(Minimap:GetFrameLevel() + 2) -- (the pins are at +5)
+	-- The border frame (a child of the minimap), under its ring (OVERLAY).
+	art = (MinimapBackdrop and MinimapBackdrop.CreateLine and MinimapBackdrop:GetParent() == Minimap) and MinimapBackdrop or layer
+	if GameTooltip.SetMinimapMouseover and Minimap_OnUpdate then
+		hooksecurefunc(GameTooltip, "SetMinimapMouseover", function(tt)
+			local ok, err = pcall(AddToTooltip, tt)
+			if not ok and ns.debug then ns.Print("quests: " .. tostring(err)) end
+		end)
+		hooked = true
+	end
 	local elapsed = 0
 	layer:SetScript("OnUpdate", function(_, dt)
 		elapsed = elapsed + dt
@@ -755,14 +796,132 @@ local function Setup()
 end
 
 ---------------------------------------------------------------------------
+-- The world map: the same rows, as lines on the map's canvas (so they zoom
+-- with it), under the pins. Map.lua redraws it when the map changes.
+---------------------------------------------------------------------------
+
+local mapLayer, mapWM
+local mapLines, mapSpots, mapDrawn = {}, {}, {}
+
+-- Over an area on the world map: its tooltip.
+local function MapHover()
+	if not (mapWM and mapWM:IsShown() and mapLayer:IsMouseOver()) then return Tooltip(nil, mapLayer) end
+	local x, y = mapWM:GetNormalizedCursorPosition()
+	if not x then return Tooltip(nil, mapLayer) end
+	local found = {}
+	for _, d in ipairs(mapDrawn) do
+		local q = d.quest
+		local u, v = (x - d.au) / d.bu, (y - d.av) / d.bv
+		local inside
+		if q.point then
+			local dx, dy = (u - q.x0) * d.w.du, (v - q.y0) * d.w.dv
+			inside = dx * dx + dy * dy <= SPOT_YARDS * SPOT_YARDS
+		else
+			inside = InArea(q, u, v)
+		end
+		if inside then found[#found + 1] = d end
+	end
+	Tooltip(found, mapLayer)
+end
+
+-- Draws your group's quests on the map's canvas, showing map.
+function Quests.DrawMap(WM, canvas, map)
+	mapWM = WM
+	if not mapLayer then
+		mapLayer = CreateFrame("Frame", nil, canvas)
+		mapLayer:SetAllPoints(canvas)
+		local elapsed = 0
+		mapLayer:SetScript("OnUpdate", function(_, dt)
+			elapsed = elapsed + dt
+			if elapsed < INTERVAL then return end
+			elapsed = 0
+			pcall(MapHover)
+		end)
+	end
+	wipe(mapDrawn)
+	local nLines, nSpots = 0, 0
+	local dw = map and next(shared) and World(map)
+	if dw and dw.du ~= 0 and dw.dv ~= 0 then
+		local mgr = WM.GetPinFrameLevelsManager and WM:GetPinFrameLevelsManager()
+		local okLevel, level = false, nil
+		if mgr and mgr.GetValidFrameLevel then
+			okLevel, level = pcall(mgr.GetValidFrameLevel, mgr, "PIN_FRAME_LEVEL_QUEST_BLOB")
+		end
+		-- (the game's own quest areas' level; else just under where Map.lua puts the pins)
+		mapLayer:SetFrameLevel((okLevel and type(level) == "number") and level or canvas:GetFrameLevel() + 90)
+		local W, H = canvas:GetWidth(), canvas:GetHeight()
+		local screenH = GetPhysicalScreenSize and select(2, GetPhysicalScreenSize())
+		local pixels = (screenH and screenH > 0) and canvas:GetEffectiveScale() * screenH / 768 or 1
+		for owner, list in pairs(shared) do
+			local r, g, b = ns.OwnerColor(Owner(owner))
+			for id, q in pairs(list) do
+				local w = World(q.map)
+				local mine = owner ~= YOU and C_QuestLog.IsOnQuest and C_QuestLog.IsOnQuest(id)
+				if w and w.cont == dw.cont and not mine then
+					-- A spot (u, v) on the quest's map is at (au + u * bu, av + v * bv) on this one.
+					local d = { owner = owner, quest = q, w = w,
+						au = (w.west - dw.west) / dw.du, bu = w.du / dw.du,
+						av = (w.north - dw.north) / dw.dv, bv = w.dv / dw.dv }
+					mapDrawn[#mapDrawn + 1] = d
+					if q.point then
+						local size = SPOT_YARDS / math.abs(dw.du) * W
+						nSpots = nSpots + 1
+						local t = mapSpots[nSpots]
+						if not t then
+							t = mapLayer:CreateTexture(nil, "ARTWORK")
+							t:SetTexture(SPOT_TEXTURE)
+							mapSpots[nSpots] = t
+						end
+						t:SetVertexColor(r, g, b, ALPHA)
+						t:SetSize(size * 2, size * 2)
+						t:ClearAllPoints()
+						t:SetPoint("CENTER", canvas, "TOPLEFT", (d.au + q.x0 * d.bu) * W, -(d.av + q.y0 * d.bv) * H)
+						t:Show()
+					else
+						local rowSize = q.ch * math.abs(d.bv) * H
+						local k = max(1, ceil(MIN_PIXELS / (rowSize * pixels)))
+						for r0 = 0, q.rows - 1, k do
+							local n = min(k, q.rows - r0)
+							local spans = q.byRow[r0 + floor(n / 2)]
+							if spans then
+								local y = -(d.av + (q.y0 + (r0 + n / 2) * q.ch) * d.bv) * H
+								for i = 1, #spans, 2 do
+									nLines = nLines + 1
+									local l = mapLines[nLines]
+									if not l then
+										l = mapLayer:CreateLine(nil, "ARTWORK")
+										l:SetColorTexture(1, 1, 1, 1)
+										mapLines[nLines] = l
+									end
+									l:SetColorTexture(r, g, b, ALPHA)
+									l:SetThickness(rowSize * n)
+									l:SetStartPoint("TOPLEFT", canvas, (d.au + spans[i] * d.bu) * W, y)
+									l:SetEndPoint("TOPLEFT", canvas, (d.au + spans[i + 1] * d.bu) * W, y)
+									l:Show()
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	for i = nLines + 1, #mapLines do mapLines[i]:Hide() end
+	for i = nSpots + 1, #mapSpots do mapSpots[i]:Hide() end
+end
+
+---------------------------------------------------------------------------
 -- Test mode and the status (/fwp test, /fwp quests)
 ---------------------------------------------------------------------------
 
 function Quests.Test()
 	test = not test
-	if not test then shared[YOU] = nil end
+	if not test then
+		shared[YOU] = nil
+		Redraw()
+	end
 	Quests.Soon(false, 0)
-	ns.Print(test and "test on: your own quest's area shows on your minimap." or "test off.")
+	ns.Print(test and "test on: your own quest's area shows on your map and minimap." or "test off.")
 end
 
 function Quests.PrintStatus()

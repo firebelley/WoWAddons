@@ -159,6 +159,8 @@ function Map.Refresh()
 	-- Guild dots: under the pins, sized like the game's group member dots (which
 	-- don't follow the map's pin size).
 	if ns.Guild then ns.Guild.DrawMap(canvas, map, 1 / canvasScale, math.max(0, level - 1)) end
+	-- Your group's quest areas: under everything.
+	if ns.Quests then ns.Quests.DrawMap(WM, canvas, map) end
 end
 
 -- Shift-click: where the button went down (by the time it comes up, a click
