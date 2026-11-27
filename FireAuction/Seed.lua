@@ -157,7 +157,12 @@ local function AddSeed(p, auctionID)
 		at = ns.Now(), house = ns.house or "faction" }
 end
 
-local function RefreshSoon()
+-- Not with "Check for" on: checks don't go by the listings, and what a seed
+-- draws out comes seconds later - a refresh now would only hold up the next
+-- check.
+local function RefreshSoon(id)
+	local s = id and ns.db.quickBuy[id]
+	if s and s.check then return end
 	if C_Timer then
 		C_Timer.After(AFTER_POST, function() ns.QuickBuy.Refresh() end)
 	else
@@ -247,7 +252,7 @@ ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(auctionID)
 	post = nil
 	AddSeed(p, auctionID)
 	message = ("Listed %d at %s"):format(p.qty, ns.Money(p.price))
-	RefreshSoon()
+	RefreshSoon(p.itemID)
 	elapsed = 1
 end)
 
@@ -266,7 +271,7 @@ ns.On("BAG_UPDATE_DELAYED", function()
 		-- Its ID (for Cancel) comes from your auctions list, read again shortly (Sales.lua).
 		AddSeed(p)
 		message = ("Listed %d at %s"):format(p.qty, ns.Money(p.price))
-		RefreshSoon()
+		RefreshSoon(p.itemID)
 		if ns.Sales and ns.Sales.QueryOwned then ns.Sales.QueryOwned(1, true) end
 		elapsed = 1
 	end)

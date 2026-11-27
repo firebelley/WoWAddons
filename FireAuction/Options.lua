@@ -276,6 +276,9 @@ local function Build()
 			.. "price, or over it. 0: never ask.")
 
 	Header("Selling")
+	Checkbox("sellAtMarket", "Sell at the market price",
+		"The sell page starts at the market price, not the cheapest listing - which may be a few listed cheap to "
+			.. "draw yours out. With a Quick buy session on, at your own resale price if you've set one.")
 	Checkbox("announceSales", "Announce when one of my auctions sells",
 		"A big on-screen message and coin sound when something sells. Gold waiting in the mail shows on the "
 			.. "minimap button's tooltip.")

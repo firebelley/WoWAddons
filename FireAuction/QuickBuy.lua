@@ -1258,6 +1258,56 @@ function QuickBuy.SetTarget(id, price)
 	Settings(id).target = price and price > 0 and math.floor(price) or nil
 end
 
+-- The sell page's starting price, instead of the cheapest listing's (which
+-- may be a seed, a few listed cheap to draw yours out): your own resale price
+-- while the item's session is on and you've set one; else, with "Sell at the
+-- market price" on, the market price - of the listings it shows (Data.lua's
+-- MarketPrice), or the latest scan's.
+local function SellStartPrice(id)
+	local target = QuickBuy.Active(id) and QuickBuy.Target(id)
+	if target then return target end
+	if not ns.db.sellAtMarket then return nil end
+	local list, any = {}, false
+	local AH = C_AuctionHouse
+	for i = 1, AH.GetNumCommoditySearchResults(id) or 0 do
+		local r = AH.GetCommoditySearchResultInfo(id, i)
+		if r and r.unitPrice and r.unitPrice > 0 and (r.quantity or 0) > 0 then
+			local key = r.unitPrice .. ",1,0"
+			list[key] = (list[key] or 0) + r.quantity
+			any = true
+		end
+	end
+	return (any and ns.Data.MarketPrice(list)) or ns.Data.Market(ns.Data.Get(id))
+end
+
+-- Blizzard's sell page puts in the cheapest listing's price whenever new
+-- listings come in, as long as the price is still its default. Set after it
+-- does - and again on new listings, as long as the price is still Blizzard's
+-- pick or ours: one you've typed is left alone.
+local sellHooked, sellSet = false, nil
+ns.On("AUCTION_HOUSE_SHOW", function()
+	local sf = AuctionHouseFrame and AuctionHouseFrame.CommoditiesSellFrame
+	if sellHooked or not (sf and sf.UpdatePriceSelection and sf.GetItem and sf.GetUnitPrice and sf.PriceInput
+		and sf.PriceInput.SetAmount) then return end
+	sellHooked = true
+	hooksecurefunc(sf, "UpdatePriceSelection", function(self)
+		ns.SafeCall(function()
+			local loc = self:GetItem()
+			if not (loc and loc.IsValid and loc:IsValid()) then return end
+			local id = C_Item.GetItemID(loc)
+			local now = self:GetUnitPrice()
+			local blizzard = (self.GetSearchResultPrice and self:GetSearchResultPrice())
+				or (self.GetDefaultPrice and self:GetDefaultPrice())
+			if not (id and (now == blizzard or now == sellSet or not now or now == 0)) then return end
+			local price = SellStartPrice(id)
+			if not price or price == now then return end
+			sellSet = price
+			self.PriceInput:SetAmount(price)
+			if self.UpdatePostState then self:UpdatePostState() end
+		end)
+	end)
+end)
+
 -- Every item with a session on, by name: { { id, bought, spent }, ... }
 function QuickBuy.Sessions()
 	local list = {}

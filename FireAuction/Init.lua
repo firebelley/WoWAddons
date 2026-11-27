@@ -12,6 +12,7 @@ local DEFAULTS = {
 	craftProfit = true,   -- profit line in profession windows (Crafting.lua)
 	craftWorth = true,    -- "Worth as <crafted item>" on reagent tooltips, from your saved recipes (Crafting.lua)
 	announceSales = true, -- big announcement when one of your auctions sells (Sales.lua)
+	sellAtMarket = true,  -- the sell page starts at the market price, not the cheapest listing's (QuickBuy.lua SellStartPrice)
 	quickBuyCheapest = false, -- Quick buy takes only the lowest price within "Up to" per click (QuickBuy.lua)
 	quickBuyAsk = 100000, -- copper: Quick buy asks before one click spends more (10g), once per AH visit (0 = never)
 	quickBuyLeave = 1, -- Quick buy leaves at least this many listed under "Up to" (QuickBuy.lua Walk; 0 = off)
