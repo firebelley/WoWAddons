@@ -302,7 +302,9 @@ function IB.Unusable(link)
 	if not link then return false end
 	local known = unusable[link]
 	if known ~= nil then return known end
-	if not API.GetItemInfo(link) then
+	-- (Not while a spell wants an item: tooltips then say, in red, what it
+	-- can't be used on - "can't be disenchanted" on the dust it just made.)
+	if not API.GetItemInfo(link) or (SpellIsTargeting and SpellIsTargeting()) then
 		unusablePending = true
 		return false
 	end
@@ -616,6 +618,11 @@ end
 ns.On("CURRENT_SPELL_CAST_CHANGED", function()
 	C_Timer.After(0, RefreshTargetCursor)
 	UpdateGuards()
+	-- Items that came in while a spell wanted one: read them now.
+	if unusablePending and not (SpellIsTargeting and SpellIsTargeting()) then
+		unusablePending = false
+		FireBags.UpdateButtons()
+	end
 end)
 
 -- Blizzard's template works out which bag a button belongs to from its
