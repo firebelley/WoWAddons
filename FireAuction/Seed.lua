@@ -391,8 +391,10 @@ function ns.Seed.Sold(name, auctionID)
 	end
 end
 
--- The seed price: your live seed's, else what you'd list one at; nil if none.
+-- The seed price: the one you've typed (your next seed), else your live
+-- seed's, else what you'd list one at; nil if none.
 function ns.Seed.Price(id)
+	if typedPrice[id] then return typedPrice[id] end
 	local seed = LiveSeed(id)
 	if seed then return seed.price end
 	return (Price(id))

@@ -17,12 +17,12 @@
 -- would have bought the most of your recent finds, see BestSize): the price
 -- check is a fresh look in itself, so new listings are bought straight from
 -- it, a step (~0.6s) ahead of a refresh.
--- If they average more, nothing's bought and the listings refresh (unless the
--- check found the cheapest just as they are on screen) - or, when the price
--- came back cheaper than the screen said (new cheap ones, too few for N), the
--- next click checks the number that fits them instead (see FollowUpSize).
--- After a purchase (bought or not) the next click is a check too, without a
--- refresh first (see Finish).
+-- If they average more, nothing's bought - and when the price came back
+-- cheaper than the listings say (new cheap ones, too few for N), the next
+-- click checks the number that fits them instead (see FollowUpSize).
+-- Check mode doesn't refresh in place of a check (a refresh is a click
+-- without a purchase): every price the game quotes brings the listings on
+-- screen in line with it instead (see Reconcile).
 --
 -- Quick buy shows once you press Start session for the item. The session -
 -- how many you've bought, what they cost, and a log - is kept until you press
@@ -51,7 +51,7 @@ local gaveUp          -- { itemID, quantity, total, at } a confirmed purchase gi
 local LATE = 15       -- seconds such a purchase can still come through and be counted
 local LOG_SIZE = 20   -- purchases kept in the session log
 local message         -- last result, shown under the button until the next change
-local consumed        -- { id, qty, at } just bought: still in the listings until they're refreshed
+local consumed        -- { id, qty, at } gone from the cheapest - bought by you or anyone - but still on screen until a refresh (see Reconcile)
 local resultsAt       -- when the listings on screen came in
 -- Lost to someone else: the cheap ones went before the quote, or between the
 -- quote and the purchase.
@@ -215,6 +215,73 @@ local function CheapestTotal(id, n)
 	return total
 end
 
+---------------------------------------------------------------------------
+-- Check mode doesn't wait on refreshes: the listings on screen are kept in
+-- line with what the auction house says instead. Every price it quotes is
+-- the cost of its cheapest N right now, and only the cheap end moves fast -
+-- dearer listings sit for hours. So the picture is the listings on screen
+-- less `consumed` taken off the bottom (the cheapest go first, to you or
+-- anyone), with `consumed` set so the picture's cheapest N cost what was
+-- just quoted.
+---------------------------------------------------------------------------
+-- The listings on screen that aren't yours, cheapest first: { price, quantity, ... }.
+local function Ladder(id)
+	local AH, out = C_AuctionHouse, {}
+	for i = 1, AH.GetNumCommoditySearchResults(id) or 0 do
+		local r = AH.GetCommoditySearchResultInfo(id, i)
+		if not r then break end
+		local open = r.quantity - (r.numOwnerItems or 0)
+		if open > 0 then
+			out[#out + 1] = r.unitPrice
+			out[#out + 1] = open
+		end
+	end
+	return out
+end
+
+-- What the cheapest n cost in all once `skip` are taken off the bottom, or
+-- nil if fewer are left.
+local function TotalAfter(ladder, n, skip)
+	local total, need = 0, n
+	for i = 1, #ladder, 2 do
+		local price, q = ladder[i], ladder[i + 1]
+		local gone = math.min(skip, q)
+		skip, q = skip - gone, q - gone
+		local take = math.min(q, need)
+		total, need = total + take * price, need - take
+		if need == 0 then return total end
+	end
+	return nil
+end
+
+-- The auction house quoted `quoted` for its cheapest n: take as many off the
+-- bottom of the picture as makes its cheapest n cost that. Returns how much
+-- less it quoted than even the whole picture costs (new cheap ones, not on
+-- screen: 0 when it matches), or nil when it can't be matched (too few on
+-- screen) - then only a refresh will do.
+local function Reconcile(id, n, quoted)
+	local ladder = Ladder(id)
+	local function Take(skip)
+		consumed = skip > 0 and { id = id, qty = skip, at = GetTime() } or nil
+	end
+	local whole = TotalAfter(ladder, n, 0)
+	if not whole then return nil end
+	if whole >= quoted then
+		Take(0)
+		return whole - quoted
+	end
+	local units = 0
+	for i = 2, #ladder, 2 do units = units + ladder[i] end
+	local lo, hi = 1, units - n
+	if hi < 1 or TotalAfter(ladder, n, hi) < quoted then return nil end
+	while lo < hi do
+		local mid = math.floor((lo + hi) / 2)
+		if TotalAfter(ladder, n, mid) >= quoted then hi = mid else lo = mid + 1 end
+	end
+	Take(lo)
+	return 0
+end
+
 -- How many to check for, left to the addon: your last cheap finds (purchase
 -- attempts for the item, not checks: how many, at what price) replayed
 -- against the listings on screen now. A find smaller than N is made up with
@@ -350,8 +417,7 @@ local searchSentAt            -- when any search for listings last went out (our
 local mode                    -- what a click on the button does now: "buy", "check" or "refresh"
 local checkPlan               -- { quantity, expected } a "check" click's price check
 local followUp                -- { id, quantity, at } the next check, after one that found new cheap ones
-local FOLLOW_UP_WINDOW = 2    -- seconds it's offered before the listings refresh instead
-local checkNext               -- itemID: with "Check for" on, a purchase just ended - the next click checks, no refresh first (see Finish)
+local FOLLOW_UP_WINDOW = 2    -- seconds it's offered before the button checks for N again
 local REFRESH_ICON = "|TInterface\\Buttons\\UI-RefreshButton:16:16:0:0|t "
 
 -- Never act on listings that are about to be replaced or are old: while a
@@ -415,20 +481,19 @@ local function Update()
 		busy = true
 	else
 		local count, total = Available(itemID, max, Remaining(itemID))
-		local old = staleSince or Old()
-		local n = count <= 0 and resultsAt and not staleSince and CheckSize(itemID, max)
+		-- Check mode: the listings never go out of date - every price the game
+		-- quotes keeps them in line (Reconcile) - so old ones still do.
+		local size = resultsAt and not staleSince and CheckSize(itemID, max)
+		local old = not size and (staleSince or Old())
+		local n = count <= 0 and size
 		local f = followUp
 		if n and f and f.id == itemID and GetTime() - f.at < FOLLOW_UP_WINDOW then
 			n = math.min(f.quantity, math.min(Remaining(itemID), math.floor(GetMoney() / max)))
 			if n < 1 then n = nil end
 		end
-		-- Right after a purchase: a check, whatever the (out of date) listings
-		-- say. Nothing to compare its price with, so a miss refreshes.
-		local direct = checkNext == itemID and CheckSize(itemID, max)
-		if direct then n = direct end
 		if n then
 			-- Nothing within "Up to" on screen: check the price of N.
-			checkPlan = { quantity = n, expected = not direct and CheapestTotal(itemID, n) or nil }
+			checkPlan = { quantity = n, expected = CheapestTotal(itemID, n) }
 			text = REFRESH_ICON .. ("Check for %d"):format(n)
 			mode, enabled = "check", not BlizzardDialogOpen()
 		elseif old or count <= 0 then
@@ -449,8 +514,8 @@ local function Update()
 			plan = { quantity = count, total = total }
 			mode, enabled = "buy", true
 		end
-		-- New listings on the way: wait for them (a refresh then would only
-		-- queue behind it, and hold up the purchase after).
+		-- New listings on the way: wait for them. A click meanwhile would only
+		-- be dropped: the game drops a purchase started while a search is out.
 		if mode and Searching() then plan, mode, checkPlan, enabled, busy = nil, nil, nil, false, true end
 		if (mode == "check" or mode == "refresh") and not enabled then busy = true end -- Blizzard's dialog
 	end
@@ -602,9 +667,9 @@ end
 -- a refresh goes out (the old ones are cleared) and as more pages load.
 local function Refreshed()
 	resultsAt = GetTime()
-	checkNext = nil -- listings to go by again
 	if itemID and Settings(itemID).active then ns.SafeCall(Snapshot, itemID) end
-	if refreshSentAt and consumed and refreshSentAt >= consumed.at then consumed = nil end
+	-- Fresh listings (anyone's search): nothing to take off them.
+	if searchSentAt and consumed and searchSentAt >= consumed.at then consumed = nil end
 	if holdSince and refreshSentAt and refreshSentAt >= holdSince then holdSince = nil end
 	if staleSince and searchSentAt and searchSentAt >= staleSince then staleSince = nil end
 	ns.SafeCall(Update)
@@ -760,13 +825,16 @@ end
 -- the refresh, leaving the list stuck on "Searching..."), then refresh a
 -- moment later, once the game has finished with it.
 --
--- With "Check for" on, no refresh: the next click checks the price straight
--- away. What's left of a lot, or the next one, is found by the check itself
--- and confirmed a step (~0.6s) sooner than a refresh and a Buy after it -
--- a step that, against other buyers, decides most races (your log: 76% of
--- checks that found them were bought, 62% of Buys from the listings, which
--- also lose ~30% before the price comes back). A refresh would also hold up
--- that check for its own turn. A miss refreshes as usual.
+-- With "Check for" on, no refresh: the listings on screen are brought in line
+-- with what happened instead (Reconcile) - bought: those are gone (consumed,
+-- added on success); quoted over "Up to": matched to that price; confirmed
+-- but lost: someone took them. The next click checks straight away. What's
+-- left of a lot, or the next one, is found by the check itself and confirmed
+-- a step (~0.6s) sooner than a refresh and a Buy after it - a step that,
+-- against other buyers, decides most races (your log: 76% of checks that
+-- found them were bought, 62% of Buys from the listings, which also lose
+-- ~30% before the price comes back). Only a price that can't be matched to
+-- the listings refreshes.
 local function Finish(text, why)
 	if why then ns.Debug("quick buy: not bought - " .. why) end
 	AttemptEnd(why)
@@ -775,20 +843,31 @@ local function Finish(text, why)
 	if pending and pending.stage == "buying" and not pending.done then
 		gaveUp = { itemID = pending.itemID, quantity = pending.quantity, total = pending.total, at = GetTime() }
 	end
-	local id = pending and pending.itemID or itemID
+	local p = pending
+	local id = p and p.itemID or itemID
 	pending = nil
 	message = text
-	-- Bought or not, the listings on screen are out of date: until refreshed
-	-- ones come in, the button refreshes (or checks) instead of buying from them.
-	staleSince = GetTime()
 	local max = id and Settings(id).max
 	if id == itemID and max and max > 0 and CheckSize(id, max) then
-		checkNext = id
-		ns.Debug("quick buy: checking next, no refresh")
-		Update()
-		return
+		local matched = true
+		if p and not p.done then
+			if p.over then
+				-- (New listings on the way: they'll say.)
+				matched = Searching() or Reconcile(id, p.quantity, p.over) ~= nil
+			elseif p.stage == "buying" then
+				local more = consumed and consumed.id == id and consumed.qty or 0
+				consumed = { id = id, qty = more + p.quantity, at = GetTime() }
+			end
+		end
+		if matched then
+			ns.Debug("quick buy: no refresh - listings kept in line")
+			Update()
+			return
+		end
 	end
-	checkNext = nil
+	-- Bought or not, the listings on screen are out of date: until refreshed
+	-- ones come in, the button refreshes instead of buying from them.
+	staleSince = GetTime()
 	holdSince = staleSince
 	holdText = text and "Not bought" or "Buying..."
 	if C_Timer then
@@ -838,7 +917,7 @@ local function Check()
 	local max = Settings(itemID).max or 0
 	local n = checkPlan.quantity
 	local follow = followUp ~= nil and followUp.id == itemID and followUp.quantity == n
-	followUp, checkNext = nil, nil
+	followUp = nil
 	pending = { itemID = itemID, quantity = n, total = max * n, limit = max * n, stage = "quote", at = GetTime(),
 		check = true, expected = checkPlan.expected, follow = follow or nil,
 		age = resultsAt and math.floor((GetTime() - resultsAt) * 1000 + 0.5) / 1000 or nil }
@@ -868,25 +947,28 @@ local function FollowUpSize(id, max, gap, below)
 end
 
 -- A price check that found nothing within "Up to": not bought, and not a
--- loss either (not kept as an attempt). The listings refresh, unless the
--- check found the cheapest just as they are on screen - or it found new cheap
--- ones: then the next click checks for the number that fits them. A
--- follow-up that misses the same way gets one too, smaller each time. Not
--- clicked in time: the listings refresh. (The market log: a first follow-up
--- found cheap ones half the time - about 7 bought a click, an ordinary check
--- about 1; the next ones about 2.)
+-- loss either (not kept as an attempt). Its price brings the listings on
+-- screen in line (Reconcile): someone bought the cheapest, so they come off
+-- the bottom - no refresh, the next click checks again. Cheaper than even
+-- all of them: new cheap ones, so the next click checks for the number that
+-- fits them. A follow-up that misses the same way gets one too, smaller each
+-- time; not clicked in time, the button checks for N again. Only a price
+-- that can't be matched (or none) refreshes. (The market log: a first
+-- follow-up found cheap ones half the time - about 7 bought a click, an
+-- ordinary check about 1; the next ones about 2.)
 local function CheckMissed(quoted)
 	ns.Debug(("quick buy: check - %s for %d"):format(quoted and ns.Money(quoted) or "none", pending.quantity))
 	LogCheck(pending, quoted, false)
 	attempt = nil
-	local same = quoted ~= nil and quoted == pending.expected and not Old()
+	local id, n = pending.itemID, pending.quantity
+	-- (New listings on the way: they'll say - nothing to match the price to till then.)
+	local gap = quoted and (Searching() and 0 or Reconcile(id, n, quoted))
 	local follow
-	if quoted and pending.expected and quoted < pending.expected and not Old() then
-		local max = Settings(pending.itemID).max or 0
-		follow = max > 0 and FollowUpSize(pending.itemID, max, pending.expected - quoted, pending.quantity)
+	if gap and gap > 0 then
+		local max = Settings(id).max or 0
+		follow = max > 0 and FollowUpSize(id, max, gap, n)
 	end
 	pcall(C_AuctionHouse.CancelCommoditiesPurchase)
-	local id = pending.itemID
 	pending = nil
 	message = nil
 	if follow then
@@ -897,14 +979,10 @@ local function CheckMissed(quoted)
 			C_Timer.After(FOLLOW_UP_WINDOW, function()
 				if followUp ~= f then return end
 				followUp = nil
-				if not pending then
-					staleSince = GetTime()
-					Refresh()
-				end
 				Update()
 			end)
 		end
-	elseif not same then
+	elseif not gap then
 		-- Greyed until the refresh goes out (as after a purchase, see Finish).
 		staleSince = GetTime()
 		holdSince, holdText = staleSince, "Checking the price..."
@@ -945,7 +1023,6 @@ end
 ns.On("AUCTION_HOUSE_SHOW", function() wipe(accepted) end)
 ns.On("AUCTION_HOUSE_CLOSED", function()
 	wipe(accepted)
-	checkNext = nil
 	StaticPopup_Hide("FIREAUCTION_QUICKBUY_ASK")
 end)
 
@@ -1017,6 +1094,8 @@ ns.On("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
 	if not pending and outside then outside.total = totalPrice end
 	if not pending then return end
 	local ok = totalPrice <= pending.limit and totalPrice <= GetMoney()
+	-- Over "Up to": the game's price for the cheapest N now (see Finish, Reconcile).
+	if totalPrice > pending.limit then pending.over = totalPrice end
 	if pending.stage == "buying" then
 		-- A new quote after confirming: the price changed in between (someone
 		-- bought some first), and the game waits to be told again. Still the
@@ -1138,7 +1217,7 @@ end
 
 local function Flash()
 	if not (panel and panel:IsVisible() and button.CreateAnimationGroup) then return end
-	if checkNext == itemID then
+	if itemID and Settings(itemID).check then
 		ring = ring or Ring()
 		ring:Stop()
 		ring:Play()
