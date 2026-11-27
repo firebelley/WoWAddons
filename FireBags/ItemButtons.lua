@@ -255,14 +255,23 @@ local function IsRed(c)
 	return r > 0.95 and g < 0.2 and bl < 0.2
 end
 
+-- A recipe's tooltip ends with the item it makes, after a blank line; that
+-- item's own requirements (its level, say) aren't the recipe's.
+local NESTED = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.NestedBlock
+local function IsBlank(text)
+	return type(text) == "string" and not issecret(text) and strtrim(text) == ""
+end
+
 local scanner
 local function ScanLines(link) -- returns true/false, or nil if it can't tell yet
+	local isRecipe = select(6, API.GetItemInfoInstant(link)) == 9
 	local T = C_TooltipInfo
 	if T and T.GetHyperlink then
 		local ok, data = pcall(T.GetHyperlink, link)
 		if not (ok and type(data) == "table" and type(data.lines) == "table" and #data.lines > 1) then return nil end
-		for _, line in ipairs(data.lines) do
+		for i, line in ipairs(data.lines) do
 			if issecret(line.leftText) then return nil end
+			if isRecipe and i > 1 and (IsBlank(line.leftText) or (NESTED and line.type == NESTED)) then break end
 			if IsRed(line.leftColor) or IsRed(line.rightColor) then return true end
 		end
 		return false
@@ -276,6 +285,8 @@ local function ScanLines(link) -- returns true/false, or nil if it can't tell ye
 	local n = scanner:NumLines()
 	if n < 2 then return nil end
 	for i = 1, n do
+		local left = _G["FireBagsScanTooltipTextLeft" .. i]
+		if isRecipe and i > 1 and left and IsBlank(left:GetText() or "") then break end
 		for _, side in ipairs({ "Left", "Right" }) do
 			local fs = _G["FireBagsScanTooltipText" .. side .. i]
 			if fs and fs:IsShown() then
