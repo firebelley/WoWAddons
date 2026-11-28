@@ -12,7 +12,7 @@
 -- puts this layout's back.
 --
 -- Extra action bars: see Bars.lua. Attaching elements to each other: Attach.lua.
--- The main bar's look for the game's other bars: Style.lua. Loot rolls and alerts: Popups.lua.
+-- The main bar's look for the game's other bars, and the PvP timer's side: Style.lua. Loot rolls and alerts: Popups.lua.
 local _, ns = ...
 local DB -- FireMoveDB: [frame name] = { point, relativePoint, x, y }
 
@@ -163,7 +163,7 @@ local LAYER_NAMES = { BACKGROUND = "Bottom", LOW = "Low", MEDIUM = "Middle", HIG
 -- own = { [frame] = its own strata, before any change },
 -- bars = { [layout] = { [bar] = its settings, on: the layout has it } } (Bars.lua),
 -- attach = { [layout] = { [frame] = { to, side, off, gap } } } (Attach.lua),
--- style = { [layout] = { [bar] = "main" } } (Style.lua),
+-- style = { [layout] = { [bar] = "main", PlayerPVPTimerText = side } } (Style.lua),
 -- popups = { [layout] = { rolls = { x, y }, alerts = { x, y } } } (Popups.lua)
 local LDB
 local layers         -- the layout in use's { [frame] = strata }, once known
@@ -307,7 +307,8 @@ local function UpdateBox()
 	box.forward:SetEnabled(i ~= nil and i < #LAYERS)
 	box.default:SetEnabled(layers[Key(frame)] ~= nil)
 	local styled = ns.Style and box.style and box.style.Refresh()
-	box:SetHeight(styled and 148 or 118)
+	local timer = ns.Style and box.timer and box.timer.Refresh()
+	box:SetHeight((styled or timer) and 148 or 118)
 	box:Show()
 	if ns.Attach then ns.Attach.Refresh() end
 end
@@ -422,6 +423,8 @@ local function CreateBox(dialog)
 	if ns.Style then
 		local row
 		row, box.style = ns.Style.CreateRow(box, Selected, 216)
+		row:SetPoint("TOP", 0, -64)
+		row, box.timer = ns.Style.CreateTimerRow(box, Selected, 216)
 		row:SetPoint("TOP", 0, -64)
 	end
 	box:Hide()

@@ -186,9 +186,52 @@ ns.On("PLAYER_LOGIN", function()
 	end
 end)
 
+-- What Blizzard's click on a bag slot reads (ContainerFrame.lua), checked for
+-- taint when that click is blocked: printed, to find where it came from.
+-- (Temporary, while tracking down a rare block on Disenchant.)
+local CLICK_GLOBALS = {
+	"IsModifiedClick", "ContainerFrameItemButton_OnClick", "MerchantFrame_ResetRefundItem", "MerchantFrame",
+	"GetCursorInfo", "SpellCanTargetItem", "SpellCanTargetItemID", "C_Container",
+}
+local function TaintedIn(t, label, found)
+	if type(t) ~= "table" or not issecurevariable then return end
+	for k in pairs(t) do
+		if type(k) == "string" and not k:match("^fb") then
+			local ok, secure, by = pcall(issecurevariable, t, k)
+			if ok and not secure then found[#found + 1] = ("%s.%s (%s)"):format(label, k, tostring(by)) end
+		end
+	end
+end
+local function ProbeClickTaint()
+	if not issecurevariable then return end
+	local found = {}
+	for _, name in ipairs(CLICK_GLOBALS) do
+		local secure, by = issecurevariable(name)
+		if not secure then found[#found + 1] = ("%s (%s)"):format(name, tostring(by)) end
+	end
+	if C_Container then
+		local secure, by = issecurevariable(C_Container, "UseContainerItem")
+		if not secure then found[#found + 1] = "C_Container.UseContainerItem (" .. tostring(by) .. ")" end
+	end
+	local foci = GetMouseFoci and GetMouseFoci()
+	local b = foci and foci[1] or (GetMouseFocus and GetMouseFocus())
+	if type(b) == "table" then
+		local name = b.GetName and b:GetName() or "?"
+		TaintedIn(b, "button", found)
+		TaintedIn(b.GetParent and b:GetParent(), "parent", found)
+		ns.Print(("block probe: %s, bag %s slot %s, guard %s, %d tainted"):format(
+			name, tostring(b.fbBag), tostring(b.fbSlot), tostring(b.fbGuard), #found))
+	else
+		ns.Print(("block probe: no button under the mouse, %d tainted"):format(#found))
+	end
+	for i = 1, math.min(#found, 15) do print("  " .. found[i]) end
+end
+
 -- When the game blocks one of our calls, say which (its popup doesn't).
 local function Blocked(addon, func)
-	if addon == ADDON_NAME then ns.Print("blocked: " .. tostring(func)) end
+	if addon ~= ADDON_NAME then return end
+	ns.Print("blocked: " .. tostring(func))
+	if tostring(func):find("UseContainerItem") then ProbeClickTaint() end
 end
 ns.On("ADDON_ACTION_FORBIDDEN", Blocked)
 ns.On("ADDON_ACTION_BLOCKED", Blocked)

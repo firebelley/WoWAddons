@@ -4,6 +4,8 @@
 -- "Other Action Bars" (the game's own for them). Kept with the Edit Mode
 -- layout, like layers (FireMove.lua: Save, Revert).
 --
+-- Also where the player frame's PvP timer sits (see below).
+--
 -- Only the buttons' textures are changed. The frame behind and the dividers
 -- are ours, beside the bar rather than in it: the game lays out what's in
 -- its bars, and anything of ours in there would taint that.
@@ -112,8 +114,11 @@ end
 
 local Watch
 
+local ApplyTimer
+
 function Style.Apply()
 	soon = nil
+	ApplyTimer()
 	for name in pairs(BARS) do
 		local bar = _G[name]
 		if bar and bar.actionButtons then
@@ -152,33 +157,32 @@ end
 
 Style.Set = Set
 
--- "Button Style [Main Action Bar]", shown for the game's other bars.
--- getFrame: the element it's for (or nil).
-function Style.CreateRow(parent, getFrame, width)
+-- A setting row: label on the left, a dropdown of options on the right.
+-- getFrame: the element selected (or nil); shown only while eligible(frame).
+local function Row(parent, width, text, options, eligible, get, set, getFrame)
 	width = width or 216
 	local row = CreateFrame("Frame", nil, parent)
 	row:SetSize(width, 24)
 	local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	label:SetPoint("LEFT")
-	label:SetText("Button Style")
+	label:SetText(text)
 	local dd = CreateFrame("DropdownButton", nil, row, "WowStyle1DropdownTemplate")
 	dd:SetWidth(width - 76)
 	dd:SetPoint("RIGHT")
 	dd:SetupMenu(function(_, root)
-		for _, option in ipairs(STYLES) do
+		for _, option in ipairs(options) do
 			root:CreateRadio(option[2], function()
-				local bar = getFrame()
-				return bar ~= nil and Get(bar) == option[1]
+				local frame = getFrame()
+				return frame ~= nil and get(frame) == option[1]
 			end, function()
-				local bar = getFrame()
-				if bar and Style.Eligible(bar) then Set(bar, option[1]) end
+				local frame = getFrame()
+				if eligible(frame) then set(frame, option[1]) end
 			end)
 		end
 	end)
 	local r = { row = row }
 	function r.Refresh()
-		local bar = getFrame()
-		local on = Style.Eligible(bar)
+		local on = eligible(getFrame())
 		row:SetShown(on)
 		if on then dd:GenerateMenu() end
 		return on
@@ -187,3 +191,80 @@ function Style.CreateRow(parent, getFrame, width)
 	r.Refresh()
 	return row, r
 end
+
+-- "Button Style [Main Action Bar]", shown for the game's other bars.
+function Style.CreateRow(parent, getFrame, width)
+	return Row(parent, width, "Button Style", STYLES, Style.Eligible, Get, Set, getFrame)
+end
+
+---------------------------------------------------------------------------
+-- The player frame's PvP timer: beside its PvP icon, on the side chosen. The
+-- game's is left, off screen when the frame is at the screen's edge. The game
+-- places it once, as the frame loads, so ours stays. Kept with the layout, in
+-- the same store (as PlayerPVPTimerText = side; none: the game's).
+---------------------------------------------------------------------------
+local TIMER = "PlayerPVPTimerText"
+local SIDES = { { "left", "Left" }, { "right", "Right" }, { "above", "Above" }, { "below", "Below" } }
+local POINTS = {
+	right = { "LEFT", "RIGHT", -2, 0 },
+	above = { "BOTTOM", "TOP", 0, -1 },
+	below = { "TOP", "BOTTOM", 0, 1 },
+}
+local timerHome   -- the game's points for it, before ours
+local timerWaiting -- moved once combat ends
+
+local function TimerSide()
+	local s = Store()
+	return s and s[TIMER] or "left"
+end
+
+local function Icon()
+	local content = PlayerFrame and PlayerFrame.PlayerFrameContent
+	local main = content and content.PlayerFrameContentMain
+	return main and main.PvpBackgroundIcon
+end
+
+function ApplyTimer()
+	local text, icon = _G[TIMER], Icon()
+	if not (text and icon) then return end
+	local side = TimerSide()
+	if side == "left" and not timerHome then return end
+	if InCombatLockdown() then
+		timerWaiting = true
+		return
+	end
+	timerWaiting = nil
+	if not timerHome then
+		timerHome = {}
+		for i = 1, text:GetNumPoints() do timerHome[i] = { text:GetPoint(i) } end
+	end
+	text:ClearAllPoints()
+	local p = POINTS[side]
+	if p then
+		text:SetPoint(p[1], icon, p[2], p[3], p[4])
+	else
+		for _, point in ipairs(timerHome) do text:SetPoint(unpack(point, 1, 5)) end
+	end
+end
+
+local function TimerEligible(frame) return frame ~= nil and frame == PlayerFrame and Icon() ~= nil end
+
+local function SetTimer(_, side)
+	local store = Store(true)
+	if not store then return end
+	store[TIMER] = side ~= "left" and side or nil
+	ApplyTimer()
+	ns.Changed()
+	for _, r in ipairs(rows) do r.Refresh() end
+end
+
+-- "PvP Timer [Left]", shown for the player frame.
+function Style.CreateTimerRow(parent, getFrame, width)
+	return Row(parent, width, "PvP Timer", SIDES, TimerEligible, TimerSide, SetTimer, getFrame)
+end
+
+local events = CreateFrame("Frame")
+events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:SetScript("OnEvent", function()
+	if timerWaiting then ApplyTimer() end
+end)
