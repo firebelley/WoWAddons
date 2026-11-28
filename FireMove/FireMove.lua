@@ -660,9 +660,11 @@ local function HookEditMode()
 	-- when Edit Mode loaded), not through the hook above: its click too.
 	if manager.RevertAllChangesButton then manager.RevertAllChangesButton:HookScript("OnClick", Reverted) end
 	if manager.SetHasActiveChanges then hooksecurefunc(manager, "SetHasActiveChanges", SyncButtons) end
-	-- The game re-stacks its bars (one shown or hidden...): attached ones go back next to theirs.
+	-- The game re-stacks its bars (one shown or hidden, and as combat starts):
+	-- attached ones go back next to theirs at once. Not on the next frame: by
+	-- then combat may have started, and the bars can't be moved until it ends.
 	for _, fn in ipairs({ "UpdateBottomActionBarPositions", "UpdateRightActionBarPositions" }) do
-		if manager[fn] then hooksecurefunc(manager, fn, function() if ns.Attach then ns.Attach.Soon() end end) end
+		if manager[fn] then hooksecurefunc(manager, fn, function() if ns.Attach then ns.Attach.Apply() end end) end
 	end
 	if EventRegistry then
 		EventRegistry:RegisterCallback("EditMode.Enter", function() if ask then ask:Hide() end end, {})

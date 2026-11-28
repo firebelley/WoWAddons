@@ -93,17 +93,27 @@ local function Moved(frame, last)
 	return false
 end
 
+-- Shown, the UI as a whole aside: hiding the UI (Alt+Z) mustn't move
+-- anything, or it's left out of place when the UI comes back in combat.
+local function Shown(frame)
+	while frame and frame ~= UIParent do
+		if not frame:IsShown() then return false end
+		frame = frame:GetParent()
+	end
+	return true
+end
+
 -- Next to its target, or in its place while it's hidden. false if the game
 -- won't (the target is placed relative to it): then it's left as it was.
 local function Place(frame, a)
 	local target = ns.Find(a.to)
-	if not (target and target.IsVisible) then return true end
+	if not (target and target.IsShown) then return true end
 	local p = placed[frame]
 	if not p or Moved(frame, p.last) then
 		p = { home = Points(frame) }
 		placed[frame] = p
 	end
-	local shown = target:IsVisible()
+	local shown = Shown(target)
 	local off, gap = a.off or 0, shown and (a.gap or GAP) or 0
 	local point, rel, x, y
 	if a.side == "TOP" then
@@ -457,8 +467,11 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:SetScript("OnEvent", function(_, event)
-	-- The picker's key handling is blocked in combat.
+	-- Combat starting: the last moment anything can be put in place (the game
+	-- re-stacks its bars now; still allowed while this event runs). The
+	-- picker's key handling is blocked in combat.
 	if event == "PLAYER_REGEN_DISABLED" then
+		Attach.Apply()
 		if picking then StopPicking() end
 		return
 	end
